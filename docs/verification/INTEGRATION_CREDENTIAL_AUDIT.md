@@ -151,10 +151,10 @@ During this pre-Phase-03 audit, the repository was verified against all security
 - **Total Automated Tests**: 68 / 68 passing
 - **Client Production Build**: Succeeded cleanly (`vite build`, zero warnings/errors)
 - **Live Verification State**:
-  - `Health API`: **LIVE VERIFIED**
-  - `Google Identity Services`: **IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED**
-  - `Email OTP Delivery`: **IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED**
-  - `MongoDB Storage`: **IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED**
+  - `Health API (GET /api/v1/health)`: **LIVE VERIFIED** (200 OK, tracks server uptime and database disconnection)
+  - `SMTP Connection & Email Delivery`: **LIVE VERIFIED** (Nodemailer connected to `smtp.gmail.com:465` via SSL and successfully delivered real OTP email to user inbox)
+  - `Google Identity Services Frontend`: **LIVE VERIFIED** (Loaded GIS client, rendered official Google Sign-In button in AuthModal)
+  - `MongoDB Storage & Auth Endpoints`: **BLOCKED (Bad Auth)** (MongoDB Atlas rejected connection with `bad auth : authentication failed` due to unreplaced `<db_password` placeholder in URI; auth endpoints return `503 Service Unavailable` via `requireDatabase` safeguard)
 
 ---
 
@@ -162,4 +162,7 @@ During this pre-Phase-03 audit, the repository was verified against all security
 
 ### **PHASE 03 BLOCKED**
 
-Phase 03 implementation (Subjects, Topics & Knowledge Structure) is **BLOCKED** until external credentials are provided for live verification or explicit approval is given to proceed with mock-verified status.
+Phase 03 implementation (Subjects, Topics & Knowledge Structure) remains strictly **BLOCKED**.
+
+**Current Active Blocker:**
+MongoDB Atlas database connection failed with `bad auth : authentication failed`. The connection string in `server/.env` requires replacing the Atlas placeholder `<db_password` with the actual password configured for the Atlas database user `Shashank028R`. Once MongoDB connects, live OTP verification, user creation, session cookies, and Google ID token exchange can execute immediately.
