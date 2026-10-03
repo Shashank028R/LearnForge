@@ -9,7 +9,7 @@
 
 ## 1. Objective
 
-Build a resilient, production-ready **Chat and Message Infrastructure** in MongoDB that represents the student interaction layer. Enforce deterministic chronological message sequencing, strict multi-tenant authorization boundaries, full CRUD and safe reassignment REST APIs, topic/subject syllabus linkage, and an accessible, responsive two-pane UI workspace, while establishing clean forward-compatibility for downstream AI Gateway routing (Phase 05), knowledge extraction (Phase 06), and note synthesis (Phase 07).
+Build a resilient, production-ready **Chat and Message Infrastructure** in MongoDB that represents the student interaction layer. Enforce deterministic chronological message sequencing via atomic sequence reservation and duplicate-key collision recovery, strict multi-tenant authorization boundaries, full CRUD and safe reassignment REST APIs, topic/subject syllabus linkage, and an accessible, responsive two-pane UI workspace, while establishing clean forward-compatibility for downstream AI Gateway routing (Phase 05), knowledge extraction (Phase 06), and note synthesis (Phase 07).
 
 ---
 
@@ -27,25 +27,25 @@ LearnForge organizes the learning and conversational hierarchy as follows:
   │                     │ _id, subjectId, userId, title, orderIndex, knowledgeState, chatsCount
   │                     │
   │                     └──> (N) [Chat]
-  │                               │ _id, userId, subjectId, topicId, title, status, messagesCount, lastMessageAt
+  │                               │ _id, userId, subjectId, topicId, title, status, messagesCount, sequenceCounter, lastMessageAt
   │                               │
   │                               └──> (N) [Message]
   │                                         _id, chatId, userId, role, content, sequenceIndex, status, metadata
 ```
 
 ### Key Architectural Decisions (ADR-012)
-1. **Normalized Message Persistence**: Messages are stored in a dedicated `messages` collection with compound unique indexing `{ chatId: 1, sequenceIndex: 1 }`, ensuring unbounded scalability, fast paginated retrieval, and deterministic ordering.
+1. **Normalized Message Persistence**: Messages are stored in a dedicated `messages` collection with compound unique indexing `{ chatId: 1, sequenceIndex: 1 }`, ensuring unbounded scalability, fast paginated retrieval, and continuous sequence ordering.
 2. **Denormalized User Ownership**: Both `Chat` and `Message` models persist `userId: ObjectId`. This provides defense-in-depth, eliminating relational `$lookup` joins on message queries and securing cross-tenant boundaries with uniform `404 Not Found` responses.
-3. **Syllabus Linkage & Safe Reassignment**: Chats can link to a parent `Topic` and `Subject` (or operate as general workspace conversations). When linked, reassigned, or unlinked, `Topic.chatsCount` is maintained through coordinated application-level updates and reconciled on read.
+3. **Syllabus Linkage & Safe Reassignment**: Chats can link to a parent `Topic` and `Subject` (or operate as general workspace conversations). When linked, reassigned, or unlinked, `Topic.chatsCount` is maintained through coordinated application-level updates without multi-document transactions and reconciled on read.
 4. **Message Role Authorization Trust Boundary**:
    - **Client messages** (`POST /api/v1/chats/:chatId/messages`) MUST have `role: "user"` (or omit role). Supplying `system` or `assistant` roles returns `400 VALIDATION_ERROR`.
    - **Server / AI Gateway**: Internal backend logic may generate `assistant` or `system` messages.
-5. **Concurrency-Safe Sequence Allocation**: Appending messages uses an integer sequence generator with an automatic collision retry loop on MongoDB duplicate key errors (code 11000), guaranteeing monotonic ordering and zero dropped messages under concurrent appends.
+5. **Atomic Sequence Allocation with Collision Recovery**: Appending messages atomically increments `Chat.sequenceCounter` via single-document `$inc`, reserving contiguous sequence numbers before insertion. A secondary retry loop catches any unexpected E11000 duplicate key errors (e.g. legacy sequence drift), ensuring continuous integer ordering and preventing user message duplication under high concurrency.
 6. **Application-Level Cascading Lifecycle**:
    - Deleting a `Chat` purges its messages (`Message.deleteMany({ chatId, userId })`) and decrements `Topic.chatsCount`.
    - Deleting a `Topic` purges its child chats and messages.
    - Deleting a `Subject` cascades deletion across all child topics, chats, and messages.
-7. **Assistant Preview Boundary**: Phase 04 provides a deterministic Socratic preview response for development and workflow testing — this is **explicitly NOT an AI model integration** (no AI SDKs or API keys). Phase 05 will replace this with the real AI Gateway and task-based model router.
+7. **Assistant Preview Boundary**: Phase 04 provides a deterministic Socratic preview response for development and workflow testing — this is **explicitly NOT an AI model integration** (no external AI provider SDKs or API keys). Phase 05 will replace this with the real AI Gateway and task-based model router.
 
 ---
 
@@ -60,7 +60,8 @@ LearnForge organizes the learning and conversational hierarchy as follows:
   topicId: ObjectId,         // Indexed, Ref: Topic, Optional/Nullable
   title: String,             // Trimmed, 1-200 chars (default: 'New Conversation')
   status: String,            // 'active' | 'archived' (default: 'active')
-  messagesCount: Number,     // Cached counter maintained via coordinated application updates (default: 0)
+  messagesCount: Number,     // Cached message count (default: 0)
+  sequenceCounter: Number,   // Atomic sequence allocator for consecutive message batches (default: 0)
   lastMessageAt: Date,       // Timestamp of most recent message (default: Date.now)
   metadata: Object,          // Extensible metadata (default: {})
   createdAt: Date,
@@ -154,19 +155,20 @@ All endpoints are mounted under `/api/v1` and protected by `requireDatabase` and
 ## 7. Verification & Testing
 
 ### 7.1 Automated Backend Tests (`server/tests/chats.test.js`)
-28 automated tests covering:
+29 automated tests covering:
 - Authentication enforcement on all chat/message endpoints.
 - General and topic-linked chat creation with initial Socratic dialogue.
 - Safe chat reassignment (Topic A → Topic B, Topic → No Topic, No Topic → Topic, subject/topic consistency, cross-tenant rejection).
 - Message Role Trust Boundary (rejecting `system` and `assistant` from client, accepting `user`).
-- Concurrency-safe sequence allocation and duplicate-key collision recovery.
+- Concurrency test: 10 simultaneous requests via `Promise.all()`, verifying exact sequence array `[0..19]`, zero duplicates, and exact message counts.
+- Deterministic E11000 collision test verifying that the retry loop recovers and reconciles `sequenceCounter`.
 - Chronological message listing and beforeSequence pagination.
 - Chat metadata update and archiving.
 - Chat deletion and child message cascade deletion.
 - Multi-tenant cross-user access rejection (404 on GET, PUT, PATCH, DELETE, message listing, message sending, and foreign topic association).
 - Full cascade deletion from Subject → Topic → Chat → Messages.
 - Input validation (empty content, invalid ObjectIds, 20,000 max length).
-- Total server test suite: **94 tests passing across 7 test files**.
+- Total server test suite: **95 tests passing across 7 test files**.
 
 ### 7.2 Automated Frontend Tests (`client/src/pages/Chats.test.jsx`)
 4 automated tests covering:
@@ -175,28 +177,28 @@ All endpoints are mounted under `/api/v1` and protected by `requireDatabase` and
 - New conversation modal opening, subject/topic selection, form submission, and conversation redirect.
 - Message composer input, sending message, and rendering user + assistant exchange bubbles.
 - Total client test suite: **40 tests passing across 4 test files**.
-- **Total Monorepo Tests: 134 tests passing (100%)**.
+- **Total Monorepo Tests: 135 tests passing (100%)**.
 
 ### 7.3 Production Build Verification
-- Vite production build completed with 0 errors: `built in 7.13s`, generating 280kB gzipped JavaScript bundle.
+- Vite production build completed with 0 errors: `dist/` bundle generated cleanly in `7.13s`.
 
-### 7.4 Live Integration & Regression Verification (`server/scripts/verify_phase04_live.js`)
-Executed against local Express backend on port 5000 and live MongoDB Atlas:
+### 7.4 Live Integration & Concurrency Verification (`server/scripts/verify_phase04_live.js`)
+Executed against local Express backend on port 5000 and live MongoDB Atlas cluster with 10 simultaneous concurrent requests:
 ```
 === Starting Phase 04 Live Verification against local server and MongoDB Atlas ===
 
 ✓ Connected to MongoDB Atlas for test fixture provisioning
-✓ Provisioned User A (6ac14d728c119c496ec6c91a) and User B (6ac14d738c119c496ec6c925)
+✓ Provisioned User A (6ac150654bcac73b7fa4e31d) and User B (6ac150654bcac73b7fa4e329)
 
 [1] User A creates Subject A...
-✓ Created Subject A: 6ac14d74665e63850d8e7e9e
+✓ Created Subject A: 6ac150676593d4f044c1259a
 
 [2] User A creates Topic A and Topic B under Subject A...
-✓ Created Topic A: 6ac14d74665e63850d8e7ea6
-✓ Created Topic B: 6ac14d75665e63850d8e7eaf
+✓ Created Topic A: 6ac150686593d4f044c125a2
+✓ Created Topic B: 6ac150686593d4f044c125ab
 
 [3] User A creates Chat linked to Topic A with initial message...
-✓ Chat created: 6ac14d75665e63850d8e7eb7 - "Study: Paxos & Raft Protocols"
+✓ Chat created: 6ac150696593d4f044c125b3 - "Study: Paxos & Raft Protocols"
 
 [4] Verifying Topic A chatsCount...
   Topic A chatsCount: 1
@@ -204,7 +206,7 @@ Executed against local Express backend on port 5000 and live MongoDB Atlas:
 ✓ Topic counts verified correctly
 
 [5] Reassigning Chat from Topic A to Topic B via PATCH /api/v1/chats/:id...
-✓ Chat reassigned. New topicId: 6ac14d75665e63850d8e7eaf
+✓ Chat reassigned. New topicId: 6ac150686593d4f044c125ab
 
 [6] Verifying updated Topic A (0) and Topic B (1) chatsCount...
   Topic A chatsCount: 0
@@ -219,9 +221,13 @@ Executed against local Express backend on port 5000 and live MongoDB Atlas:
 ✓ role="assistant" rejected: 400 Client messages must use role "user". Roles "assistant" and "system" cannot be created by clients.
 ✓ role="user" accepted: created user message (2) and assistant preview (3)
 
-[9] Verifying sequence ordering and concurrency handling...
-✓ Persisted messages sequence indices: [0, 1, 2, 3, 4, 5, 6, 7]
-✓ All sequence indices strictly unique, continuous, and monotonically ordered
+[9] Verifying sequence ordering and concurrency handling (10 simultaneous requests)...
+✓ All 10 simultaneous concurrent requests returned 201 Created (0 failures)
+✓ Total persisted messages: 24
+✓ Persisted messages sequence indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+✓ All sequence indices are continuous and monotonically ordered with zero duplicates
+✓ Every submitted concurrent user message exists exactly once without retry duplication
+✓ Chat messagesCount (24) matches persisted count exactly
 
 [10] Cross-tenant Isolation Verification (User B querying User A)...
 ✓ User B GET Chat A -> 404 Not Found (Passed)
@@ -240,6 +246,16 @@ Executed against local Express backend on port 5000 and live MongoDB Atlas:
 === ALL PHASE 04 LIVE VERIFICATION CHECKS PASSED SUCCESSFULLY ===
 ✓ Cleaned up test fixtures and disconnected from MongoDB Atlas
 ```
+
+### 7.5 Live Browser Verification
+Executed via browser subagent on `http://localhost:5173/chats`:
+1. **Authentication State**: Authenticated session verified.
+2. **2-Pane Workspace**: Conversation history sidebar (search, active/archived filters) and active thread pane rendered correctly.
+3. **New Conversation**: Opened modal, selected subject/topic, entered title and initial prompt, and submitted.
+4. **Message Exchange**: Verified user message bubble, assistant Socratic preview response, copy-to-clipboard action, and timestamps.
+5. **Message Composer**: Typed follow-up questions, sent via Enter/Send button, and verified real-time append.
+6. **Actions & Lifecycles**: Verified Archive toggle and Delete confirmation modal.
+7. **Console & Network**: Verified 0 unexpected console or network errors.
 
 ---
 
@@ -266,8 +282,8 @@ The following capabilities are explicitly deferred to maintain strict modularity
 
 ## 10. Technical Interview Guide & Explanations
 
-### Q1: Why use an integer `sequenceIndex` with a retry loop instead of relying on `createdAt` timestamps for message ordering?
-**Answer**: Clocks across distributed client devices and container instances experience clock drift and sub-millisecond concurrency overlaps. Relying on timestamps can result in messages appearing out of order. An explicit integer `sequenceIndex` with a compound unique index `{ chatId: 1, sequenceIndex: 1 }` guarantees deterministic chronological ordering and prevents duplicate insertions. By wrapping sequence allocation in a short backoff retry loop on MongoDB duplicate key errors (code 11000), concurrent message appends succeed deterministically without requiring multi-document transactions.
+### Q1: Why use atomic sequence reservation with a collision retry loop instead of timestamp sorting for message history?
+**Answer**: Clocks across distributed client devices and container instances experience clock drift and sub-millisecond concurrency overlaps. Relying on timestamps can result in messages appearing out of order. In LearnForge, `Chat.sequenceCounter` is atomically incremented via single-document `$inc`, reserving a contiguous range of sequence numbers for user and assistant messages before insertion. If an unexpected sequence collision occurs, a backoff retry loop catches the E11000 error, reconciles the sequence counter, and re-inserts without duplicating user messages.
 
 ### Q2: Why separate `Chat` and `Message` into different collections instead of embedding messages inside the chat document?
 **Answer**: Embedding messages within a single document hits MongoDB's 16MB document cap and causes document fragmentation during active learning sessions. Normalizing messages into an independent collection allows conversations to scale indefinitely, enables efficient pagination (`?limit=50&beforeSequence=`), and permits individual messages to be referenced as canonical evidence by downstream knowledge extraction (Phase 06) and note synthesis (Phase 07) engines.

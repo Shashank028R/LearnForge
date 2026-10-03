@@ -38,6 +38,11 @@ const chatSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    sequenceCounter: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     lastMessageAt: {
       type: Date,
       default: Date.now,

@@ -49,6 +49,7 @@ We adopt **Option B**: Normalized `Chat` and `Message` collections in MongoDB wi
   title: String,             // Trimmed, max 200 chars (default: 'New Conversation')
   status: String,            // 'active' | 'archived' (default: 'active')
   messagesCount: Number,     // Cached message counter (default: 0)
+  sequenceCounter: Number,   // Atomic sequence reservation allocator (default: 0)
   lastMessageAt: Date,       // Timestamp of most recent message (default: Date.now)
   metadata: Object,          // Extensible key-value metadata
   createdAt: Date,
@@ -89,8 +90,8 @@ We adopt **Option B**: Normalized `Chat` and `Message` collections in MongoDB wi
    - Attempts by client to supply `role: "system"` or `role: "assistant"` are rejected with `400 VALIDATION_ERROR`.
    - This ensures prompt injection and history forgery cannot occur when Phase 05 constructs LLM prompts.
 3. **Cross-Tenant Privacy**: Queries targeting non-owned chats return `404 Not Found` to prevent resource ID enumeration attacks.
-4. **Parent Ownership Validation & Safe Reassignment**: Creating or reassigning a chat validates that both `subjectId` and `topicId` belong to `req.user._id`, rejects inconsistent subject/topic pairs with 400, and updates old/new Topic `chatsCount` via coordinated application updates.
-5. **Concurrency-Safe Sequence Allocation**: Appending messages uses an integer sequence generator wrapped in a retry loop on MongoDB duplicate key errors (code 11000 on `{ chatId: 1, sequenceIndex: 1 }`), ensuring deterministic monotonic ordering under high concurrent write loads without requiring multi-document transactions.
+4. **Parent Ownership Validation & Safe Reassignment**: Creating or reassigning a chat validates that both `subjectId` and `topicId` belong to `req.user._id`, rejects inconsistent subject/topic pairs with 400, and updates old/new Topic `chatsCount` through coordinated application-level updates without multi-document transactions.
+5. **Concurrency-Safe Sequence Allocation**: Appending messages atomically increments `Chat.sequenceCounter` via single-document `$inc`, reserving contiguous sequence numbers before insertion. A secondary retry loop catches any unexpected E11000 duplicate key errors (e.g. legacy sequence drift), ensuring continuous integer ordering and preventing user message duplication under high concurrency.
 6. **Application-Level Cascading Lifecycle**:
    - `DELETE /api/v1/chats/:id`: Purges child messages (`Message.deleteMany({ chatId, userId })`) and decrements `Topic.chatsCount`.
    - `DELETE /api/v1/topics/:id`: Purges child chats and messages, then decrements `Subject.topicsCount`.

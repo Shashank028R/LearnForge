@@ -287,17 +287,56 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
       return queryObj;
     });
 
-    vi.spyOn(Chat, 'updateOne').mockImplementation(async (filter, update) => {
-      let count = 0;
+    vi.spyOn(Chat, 'findOneAndUpdate').mockImplementation(async (filter, update, options) => {
       for (const [id, c] of chatsStore.entries()) {
         let match = true;
         if (filter._id && c._id.toString() !== filter._id.toString()) match = false;
+        if (filter.userId && c.userId.toString() !== filter.userId.toString()) match = false;
         if (match) {
+          const beforeDoc = { ...c };
+          if (update.$inc?.sequenceCounter) {
+            c.sequenceCounter = (c.sequenceCounter || 0) + update.$inc.sequenceCounter;
+          }
           if (update.$inc?.messagesCount) {
             c.messagesCount = (c.messagesCount || 0) + update.$inc.messagesCount;
           }
           if (update.$set?.lastMessageAt) {
             c.lastMessageAt = update.$set.lastMessageAt;
+          }
+          if (update.$set?.sequenceCounter !== undefined) {
+            c.sequenceCounter = update.$set.sequenceCounter;
+          }
+          if (update.$set?.title) {
+            c.title = update.$set.title;
+          }
+          if (update.title) {
+            c.title = update.title;
+          }
+          chatsStore.set(id, c);
+          return options?.new ? c : beforeDoc;
+        }
+      }
+      return null;
+    });
+
+    vi.spyOn(Chat, 'updateOne').mockImplementation(async (filter, update) => {
+      let count = 0;
+      for (const [id, c] of chatsStore.entries()) {
+        let match = true;
+        if (filter._id && c._id.toString() !== filter._id.toString()) match = false;
+        if (filter.userId && c.userId.toString() !== filter.userId.toString()) match = false;
+        if (match) {
+          if (update.$inc?.messagesCount) {
+            c.messagesCount = (c.messagesCount || 0) + update.$inc.messagesCount;
+          }
+          if (update.$inc?.sequenceCounter) {
+            c.sequenceCounter = (c.sequenceCounter || 0) + update.$inc.sequenceCounter;
+          }
+          if (update.$set?.lastMessageAt) {
+            c.lastMessageAt = update.$set.lastMessageAt;
+          }
+          if (update.$set?.sequenceCounter !== undefined) {
+            c.sequenceCounter = update.$set.sequenceCounter;
           }
           if (update.title) {
             c.title = update.title;
@@ -331,6 +370,19 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
 
     // 6. Mock Message model
     vi.spyOn(Message, 'create').mockImplementation(async (doc) => {
+      for (const existing of messagesStore.values()) {
+        if (
+          existing.chatId.toString() === doc.chatId.toString() &&
+          existing.sequenceIndex === doc.sequenceIndex
+        ) {
+          const err = new Error(
+            `E11000 duplicate key error collection: messages index: chatId_1_sequenceIndex_1 dup key: { chatId: ObjectId('${doc.chatId}'), sequenceIndex: ${doc.sequenceIndex} }`
+          );
+          err.code = 11000;
+          throw err;
+        }
+      }
+
       const _id = new mongoose.Types.ObjectId();
       const newMsg = {
         _id,
@@ -1071,51 +1123,104 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
   });
 
   describe('Concurrency & Monotonic Sequence Allocation', () => {
-    it('handles multiple sequential and concurrent message appends with strictly monotonic sequence indices', async () => {
+    it('handles multiple simultaneous concurrent message appends via Promise.all with unique monotonic sequences and zero duplicates', async () => {
       const chat = await Chat.create({
         userId: userA._id,
-        title: 'Concurrency Thread',
+        title: 'High Concurrency Thread',
         messagesCount: 0,
+        sequenceCounter: 0,
       });
 
-      // Execute 3 consecutive message append requests
-      const send1 = await request(app)
-        .post(`/api/v1/chats/${chat._id}/messages`)
-        .set('Cookie', sessionCookieA)
-        .send({ content: 'First message' });
+      const NUM_CONCURRENT_REQUESTS = 10;
+      const requestPromises = [];
 
-      const send2 = await request(app)
-        .post(`/api/v1/chats/${chat._id}/messages`)
-        .set('Cookie', sessionCookieA)
-        .send({ content: 'Second message' });
+      for (let i = 0; i < NUM_CONCURRENT_REQUESTS; i++) {
+        requestPromises.push(
+          request(app)
+            .post(`/api/v1/chats/${chat._id}/messages`)
+            .set('Cookie', sessionCookieA)
+            .send({ content: `Concurrent question payload #${i}` })
+        );
+      }
 
-      const send3 = await request(app)
-        .post(`/api/v1/chats/${chat._id}/messages`)
-        .set('Cookie', sessionCookieA)
-        .send({ content: 'Third message' });
+      // Execute all 10 requests simultaneously
+      const responses = await Promise.all(requestPromises);
 
-      expect(send1.status).toBe(201);
-      expect(send2.status).toBe(201);
-      expect(send3.status).toBe(201);
+      // Verify every concurrent request succeeded
+      for (const res of responses) {
+        expect(res.status).toBe(201);
+        expect(res.body.success).toBe(true);
+        expect(res.body.data.userMessage).toBeDefined();
+        expect(res.body.data.assistantMessage).toBeDefined();
+      }
 
-      // Verify sequence monotonic ordering
+      // Retrieve all persisted messages
       const threadRes = await request(app)
-        .get(`/api/v1/chats/${chat._id}/messages`)
+        .get(`/api/v1/chats/${chat._id}/messages?limit=100`)
         .set('Cookie', sessionCookieA);
 
       expect(threadRes.status).toBe(200);
       const messages = threadRes.body.data.messages;
-      expect(messages).toHaveLength(6); // 3 user + 3 assistant responses
 
-      const sequences = messages.map((m) => m.sequenceIndex);
-      expect(sequences).toEqual([0, 1, 2, 3, 4, 5]);
+      // Expected total: 10 requests * 2 (user + assistant) = 20 messages
+      expect(messages).toHaveLength(NUM_CONCURRENT_REQUESTS * 2);
 
-      // Ensure no duplicate sequence indexes
+      // Verify every sequenceIndex is unique and covers [0..19]
+      const sequences = messages.map((m) => m.sequenceIndex).sort((a, b) => a - b);
+      const expectedSequences = Array.from({ length: NUM_CONCURRENT_REQUESTS * 2 }, (_, i) => i);
+      expect(sequences).toEqual(expectedSequences);
+
       const uniqueSequences = new Set(sequences);
-      expect(uniqueSequences.size).toBe(6);
+      expect(uniqueSequences.size).toBe(NUM_CONCURRENT_REQUESTS * 2);
 
+      // Verify every submitted user message content exists exactly once
+      const userMessages = messages.filter((m) => m.role === 'user');
+      expect(userMessages).toHaveLength(NUM_CONCURRENT_REQUESTS);
+      for (let i = 0; i < NUM_CONCURRENT_REQUESTS; i++) {
+        const matches = userMessages.filter((m) => m.content === `Concurrent question payload #${i}`);
+        expect(matches).toHaveLength(1);
+      }
+
+      // Verify Chat.messagesCount is exactly 20
       const finalChat = chatsStore.get(chat._id.toString());
-      expect(finalChat.messagesCount).toBe(6);
+      expect(finalChat.messagesCount).toBe(NUM_CONCURRENT_REQUESTS * 2);
+    });
+
+    it('deterministically catches an E11000 duplicate key collision and recovers via retry loop', async () => {
+      const chat = await Chat.create({
+        userId: userA._id,
+        title: 'Collision Recovery Thread',
+        messagesCount: 0,
+        sequenceCounter: 0,
+      });
+
+      // Seed an existing message at sequenceIndex 0 directly in store
+      await Message.create({
+        chatId: chat._id,
+        userId: userA._id,
+        role: 'user',
+        content: 'Pre-existing legacy message',
+        sequenceIndex: 0,
+      });
+
+      // Chat sequenceCounter is intentionally at 0, creating a guaranteed collision on next allocation
+      const res = await request(app)
+        .post(`/api/v1/chats/${chat._id}/messages`)
+        .set('Cookie', sessionCookieA)
+        .send({ content: 'Message triggering sequence recovery' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.userMessage.sequenceIndex).toBeGreaterThanOrEqual(1);
+
+      // Verify message thread is intact with zero duplicate sequences
+      const threadRes = await request(app)
+        .get(`/api/v1/chats/${chat._id}/messages`)
+        .set('Cookie', sessionCookieA);
+
+      const sequences = threadRes.body.data.messages.map((m) => m.sequenceIndex);
+      const uniqueSeq = new Set(sequences);
+      expect(uniqueSeq.size).toBe(sequences.length);
     });
   });
 

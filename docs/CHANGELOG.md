@@ -32,10 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Authored `docs/phases/phase-04-chat-infrastructure.md`.
   - Added technical interview questions Q46–Q50 in `docs/interview/INTERVIEW_GUIDE.md`.
 - **Automated & Live Tests**:
-  - 28 backend tests in `server/tests/chats.test.js` (total server tests: 94).
+  - 29 backend tests in `server/tests/chats.test.js` (total server tests: 95).
   - 4 frontend tests in `client/src/pages/Chats.test.jsx` (total client tests: 40).
-  - Total automated monorepo tests increased to 134 tests (100% passing).
-  - Extended live verification script `server/scripts/verify_phase04_live.js` passing against live MongoDB Atlas and local backend across 11 stages and 17 verification points.
+  - Total automated monorepo tests increased to 135 tests (100% passing).
+  - Extended live verification script `server/scripts/verify_phase04_live.js` passing against live MongoDB Atlas and local backend across 11 stages and 17 verification points including 10-request concurrency.
+  - Completed end-to-end browser verification of `/chats` workspace, new conversation creation, Socratic preview responses, archiving, and deletion.
 
 ---
 

@@ -327,6 +327,7 @@ export async function createChat(req, res, next) {
       messages.push(formatMessageResponse(assistantMessage));
 
       chat.messagesCount = 2;
+      chat.sequenceCounter = 2;
       chat.lastMessageAt = new Date();
       await chat.save();
     }
@@ -903,44 +904,68 @@ export async function sendMessage(req, res, next) {
     // Phase 04 Deterministic Socratic Preview (NOT an external AI model integration)
     const assistantContent = generateAssistantPrompt(content.trim(), subjectName, topicTitle);
 
-    const messageBatch = [
-      {
-        role: 'user',
-        content: content.trim(),
-        status: 'sent',
-        metadata: metadata && typeof metadata === 'object' ? metadata : {},
-      },
-      {
-        role: 'assistant',
-        content: assistantContent,
-        status: 'sent',
-        metadata: { engine: 'phase-04-socratic-preview' },
-      },
-    ];
-
-    // Concurrency-safe sequence allocation with duplicate-key collision recovery
-    let insertedDocs = null;
+    const countToReserve = 2;
+    let formattedUser = null;
+    let formattedAssistant = null;
     const maxRetries = 5;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // 1. Atomically reserve sequence range on the Chat document
+      const reservedChat = await Chat.findOneAndUpdate(
+        { _id: chatId, userId: req.user._id },
+        {
+          $inc: { sequenceCounter: countToReserve, messagesCount: countToReserve },
+          $set: {
+            lastMessageAt: new Date(),
+            ...(chat.title === 'New Conversation' && content.trim().length > 0
+              ? { title: content.trim().slice(0, 60) }
+              : {}),
+          },
+        },
+        { new: false } // returns document state BEFORE atomic increment
+      );
+
+      if (!reservedChat) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Conversation not found.',
+            details: [],
+          },
+          requestId: req.id || 'unknown',
+        });
+      }
+
+      // If chat had sequenceCounter undefined, calculate base from existing messages count
+      let baseSequenceIndex = typeof reservedChat.sequenceCounter === 'number'
+        ? reservedChat.sequenceCounter
+        : (reservedChat.messagesCount || 0);
+
       try {
-        const lastMessage = await Message.findOne({ chatId: chat._id })
-          .sort({ sequenceIndex: -1 })
-          .lean();
-
-        const baseSequenceIndex = lastMessage ? lastMessage.sequenceIndex + 1 : 0;
-
-        const docsToInsert = messageBatch.map((msg, idx) => ({
+        // 2. Insert user message and assistant preview message with reserved sequence numbers
+        const userMessage = await Message.create({
           chatId: chat._id,
           userId: req.user._id,
-          role: msg.role,
-          content: msg.content,
-          sequenceIndex: baseSequenceIndex + idx,
-          status: msg.status,
-          metadata: msg.metadata,
-        }));
+          role: 'user',
+          content: content.trim(),
+          sequenceIndex: baseSequenceIndex,
+          status: 'sent',
+          metadata: metadata && typeof metadata === 'object' ? metadata : {},
+        });
 
-        insertedDocs = await Message.insertMany(docsToInsert, { ordered: true });
+        const assistantMessage = await Message.create({
+          chatId: chat._id,
+          userId: req.user._id,
+          role: 'assistant',
+          content: assistantContent,
+          sequenceIndex: baseSequenceIndex + 1,
+          status: 'sent',
+          metadata: { engine: 'phase-04-socratic-preview' },
+        });
+
+        formattedUser = formatMessageResponse(userMessage);
+        formattedAssistant = formatMessageResponse(assistantMessage);
         break;
       } catch (err) {
         const isDuplicateKey =
@@ -948,7 +973,15 @@ export async function sendMessage(req, res, next) {
           (err.writeErrors && err.writeErrors.some((e) => e.code === 11000));
 
         if (isDuplicateKey && attempt < maxRetries - 1) {
-          // Collision occurred on sequenceIndex; back off briefly and retry with fresh sequence
+          // If collision occurred (e.g. sequence drift), reconcile counter and retry
+          const lastMsg = await Message.findOne({ chatId: chat._id })
+            .sort({ sequenceIndex: -1 })
+            .lean();
+          const nextMaxSeq = lastMsg ? lastMsg.sequenceIndex + 1 : 0;
+          await Chat.updateOne(
+            { _id: chat._id, userId: req.user._id },
+            { $set: { sequenceCounter: nextMaxSeq }, $inc: { messagesCount: -countToReserve } }
+          );
           await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
           continue;
         }
@@ -956,26 +989,12 @@ export async function sendMessage(req, res, next) {
       }
     }
 
-    const formattedMessages = insertedDocs.map(formatMessageResponse);
-
-    // Auto-update title if initial generic title
-    const updates = {
-      lastMessageAt: new Date(),
-      $inc: { messagesCount: formattedMessages.length },
-    };
-
-    if (chat.title === 'New Conversation' && content.trim().length > 0) {
-      updates.title = content.trim().slice(0, 60);
-    }
-
-    await Chat.updateOne({ _id: chat._id }, updates);
-
     return res.status(201).json({
       success: true,
       data: {
-        messages: formattedMessages,
-        userMessage: formattedMessages[0],
-        assistantMessage: formattedMessages[1] || null,
+        messages: [formattedUser, formattedAssistant],
+        userMessage: formattedUser,
+        assistantMessage: formattedAssistant,
       },
       meta: {
         requestId: req.id || 'unknown',

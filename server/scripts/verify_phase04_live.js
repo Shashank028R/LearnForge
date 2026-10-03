@@ -224,34 +224,64 @@ async function runLiveVerification() {
     if (!validUserMsgRes.ok) throw new Error(`Valid user message failed: ${JSON.stringify(validUserData)}`);
     console.log(`✓ role="user" accepted: created user message (${validUserData.data.userMessage.sequenceIndex}) and assistant preview (${validUserData.data.assistantMessage.sequenceIndex})`);
 
-    // 9. Sequence ordering & Concurrency verification
-    console.log('\n[9] Verifying sequence ordering and concurrency handling...');
-    const append1 = fetch(`${API_BASE}/chats/${chatId}/messages`, {
-      method: 'POST',
-      headers: headersA,
-      body: JSON.stringify({ content: 'Follow-up question 1' }),
-    });
-    const append2 = fetch(`${API_BASE}/chats/${chatId}/messages`, {
-      method: 'POST',
-      headers: headersA,
-      body: JSON.stringify({ content: 'Follow-up question 2' }),
-    });
+    // 9. Sequence ordering & Concurrency verification with 10 simultaneous requests
+    console.log('\n[9] Verifying sequence ordering and concurrency handling (10 simultaneous requests)...');
+    const NUM_CONCURRENT_LIVE = 10;
+    const concurrentFetches = [];
 
-    const [res1, res2] = await Promise.all([append1, append2]);
-    if (!res1.ok || !res2.ok) throw new Error(`Concurrent appends failed: ${res1.status}, ${res2.status}`);
+    for (let i = 0; i < NUM_CONCURRENT_LIVE; i++) {
+      concurrentFetches.push(
+        fetch(`${API_BASE}/chats/${chatId}/messages`, {
+          method: 'POST',
+          headers: headersA,
+          body: JSON.stringify({ content: `Concurrent live question #${i}` }),
+        }).then(async (r) => ({
+          status: r.status,
+          ok: r.ok,
+          data: await r.json(),
+          content: `Concurrent live question #${i}`,
+        }))
+      );
+    }
 
-    const listRes = await fetch(`${API_BASE}/chats/${chatId}/messages`, { headers: headersA });
+    const concurrentResults = await Promise.all(concurrentFetches);
+    for (const r of concurrentResults) {
+      if (!r.ok || r.status !== 201) {
+        throw new Error(`Concurrent live append failed: status ${r.status}, response: ${JSON.stringify(r.data)}`);
+      }
+    }
+    console.log(`✓ All ${NUM_CONCURRENT_LIVE} simultaneous concurrent requests returned 201 Created (0 failures)`);
+
+    const listRes = await fetch(`${API_BASE}/chats/${chatId}/messages?limit=100`, { headers: headersA });
     const listData = await listRes.json();
-    const sequences = listData.data.messages.map((m) => m.sequenceIndex);
+    const messages = listData.data.messages;
+    const sequences = messages.map((m) => m.sequenceIndex);
+    console.log(`✓ Total persisted messages: ${messages.length}`);
     console.log(`✓ Persisted messages sequence indices: [${sequences.join(', ')}]`);
 
-    // Verify sequences are strictly unique and monotonically increasing
+    // Verify sequences are strictly continuous from 0 to N-1
     for (let i = 0; i < sequences.length; i++) {
       if (sequences[i] !== i) {
         throw new Error(`Sequence gap or duplicate detected! Expected ${i}, got ${sequences[i]}`);
       }
     }
-    console.log('✓ All sequence indices strictly unique, continuous, and monotonically ordered');
+    console.log('✓ All sequence indices are continuous and monotonically ordered with zero duplicates');
+
+    // Verify every user payload occurred exactly once
+    for (let i = 0; i < NUM_CONCURRENT_LIVE; i++) {
+      const match = messages.filter((m) => m.content === `Concurrent live question #${i}`);
+      if (match.length !== 1) {
+        throw new Error(`Expected exactly 1 occurrence of "Concurrent live question #${i}", found ${match.length}`);
+      }
+    }
+    console.log('✓ Every submitted concurrent user message exists exactly once without retry duplication');
+
+    // Verify Chat.messagesCount matches persisted messages
+    const chatDetails = await (await fetch(`${API_BASE}/chats/${chatId}`, { headers: headersA })).json();
+    if (chatDetails.data.chat.messagesCount !== messages.length) {
+      throw new Error(`Chat messagesCount mismatch! Document: ${chatDetails.data.chat.messagesCount}, Persisted: ${messages.length}`);
+    }
+    console.log(`✓ Chat messagesCount (${chatDetails.data.chat.messagesCount}) matches persisted count exactly`);
 
     // 10. Cross-tenant Security Verification (User B accessing User A resources)
     console.log('\n[10] Cross-tenant Isolation Verification (User B querying User A)...');
