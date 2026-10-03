@@ -54,7 +54,7 @@ While managed providers *do* support 6-digit email OTP and Google OAuth, adoptin
 
 In this approach, the Express backend directly manages identity and sessions using LearnForge's existing MongoDB database:
 - **Google OAuth**: Verified server-side via Google's official `google-auth-library` (OpenID Connect token verification).
-- **Email OTP**: Cryptographically generated 6-digit codes (`crypto.randomInt`), secured at rest using **HMAC-SHA-256 with a server-side secret pepper** (`OTP_HMAC_SECRET`), stored with explicit 10-minute expiration and MongoDB TTL cleanup, dispatched via transactional email (Resend / SendGrid / Nodemailer SMTP).
+- **Email OTP**: Cryptographically generated 6-digit codes (`crypto.randomInt`), secured at rest using **HMAC-SHA-256 with a server-side secret pepper** (`OTP_HMAC_SECRET`), stored with explicit 10-minute expiration and MongoDB TTL cleanup, dispatched via transactional email (Nodemailer SMTP transport; console transport for local dev).
 - **Session Model**: Opaque 256-bit cryptographically secure session tokens stored in the `UserSession` collection as SHA-256 hashes. Delivered to web browsers via HTTP-only, SameSite, Secure cookies, and accepted via `Authorization: Bearer <token>` headers for mobile clients.
 - **Single Source of Truth**: `User`, `AuthIdentity`, and `UserSession` live in the exact same MongoDB database as the rest of the application.
 

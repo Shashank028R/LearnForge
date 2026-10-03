@@ -18,11 +18,13 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - Audited all third-party references.
    - Identified 3 active integrations: Google Identity Services (OIDC), SMTP Email Transport, and MongoDB database.
    - Confirmed AI Gateway provider keys (Gemini, OpenAI, Anthropic) and Stripe are future phase requirements (Phase 05+) and are not requested prematurely.
-3. **SMTP Implementation Blocker Resolution**:
+3. **SMTP Implementation Blocker Resolution & Environment Clarifications**:
    - Discovered `EmailService.js` previously lacked an actual SMTP transport (fell back to console/memory in development and returned an unimplemented stub in production).
    - Integrated `nodemailer` (v10.0.14) into `EmailService.js`.
    - Implemented real HTML and plaintext email delivery with branded styling when `EMAIL_PROVIDER=smtp`.
    - Preserved console and in-memory test transports for local development and CI testing.
+   - Added `SMTP_SECURE=false` to `server/.env.example` with clear comments explaining port 587 (STARTTLS, `false`) vs port 465 (TLS/SSL, `true`).
+   - Corrected `EMAIL_PROVIDER` documentation in `server/.env.example` and `ADR-009` to strictly list supported providers (`console`, `smtp`), explicitly removing unbacked references to `resend`.
    - Registered `nodemailer` in `docs/DEPENDENCIES.md`.
 4. **Google Credential Correction**:
    - Removed unused `GOOGLE_CLIENT_SECRET` from `server/.env.example`.
