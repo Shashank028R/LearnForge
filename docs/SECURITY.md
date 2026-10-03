@@ -93,7 +93,7 @@ This document is the authoritative security architecture specification for **Lea
 - **Zero Web Token Exposure**: Raw session tokens are **never** returned in JSON responses to the browser (`POST /api/v1/auth/otp/verify` and `POST /api/v1/auth/google` return only user and session metadata).
 - **No Browser Credential Storage**: Authentication credentials are strictly prohibited from `localStorage`, `sessionStorage`, IndexedDB, or persistent React state.
 - **Cookie Security Flags**:
-  - `HttpOnly`: Inaccessible to browser JavaScript (completely neutralizing XSS token theft).
+  - `HttpOnly`: Inaccessible to browser JavaScript via `document.cookie`, preventing direct credential extraction/exfiltration via script injection (note: `HttpOnly` protects the raw session token from being stolen, but application-level input hygiene, output encoding, and CSP remain necessary to prevent in-context malicious actions during XSS).
   - `Secure`: Transmitted only over HTTPS (in production).
   - `SameSite: 'Lax'`: Defends against Cross-Site Request Forgery (CSRF).
   - `Path=/` and explicit 30-day lifetime.

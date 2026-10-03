@@ -110,7 +110,7 @@ If an attacker compromises or gains a read-only dump of the MongoDB database:
 Under Phase 01.1 security hardening:
 - **No Token in JSON**: The raw session token is **never returned in JSON** to web clients upon sign-in or OTP verification. Responses return only user and session metadata (`{ user, session: { id, expiresAt, authMethod } }`).
 - **No Client-Side Credential Storage**: The browser client is strictly prohibited from storing session tokens in `localStorage`, `sessionStorage`, IndexedDB, or React state.
-- **Pure Cookie Authentication**: Browser sessions authenticate exclusively via the `HttpOnly`, `SameSite: 'lax'`, `Secure` cookie (`learnforge_session`), fully neutralizing XSS credential theft.
+- **Pure Cookie Authentication**: Browser sessions authenticate exclusively via the `HttpOnly`, `SameSite: 'lax'`, `Secure` cookie (`learnforge_session`), mitigating token exfiltration via client-side JavaScript.
 
 ---
 

@@ -4,6 +4,43 @@ This log is the permanent chronological engineering journal for the LearnForge p
 
 ---
 
+## [Pre-Phase-03] API, External Integration, Credential & Live-Verification Audit
+
+- **Date**: October 3, 2026
+- **Status**: Completed (Phase 03 Gate Blocked pending external credentials)
+- **Objective**: Execute a rigorous pre-Phase-03 audit of the LearnForge codebase: inventory all currently implemented API endpoints, discover all external service dependencies, resolve implementation blockers for real SMTP delivery, purge unused credentials, establish formal Credential Gates, and audit secret-hygiene across the repository.
+
+### Work Performed
+1. **API Inventory**:
+   - Inspected all Express routers and confirmed exactly 7 endpoints exist: `GET /api/v1/health`, `POST /api/v1/auth/otp/request`, `POST /api/v1/auth/otp/verify`, `POST /api/v1/auth/google`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/logout-all`.
+   - Mapped all error codes, response envelopes, validation requirements, database dependencies, and rate limits.
+2. **External Integration Discovery**:
+   - Audited all third-party references.
+   - Identified 3 active integrations: Google Identity Services (OIDC), SMTP Email Transport, and MongoDB database.
+   - Confirmed AI Gateway provider keys (Gemini, OpenAI, Anthropic) and Stripe are future phase requirements (Phase 05+) and are not requested prematurely.
+3. **SMTP Implementation Blocker Resolution**:
+   - Discovered `EmailService.js` previously lacked an actual SMTP transport (fell back to console/memory in development and returned an unimplemented stub in production).
+   - Integrated `nodemailer` (v10.0.14) into `EmailService.js`.
+   - Implemented real HTML and plaintext email delivery with branded styling when `EMAIL_PROVIDER=smtp`.
+   - Preserved console and in-memory test transports for local development and CI testing.
+   - Registered `nodemailer` in `docs/DEPENDENCIES.md`.
+4. **Google Credential Correction**:
+   - Removed unused `GOOGLE_CLIENT_SECRET` from `server/.env.example`.
+   - Confirmed current architecture uses Google Identity Services with client-side ID token verification via `google-auth-library` and public JWKS, requiring only `VITE_GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_ID`.
+5. **Security Documentation Correction**:
+   - Audited and corrected inaccurate claims that `HttpOnly` "neutralizes XSS".
+   - Accurately documented in `SECURITY.md`, `INTERVIEW_GUIDE.md`, and `ADR-009` that `HttpOnly` prevents direct token exfiltration via `document.cookie`, while complete XSS defense requires defense-in-depth.
+6. **Automated Testing & Build Verification**:
+   - Added unit test suite `server/tests/emailService.test.js` (4 tests).
+   - Expanded API contract edge case tests in `server/tests/auth.test.js` (+4 tests).
+   - Total automated test count increased from 60 to 68 tests (38 server + 30 client, 100% passing).
+   - Client production build verified cleanly with Vite (`dist/` generated with zero errors).
+7. **Canonical Audit Documentation**:
+   - Created `docs/verification/INTEGRATION_CREDENTIAL_AUDIT.md`.
+   - Updated `PROJECT_CONTEXT.md` and `docs/CHANGELOG.md`.
+
+---
+
 ## [Phase 02.1] UI Shell Corrections & Accessibility Hardening
 
 - **Date**: October 3, 2026

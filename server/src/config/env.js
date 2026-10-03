@@ -24,6 +24,11 @@ export const config = {
   // Email service configuration
   emailProvider: process.env.EMAIL_PROVIDER || 'console',
   emailFrom: process.env.EMAIL_FROM || 'LearnForge <no-reply@learnforge.local>',
+  smtpHost: process.env.SMTP_HOST || '',
+  smtpPort: parseInt(process.env.SMTP_PORT || '587', 10),
+  smtpSecure: process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465',
+  smtpUser: process.env.SMTP_USER || '',
+  smtpPass: process.env.SMTP_PASS || '',
 
   // OTP Security parameters
   otpExpiryMinutes: parseInt(process.env.OTP_EXPIRY_MINUTES || '10', 10),

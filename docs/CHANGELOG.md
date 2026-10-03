@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.2] - 2026-10-03
+
+### Pre-Phase-03 API, Integration, Credential & Live-Verification Audit
+
+#### Added
+- **Production SMTP Transport**: Integrated `nodemailer` (v10.0.14) into `EmailService.js`, enabling real SMTP verification code delivery via HTML and plaintext emails when `EMAIL_PROVIDER=smtp`. Retained console logging and in-memory test harnesses.
+- **Dedicated Credential Audit Documentation**: Authored `docs/verification/INTEGRATION_CREDENTIAL_AUDIT.md` containing a complete 7-endpoint API inventory, external service discovery matrix, credential gates, and security audit results.
+- **Test Suite Expansion**: Added unit tests for `EmailService.js` and expanded API contract edge cases in `auth.test.js` (total tests increased from 60 to 68 passing).
+
+#### Changed & Fixed
+- **Google OAuth Config Hygiene**: Purged unused `GOOGLE_CLIENT_SECRET` from `server/.env.example`. Documented that Google Identity Services (GIS) client-side ID token verification requires only `VITE_GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_ID`.
+- **Security Documentation Precision**: Corrected statements in `SECURITY.md`, `INTERVIEW_GUIDE.md`, and `ADR-009` that claimed `HttpOnly` "neutralizes XSS". Accurately documented that `HttpOnly` protects against raw token exfiltration via JavaScript (`document.cookie`), while full XSS defense requires defense-in-depth.
+- **Audited Dependency Registry**: Added `nodemailer` to `docs/DEPENDENCIES.md` as an audited runtime dependency.
+
+---
+
 ## [0.3.1] - 2026-10-03
 
 ### Phase 02.1 — UI Shell Corrections & Accessibility Hardening

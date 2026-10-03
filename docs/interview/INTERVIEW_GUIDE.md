@@ -190,7 +190,7 @@ In `server/src/middleware/auth.js`, the authentication middleware employs a dual
 1. **Cookie Inspection**: Checks `req.cookies[SESSION_COOKIE_NAME]` (first-class for browsers).
 2. **Bearer Token Inspection**: If no cookie is present, checks `Authorization: Bearer <session-token>`.
 3. Both extraction paths pass the extracted token into the identical SHA-256 hash resolver and MongoDB lookup.
-4. Mobile clients can safely store the raw token in secure platform storage (iOS Keychain, Android Keystore) and attach it as a Bearer header, while web clients benefit from HttpOnly cookies immune to XSS.
+4. Mobile clients can safely store the raw token in secure platform storage (iOS Keychain, Android Keystore) and attach it as a Bearer header, while web clients benefit from HttpOnly cookies that prevent credential theft via JavaScript.
 
 ### Q23: How do you handle concurrent signup/login requests and race conditions?
 **Answer**:  

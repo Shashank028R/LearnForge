@@ -557,5 +557,61 @@ describe('Authentication & User Identity API (/api/v1/auth)', () => {
       expect(checkDevice2.status).toBe(401);
       expect(checkDevice2.body.error.code).toBe('SESSION_REVOKED');
     });
+
+    it('POST /auth/otp/verify rejects missing body or non-6-digit code with 400', async () => {
+      const res1 = await request(app).post('/api/v1/auth/otp/verify').send({});
+      expect(res1.status).toBe(400);
+      expect(res1.body.error.code).toBe('VALIDATION_ERROR');
+
+      const res2 = await request(app)
+        .post('/api/v1/auth/otp/verify')
+        .send({ email: 'user@example.com', code: '123' });
+      expect(res2.status).toBe(400);
+      expect(res2.body.error.code).toBe('INVALID_OTP');
+    });
+
+    it('POST /auth/google rejects missing or non-string idToken with 400', async () => {
+      const res1 = await request(app).post('/api/v1/auth/google').send({});
+      expect(res1.status).toBe(400);
+      expect(res1.body.error.code).toBe('VALIDATION_ERROR');
+
+      const res2 = await request(app).post('/api/v1/auth/google').send({ idToken: 12345 });
+      expect(res2.status).toBe(400);
+      expect(res2.body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('GET /auth/me rejects expired session token with 401 SESSION_EXPIRED', async () => {
+      const email = 'expired_session@learnforge.io';
+      await request(app).post('/api/v1/auth/otp/request').send({ email });
+      const { code } = emailService.getLastSentOtp(email);
+      const verifyRes = await request(app).post('/api/v1/auth/otp/verify').send({ email, code });
+      const cookie = verifyRes.headers['set-cookie'];
+
+      // Manually set session expiresAt in past
+      for (const s of sessionsStore.values()) {
+        s.expiresAt = new Date(Date.now() - 5000);
+      }
+
+      const res = await request(app).get('/api/v1/auth/me').set('Cookie', cookie);
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('SESSION_EXPIRED');
+    });
+
+    it('GET /auth/me rejects inactive/suspended user accounts', async () => {
+      const email = 'suspended@learnforge.io';
+      await request(app).post('/api/v1/auth/otp/request').send({ email });
+      const { code } = emailService.getLastSentOtp(email);
+      const verifyRes = await request(app).post('/api/v1/auth/otp/verify').send({ email, code });
+      const cookie = verifyRes.headers['set-cookie'];
+
+      // Suspend user
+      for (const u of usersStore.values()) {
+        u.status = 'suspended';
+      }
+
+      const res = await request(app).get('/api/v1/auth/me').set('Cookie', cookie);
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('AUTH_REQUIRED');
+    });
   });
 });

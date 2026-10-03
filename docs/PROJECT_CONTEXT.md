@@ -10,8 +10,8 @@
 
 ## 2. Current Phase Status
 
-- **Current Phase**: **Phase 02 — Professional UI Shell & Design System (COMPLETED)**
-- **Next Phase**: **Phase 03 — Subjects, Topics & Knowledge Structure**
+- **Current Phase**: **Pre-Phase-03 API, Integration & Credential Audit (GATE BLOCKED)**
+- **Next Phase**: **Phase 03 — Subjects, Topics & Knowledge Structure (BLOCKED pending live credentials)**
 - **Repository Remote**: `https://github.com/Shashank028R/LearnForge.git`
 - **Default Branch**: `main`
 
@@ -35,21 +35,26 @@
 - **Session Revocation**: Single session logout and global all-device revocation (`/api/v1/auth/logout-all`).
 - **Tiered Rate Limiting**: Protection against brute-force and email abuse using `express-rate-limit`.
 
-### Phase 02 (Professional UI Shell & Design System)
+### Phase 02 & 02.1 (Professional UI Shell & Route Protection Boundaries)
 - **Calm, High-Density Productivity Shell**: Persistent desktop sidebar, sticky topbar with breadcrumb and search trigger, responsive mobile drawer navigation.
 - **Strict Anti-AI-Gimmick Design**: Zero neon, zero glowing borders, zero glassmorphism, zero decorative floating orbs, zero fake metrics.
 - **Restrained Color & Surface Tokens**: Semantic tokens (`app.*`, `brand.*`, `status.*`), typography utilities, and low-distraction dark mode.
 - **Complete Reusable UI Primitives Suite**: `Button`, `IconButton`, `Input`, `Dialog`, `Dropdown`, `EmptyState`, `Skeleton`, `LoadingState`, `ErrorState`, `Tabs`, `Divider`, `Avatar`, `Badge`, and native 1.5-stroke SVG `Icon`.
-- **Authentic Routing & Empty States**: Clean routing foundation (`/`, `/subjects`, `/chats`, `/notes`, `/study`, `/quizzes`, `/progress`, `/import`, `/profile`, `/settings`) with authentic empty states and no fabricated data.
-- **Refactored Auth UI Integration**: Preserved Google Identity Services, 6-digit OTP, paste support, and HttpOnly session cookies while removing demo styling.
-- **Automated Tests**: 47 tests passing (30 server + 17 client).
-- **Design System Spec**: Canonical documentation created at `docs/features/DESIGN_SYSTEM.md`.
+- **Protected Route Hierarchy**: Centralized layout-level `ProtectedRoute` protecting all workspace routes (`/subjects`, `/chats`, `/notes`, `/study`, `/quizzes`, `/progress`, `/import`, `/profile`).
+- **Modal Focus Trap & Accessibility**: WCAG AA focus trap, Tab/Shift+Tab cycle, Escape dismiss, backdrop click isolation, and focus restoration to opener element.
+
+### Pre-Phase-03 (API, Integration, Credential & Live-Verification Audit)
+- **API Surface Inventory**: Complete mapping of all 7 implemented backend endpoints.
+- **SMTP Transport Implementation**: Replaced unfulfilled SMTP stub with `nodemailer` (v10.0.14) for real email delivery while preserving console/memory fallbacks for offline development.
+- **Credential Gate Established**: Enforced strict policy separating automated test verification from live third-party verification.
+- **Secret Hygiene**: Purged unused `GOOGLE_CLIENT_SECRET`, validated placeholder safety in `.env.example`, and corrected HttpOnly security documentation.
+- **Automated Tests**: 68 tests passing (38 server + 30 client).
 
 ---
 
 ## 4. Current Work
-- Phase 02 completed and fully verified.
-- Awaiting project owner authorization before initiating Phase 03.
+- Pre-Phase-03 Credential Gate audit completed.
+- Phase 03 is blocked pending configuration of live Google OAuth and SMTP credentials.
 
 ---
 

@@ -55,6 +55,7 @@ Every package added to the project must be documented in this registry before th
 | `google-auth-library` | `^11.1.0` | `11.1.0` | Cryptographic verification of Google OpenID Connect ID tokens | Official Google SDK, caches Google public JWKS keys, handles rotation | Custom JWT verification via `jsonwebtoken` | Runtime |
 | `mongoose` | `^8.12.1` | `8.24.4` | MongoDB Object Data Modeling (ODM), schema validation, indexes | Schema integrity, middleware hooks, rich query builder for document model | Native MongoDB driver, Prisma | Runtime |
 | `morgan` | `^1.10.0` | `1.12.1` | HTTP request logging middleware with response time and correlation IDs | Standard, lightweight logging for developer observability | Pino, Winston | Runtime |
+| `nodemailer` | `^10.0.14` | `10.0.14` | Real SMTP email transport for delivering 6-digit OTP verification codes | Standard, battle-tested, zero-native-dependency SMTP library for Node.js | `@sendgrid/mail`, `@resend/node`, AWS SES SDK | Runtime |
 
 ### Development & Testing Dependencies
 
