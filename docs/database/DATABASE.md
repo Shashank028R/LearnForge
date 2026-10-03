@@ -1,411 +1,136 @@
-# Database Design
-
-## 1. Principles
-
-- Keep ownership explicit.
-- Prefer references for high-growth or cross-cutting collections.
-- Embed small immutable metadata where it improves read locality.
-- Keep user-authored content distinguishable from AI-derived content.
-- Use timestamps consistently.
-- Add indexes based on actual access patterns.
-- Use transactions for multi-collection changes where atomicity matters.
-
-## 2. Core Entities
-
-### User
-
-Purpose: account-level identity and profile.
-
-Suggested fields:
-
-- `_id`
-- `email`
-- `displayName`
-- `avatarUrl`
-- `status`
-- `timezone`
-- `onboardingState`
-- `createdAt`
-- `updatedAt`
-- `lastActiveAt`
-
-Constraints:
-- email normalized and unique where applicable;
-- never store provider secrets.
-
-### AuthIdentity
-
-Represents an external identity such as Google.
-
-Fields:
-- `_id`
-- `userId`
-- `provider`
-- `providerSubject`
-- `emailAtProvider`
-- `createdAt`
-- `updatedAt`
-
-Unique index: `(provider, providerSubject)`.
-
-### UserSession
-
-Fields:
-- `_id`
-- `userId`
-- `sessionTokenHash` or equivalent secure session reference
-- `deviceInfo`
-- `ipMetadata` only where legally/operationally justified
-- `expiresAt`
-- `revokedAt`
-- `createdAt`
-
-### Subject
-
-Fields:
-- `_id`
-- `userId`
-- `name`
-- `slug`
-- `description`
-- `status`
-- `colorToken` (semantic token, not hard-coded design color)
-- `createdAt`
-- `updatedAt`
-
-Unique per user: `(userId, slug)`.
-
-### Topic
-
-Fields:
-- `_id`
-- `subjectId`
-- `parentTopicId`
-- `name`
-- `slug`
-- `description`
-- `order`
-- `status`
-- `createdAt`
-- `updatedAt`
-
-Hierarchy can be represented with `parentTopicId` to avoid hard-coded depth.
-
-### Concept
-
-A learning concept within a topic.
-
-Fields:
-- `_id`
-- `subjectId`
-- `topicId`
-- `canonicalName`
-- `summary`
-- `aliases`
-- `status`
-- `createdAt`
-- `updatedAt`
-
-Canonical identity must be stable enough for deduplication.
-
-### Chat
-
-Fields:
-- `_id`
-- `userId`
-- `subjectId` nullable
-- `title`
-- `mode` (`chat`, `study`)
-- `source` (`native`, `imported`)
-- `archivedAt`
-- `createdAt`
-- `updatedAt`
-- `lastMessageAt`
-
-### Message
-
-Fields:
-- `_id`
-- `chatId`
-- `role` (`user`, `assistant`, `system`)
-- `content`
-- `parts` for structured content when needed
-- `providerMetadata` sanitized
-- `tokenUsage` where available
-- `sequence`
-- `createdAt`
-
-Index: `(chatId, sequence)`.
-
-### LearningEvent
-
-Represents a meaningful learning interaction.
-
-Fields:
-- `_id`
-- `userId`
-- `subjectId`
-- `topicId`
-- `chatId` nullable
-- `messageId` nullable
-- `eventType`
-- `payload`
-- `source`
-- `confidence`
-- `createdAt`
-
-Event types may include:
-- concept_introduced;
-- concept_explained;
-- user_explained;
-- answer_evaluated;
-- misconception_detected;
-- example_added;
-- correction_recorded;
-- quiz_result;
-- imported_knowledge.
-
-### KnowledgeState
-
-Fields:
-- `_id`
-- `userId`
-- `conceptId`
-- `state`
-- `confidenceScore`
-- `evidenceCount`
-- `lastAssessedAt`
-- `lastStudiedAt`
-- `nextReviewAt` nullable
-- `weakAreas`
-- `strengths`
-- `version`
-- `updatedAt`
-
-Unique index: `(userId, conceptId)`.
-
-### NoteDocument
-
-Represents the logical note page/document.
-
-Fields:
-- `_id`
-- `userId`
-- `subjectId`
-- `topicId`
-- `title`
-- `summary`
-- `currentVersionId`
-- `status`
-- `createdAt`
-- `updatedAt`
-
-### NoteVersion
-
-Immutable snapshot of a note document.
-
-Fields:
-- `_id`
-- `noteDocumentId`
-- `versionNumber`
-- `blocks`
-- `createdByType` (`user`, `ai`, `system`, `import`)
-- `sourceReferences`
-- `changeSummary`
-- `createdAt`
-
-Unique index: `(noteDocumentId, versionNumber)`.
-
-### NoteChange
-
-Represents an explainable change proposal or applied change.
-
-Fields:
-- `_id`
-- `noteDocumentId`
-- `baseVersionId`
-- `proposedVersionId`
-- `status` (`proposed`, `approved`, `rejected`, `applied`, `reverted`)
-- `changeSummary`
-- `diffMetadata`
-- `sourceLearningEventIds`
-- `createdAt`
-- `resolvedAt`
-
-### Quiz
-
-Fields:
-- `_id`
-- `userId`
-- `subjectId`
-- `topicIds`
-- `mode` (`manual`, `adaptive`, `review`)
-- `difficulty`
-- `questionCount`
-- `status`
-- `createdAt`
-
-### QuizQuestion
-
-Fields:
-- `_id`
-- `quizId`
-- `conceptId`
-- `questionType`
-- `prompt`
-- `options` nullable
-- `expectedAnswer`
-- `explanation`
-- `difficulty`
-- `sequence`
-
-### QuizAttempt
-
-Fields:
-- `_id`
-- `quizId`
-- `userId`
-- `startedAt`
-- `completedAt`
-- `score`
-- `summary`
-
-### QuizAnswer
-
-Fields:
-- `_id`
-- `attemptId`
-- `questionId`
-- `userAnswer`
-- `isCorrect`
-- `evaluation`
-- `conceptImpact`
-- `createdAt`
-
-### ImportedConversation
-
-Fields:
-- `_id`
-- `userId`
-- `sourceType`
-- `originalFileAssetId` nullable
-- `rawContentReference`
-- `normalizedConversation`
-- `detectedSubjectId` nullable
-- `status`
-- `createdAt`
-- `updatedAt`
-
-Do not store unbounded raw payloads in a single MongoDB document if they risk document-size limits. Large content should use object storage.
-
-### ImportJob
-
-Fields:
-- `_id`
-- `userId`
-- `importedConversationId`
-- `status`
-- `progress`
-- `errorCode`
-- `startedAt`
-- `completedAt`
-
-### FileAsset
-
-Fields:
-- `_id`
-- `userId`
-- `storageProvider`
-- `storageKey`
-- `mimeType`
-- `size`
-- `checksum`
-- `purpose`
-- `createdAt`
-
-### AIRequestLog
-
-Fields:
-- `_id`
-- `userId` nullable
-- `taskType`
-- `provider`
-- `model`
-- `latencyMs`
-- `inputTokens` nullable
-- `outputTokens` nullable
-- `success`
-- `errorCode` nullable
-- `createdAt`
-
-Avoid persisting raw sensitive prompts/responses unless necessary for product functionality and explicitly protected.
-
-### UserPreference
-
-Fields:
-- `_id`
-- `userId`
-- `theme`
-- `density`
-- `defaultMode`
-- `studyStrictness`
-- `defaultSubjectId` nullable
-- `createdAt`
-- `updatedAt`
-
-## 3. Relationship Summary
-
-```text
-User
- ├── AuthIdentity
- ├── UserSession
- ├── Subject
- │    └── Topic
- │         └── Concept
- ├── Chat
- │    └── Message
- ├── LearningEvent
- ├── KnowledgeState -> Concept
- ├── NoteDocument
- │    └── NoteVersion
- ├── NoteChange
- ├── Quiz
- │    ├── QuizQuestion -> Concept
- │    └── QuizAttempt
- │         └── QuizAnswer
- ├── ImportedConversation
- ├── ImportJob
- ├── FileAsset
- ├── AIRequestLog
- └── UserPreference
+# LearnForge — Database Design & Schema Specification
+
+## 1. Core Principles
+
+- Explicit user ownership on all private records.
+- Normalized references for high-growth and cross-cutting entities.
+- Passwordless identity modeling with zero stored passwords.
+- Immutable snapshots for note versioning and audit trails.
+- Strict indexing strategy aligned with query access patterns.
+- Automatic document cleanup via MongoDB TTL (Time-To-Live) indexes.
+
+---
+
+## 2. Authentication Entities (Phase 01 Implemented)
+
+### 2.1 User
+Represents account-level identity and preferences.
+
+```javascript
+{
+  _id: ObjectId,
+  email: String,            // Original email string, lowercase, trimmed
+  normalizedEmail: String,  // Unique, indexed canonical email
+  displayName: String,      // User display name
+  avatarUrl: String,        // Profile image URL or null
+  status: String,           // 'active' | 'suspended' | 'deactivated'
+  timezone: String,         // Default: 'UTC'
+  onboardingState: String,  // Default: 'completed'
+  preferences: {
+    theme: String,          // 'light' | 'dark'
+    density: String,        // 'normal' | 'compact'
+    studyStrictness: String,// 'balanced' | 'strict'
+    defaultMode: String     // 'chat' | 'study'
+  },
+  lastActiveAt: Date,
+  createdAt: Date,
+  updatedAt: Date
+}
 ```
+**Indexes**:
+- `normalizedEmail`: `{ unique: true }`
+- `status`: `{}`
 
-## 4. Progress Calculation
+---
 
-Progress should be derived from concept/topic knowledge states, not stored as a single manually updated percentage.
+### 2.2 AuthIdentity
+Represents an external or email authentication identity attached to a User.
 
-A deterministic first implementation can map state to weighted points. The exact formula must be documented and tested before being used in production UI.
+```javascript
+{
+  _id: ObjectId,
+  userId: ObjectId,         // Ref: 'User'
+  provider: String,         // 'google' | 'email'
+  providerSubject: String,  // Google 'sub' claim or normalized email
+  emailAtProvider: String,  // Email reported by the provider
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Compound Unique Index: `{ provider: 1, providerSubject: 1 }, { unique: true }`
+- Lookup Index: `{ userId: 1 }`
 
-## 5. Invariants
+---
 
-- Every user-owned record must be authorized through the owning user or an auditable ownership path.
-- A knowledge state must not exist without a valid concept.
-- A note version must point to a valid note document.
-- A note change must reference its base version.
-- A quiz answer must belong to the correct attempt and question.
-- Import jobs must not mutate unrelated subjects.
+### 2.3 UserSession
+Represents an active or revoked authenticated session. Raw session tokens are never stored.
 
-## 6. Indexing Strategy
+```javascript
+{
+  _id: ObjectId,
+  userId: ObjectId,         // Ref: 'User'
+  sessionTokenHash: String, // SHA-256 hash of opaque 256-bit token
+  deviceInfo: {
+    userAgent: String,
+    ip: String
+  },
+  authMethod: String,       // 'google' | 'otp'
+  expiresAt: Date,          // Default: 30 days from creation
+  revokedAt: Date,          // null if active, Date if logged out
+  lastSeenAt: Date,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- `sessionTokenHash`: `{ unique: true }`
+- `userId`: `{}`
+- `revokedAt`: `{}`
+- TTL Index: `{ expiresAt: 1 }, { expireAfterSeconds: 0 }` (Automated MongoDB expiration cleanup)
 
-Initial indexes should target common queries:
+---
 
-- user-owned collections by `userId`;
-- subject topics by `(subjectId, order)`;
-- chats by `(userId, updatedAt)`;
-- messages by `(chatId, sequence)`;
-- concepts by subject/topic;
-- knowledge states by `(userId, conceptId)`;
-- notes by `(userId, subjectId, topicId)`;
-- quiz history by `(userId, createdAt)`.
+### 2.4 EmailOtpToken
+Stores pending 6-digit passwordless verification codes. Plaintext codes are never stored.
 
-Do not add speculative indexes without measuring access patterns.
+```javascript
+{
+  _id: ObjectId,
+  email: String,            // Normalized email, unique
+  otpHash: String,          // HMAC-SHA-256(key=OTP_HMAC_SECRET, data=email + ":" + code)
+  attempts: Number,         // Default: 0 (locked out at 5)
+  maxAttempts: Number,      // Default: 5
+  expiresAt: Date,          // 10 minutes from creation
+  resendAvailableAt: Date,  // 60-second cooldown
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- `email`: `{ unique: true }`
+- TTL Index: `{ expiresAt: 1 }, { expireAfterSeconds: 0 }`
+
+---
+
+## 3. Core Domain Entities (Scheduled for Subsequent Phases)
+
+- **Subject** (`Phase 03`): User study domains with slugs and color tokens.
+- **Topic** (`Phase 03`): Hierarchical sub-domains within a Subject.
+- **Concept** (`Phase 03`): Canonical atomic learning concepts.
+- **Chat** (`Phase 04`): Subject-scoped and general conversation sessions.
+- **Message** (`Phase 04`): Ordered messages with sequence indexing.
+- **LearningEvent** (`Phase 06`): Learning observations and concept interactions.
+- **KnowledgeState** (`Phase 06`): Per-user concept mastery states and confidence.
+- **NoteDocument & NoteVersion** (`Phase 07`): Typed block notes and immutable snapshots.
+- **Quiz & QuizAttempt** (`Phase 10`): Dynamic assessments and scored student responses.
+- **ImportJob** (`Phase 11`): External conversation ingest tracking.
+
+---
+
+## 4. Invariants & Data Integrity Rules
+
+1. **User Identity Invariant**: Every `AuthIdentity` and `UserSession` must resolve to an active, valid `User`.
+2. **Deterministic Linking**: The compound unique index on `AuthIdentity(provider, providerSubject)` guarantees an external identity cannot be attached to multiple accounts.
+3. **Session Nonce Invariant**: `sessionTokenHash` is unique. Collisions on 256-bit cryptographically random tokens have probability $\approx 2^{-256}$.
+4. **Zero Stored Plaintext Credentials**: Plaintext OTP codes and raw session tokens are strictly barred from MongoDB storage.

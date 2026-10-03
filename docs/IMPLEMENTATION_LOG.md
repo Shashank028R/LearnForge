@@ -4,6 +4,110 @@ This log is the permanent chronological engineering journal for the LearnForge p
 
 ---
 
+## [Phase 01] Authentication & User Identity
+
+- **Date**: October 3, 2026
+- **Status**: Completed
+- **Phase**: Phase 01 — Authentication & User Identity
+- **Objective**: Implement production-grade passwordless authentication and user identity for LearnForge, including Google OAuth 2.0 (OpenID Connect), 6-digit Email OTP, database-backed stateful sessions in MongoDB, HTTP-only cookies, mobile Bearer token parity, session revocation, deterministic account linking, and professional authentication UI.
+
+### Work Performed
+1. **Mongoose Models Implemented**:
+   - `User` (`server/src/models/User.js`): Normalized email, display name, avatar URL, account status, timezone, default study preferences, and timestamps.
+   - `AuthIdentity` (`server/src/models/AuthIdentity.js`): External identity mapping with unique compound index `{ provider: 1, providerSubject: 1 }`.
+   - `UserSession` (`server/src/models/UserSession.js`): Stateful opaque session tokens stored as SHA-256 hashes, device info, `expiresAt` with TTL index, and `revokedAt`.
+   - `EmailOtpToken` (`server/src/models/EmailOtpToken.js`): Passwordless verification tokens with HMAC-SHA-256 peppered hash, attempt counter, and TTL index.
+2. **Cryptographic Core & Hashing (`server/src/utils/authCrypto.js`)**:
+   - `generateOtpCode`: 6-digit integer generation using `crypto.randomInt(100000, 1000000)`.
+   - `hashOtp`: HMAC-SHA-256 hash using server-side pepper `OTP_HMAC_SECRET` bound to normalized email, neutralizing offline rainbow table attacks if MongoDB is breached.
+   - `verifyOtpHash`: Constant-time comparison (`crypto.timingSafeEqual`) preventing timing side-channel attacks.
+   - `generateSessionToken`: 256-bit high-entropy opaque token (`crypto.randomBytes(32).toString('hex')`).
+   - `hashSessionToken`: Standard SHA-256 hash for database matching.
+3. **Email Delivery Abstraction (`server/src/services/email/EmailService.js`)**:
+   - Created `EmailService` with development console transport, test memory queue, and production SMTP/API readiness.
+4. **Google OAuth 2.0 OpenID Connect (`server/src/services/auth/GoogleAuthService.js`)**:
+   - Server-side cryptographic token verification using `google-auth-library` (`OAuth2Client.verifyIdToken`).
+   - Validates audience, issuer, expiration, and enforces `email_verified: true`.
+5. **Deterministic Account Linking (ADR-010)**:
+   - Reconciles Google sign-in with existing Email-OTP users by verified email matching, preventing duplicate split accounts and account takeover.
+6. **Authentication & Session Middleware**:
+   - `authenticateUser` (`server/src/middleware/auth.js`): Dual resolution supporting HTTP-only cookies (`learnforge_session`) for browsers and `Authorization: Bearer <token>` for future mobile applications. Validates session state, expiration, and revocation.
+   - `requireDatabase` (`server/src/middleware/databaseCheck.js`): Prevents 10-second Mongoose command buffering timeouts when MongoDB is offline, returning fast 503 `SERVICE_UNAVAILABLE`.
+   - `rateLimiter` (`server/src/middleware/rateLimiter.js`): Tiered IP rate limiting for OTP request (5/15m), OTP verify (10/15m), and Google auth (15/15m).
+7. **Authentication Controllers & Routes**:
+   - `POST /api/v1/auth/otp/request`: Enumeration-resistant, 60s cooldown, 10m expiry.
+   - `POST /api/v1/auth/otp/verify`: Validates code, enforces 5-attempt brute-force lockout, single-use invalidation, issues session, sets cookie.
+   - `POST /api/v1/auth/google`: Server-verified OIDC login, account linking, issues session.
+   - `GET /api/v1/auth/me`: Protected current user profile and session info.
+   - `POST /api/v1/auth/logout`: Revokes active session and clears cookie.
+   - `POST /api/v1/auth/logout-all`: Revokes all user sessions across all devices.
+8. **Frontend Authentication UI (`client/src/`)**:
+   - `AuthContext`: Manages login/logout lifecycle, current user state, and session persistence.
+   - `AuthModal`: Professional modal with Google sign-in, email input, 6-digit OTP inputs with auto-advance and paste support, and resend countdown.
+   - `UserNav`: Header navigation showing user avatar/initials, active session indicator, single logout, and all-device logout.
+   - Interactive protected API probe in `App.jsx`.
+9. **Automated Testing Suite**:
+   - 24 server integration/unit tests (`auth.test.js`, `authCrypto.test.js`, `googleAuthService.test.js`, `health.test.js`) + 2 client component tests passing 100%.
+
+### Files Created
+- `docs/decisions/ADR-010-account-linking.md`
+- `docs/phases/phase-01-authentication-report.md`
+- `server/src/models/User.js`
+- `server/src/models/AuthIdentity.js`
+- `server/src/models/UserSession.js`
+- `server/src/models/EmailOtpToken.js`
+- `server/src/utils/authCrypto.js`
+- `server/src/services/email/EmailService.js`
+- `server/src/services/auth/GoogleAuthService.js`
+- `server/src/middleware/auth.js`
+- `server/src/middleware/databaseCheck.js`
+- `server/src/middleware/rateLimiter.js`
+- `server/src/controllers/authController.js`
+- `server/src/routes/auth.js`
+- `server/tests/authCrypto.test.js`
+- `server/tests/googleAuthService.test.js`
+- `server/tests/auth.test.js`
+- `client/src/context/AuthContext.jsx`
+- `client/src/components/auth/AuthModal.jsx`
+- `client/src/components/layout/UserNav.jsx`
+
+### Files Modified
+- `docs/decisions/ADR-009-authentication-architecture.md`
+- `docs/SECURITY.md`
+- `docs/API.md`
+- `docs/ARCHITECTURE.md`
+- `docs/DATABASE.md`
+- `docs/DEPENDENCIES.md`
+- `docs/PROJECT_CONTEXT.md`
+- `docs/CHANGELOG.md`
+- `docs/interview/INTERVIEW_GUIDE.md`
+- `docs/phases/phase-01-authentication.md`
+- `server/package.json`
+- `server/.env.example`
+- `server/src/config/env.js`
+- `server/src/app.js`
+- `client/src/App.jsx`
+- `client/src/App.test.jsx`
+
+### Dependencies Added
+- `cookie-parser`: declared `^1.4.7`, resolved `1.4.7` (HTTP-only session cookie parsing)
+- `express-rate-limit`: declared `^8.7.0`, resolved `8.7.0` (IP rate limiting on auth endpoints)
+- `google-auth-library`: declared `^11.1.0`, resolved `11.1.0` (server-side Google OIDC validation)
+
+### Decisions Made
+- **ADR-009 Updates**: Clarified provider capabilities, pricing changeability, accurate operational cost language, and concrete HMAC-SHA-256 OTP hashing design with server pepper.
+- **ADR-010**: Adopted deterministic server-side account linking policy for Google OAuth and Email OTP based on verified email matching.
+
+### Problems Encountered & Solutions
+1. **Problem**: Mongoose command buffering caused a 10-second timeout on requests when MongoDB was offline in local dev mode.  
+   **Solution**: Implemented `requireDatabase` middleware returning fast 503 `SERVICE_UNAVAILABLE` error envelopes when MongoDB is offline, eliminating buffering lag.
+2. **Problem**: Duplicate schema index warnings on `EmailOtpToken.expiresAt`.  
+   **Solution**: Consolidated schema definition to rely exclusively on the single compound TTL index.
+3. **Problem**: React Testing Library selector ambiguity with multiple "Sign In" elements.  
+   **Solution**: Refined test assertions in `App.test.jsx` using `findAllByText` and specific role selectors.
+
+---
+
 ## [Phase 00.1] Documentation Reconciliation & Foundation Corrections
 
 - **Date**: October 3, 2026
@@ -29,23 +133,6 @@ This log is the permanent chronological engineering journal for the LearnForge p
 5. **Phase Report Authoring**:
    - Created `docs/phases/phase-00.1-documentation-reconciliation.md` with complete interview explanation and questions.
 
-### Files Created
-- `docs/SECURITY.md` (canonical security specification)
-- `docs/decisions/ADR-009-authentication-architecture.md` (auth architecture evaluation & decision)
-- `docs/phases/phase-00.1-documentation-reconciliation.md` (Phase 00.1 report)
-
-### Files Modified
-- `docs/DEPENDENCIES.md` (clarified declared ranges vs. resolved versions)
-- `docs/PROJECT_CONTEXT.md` (updated phase state and clarified Phase 01 scope)
-- `docs/CHANGELOG.md` (added Phase 00.1 entry)
-- `docs/IMPLEMENTATION_LOG.md` (this journal entry)
-
-### Decisions Made
-- **ADR-009**: Adopted a Self-Managed Native MongoDB Session Architecture with Google OAuth 2.0 and passwordless email OTP. Avoided managed auth providers to eliminate split-brain database architecture and webhook synchronization risks.
-
-### Unresolved Issues / Deferred Work
-- Phase 01 implementation awaits explicit authorization from the project owner. No code was written for authentication in this phase.
-
 ---
 
 ## [Phase 00] Project Foundation, Repository Setup, Documentation System & Architecture Verification
@@ -54,99 +141,3 @@ This log is the permanent chronological engineering journal for the LearnForge p
 - **Status**: Completed
 - **Phase**: Phase 00 — Foundation
 - **Objective**: Establish the production-grade monorepo foundation, repository setup, unified documentation structure, architectural validation, environment configuration, code hygiene baseline, and health-check verification without implementing future features prematurely.
-
-### Work Performed
-1. **Architectural Review & Contradiction Resolution**:
-   - Conducted deep inspection of all 18 phase specifications, 8 ADRs, database designs, API conventions, and security guidelines.
-   - Identified and resolved naming inconsistencies ("AI Study Workspace" -> "LearnForge"), auth session ambiguity, topic-to-note cardinality, and storage abstraction rules.
-   - Produced `docs/architecture/ARCHITECTURE_REVIEW.md`.
-2. **Unified Documentation System**:
-   - Reorganized documentation into a clean, intuitive hierarchy: `/docs/architecture`, `/docs/api`, `/docs/database`, `/docs/features`, `/docs/phases`, `/docs/decisions`, `/docs/interview`, `/docs/operations`.
-   - Created Mermaid architecture diagrams in `docs/architecture/SYSTEM_DIAGRAMS.md`.
-   - Established this living engineering journal `docs/IMPLEMENTATION_LOG.md`.
-3. **Monorepo Architecture Setup**:
-   - Initialized root `package.json` with npm workspaces orchestrating `/client` and `/server`.
-   - Structured frontend `/client` with React 18, Vite, React Router DOM, and Tailwind CSS configured for a clean, professional, distraction-free productivity aesthetic.
-   - Structured backend `/server` with Node.js Express (ES Modules), centralized environment configuration, correlation ID middleware, standard error envelopes, and graceful MongoDB connectivity abstraction.
-4. **Environment & Security Hygiene**:
-   - Created `client/.env.example` and `server/.env.example`.
-   - Established root `.gitignore` ensuring zero secrets, lockfile discipline, and clean version control.
-5. **Baseline Testing & Verification**:
-   - Configured Vitest + Supertest for server API integration testing (`/api/v1/health` and 404 handler).
-   - Configured Vitest for client component testing.
-   - Verified local boot, linting, and test execution.
-6. **Git Initialization & Remote Connection**:
-   - Initialized git repository on branch `main`.
-   - Connected remote `https://github.com/Shashank028R/LearnForge.git`.
-   - Prepared clean foundation commit: `chore: initialize LearnForge project foundation`.
-
-### Files Created
-- `docs/architecture/ARCHITECTURE_REVIEW.md`
-- `docs/architecture/SYSTEM_DIAGRAMS.md`
-- `docs/IMPLEMENTATION_LOG.md`
-- `docs/phases/phase-00-foundation.md` (expanded comprehensive report)
-- `README.md` (polished, professional project README)
-- `.gitignore`
-- `package.json` (root workspace manifest)
-- `client/package.json`
-- `client/vite.config.js`
-- `client/tailwind.config.js`
-- `client/postcss.config.js`
-- `client/index.html`
-- `client/.env.example`
-- `client/src/main.jsx`
-- `client/src/App.jsx`
-- `client/src/index.css`
-- `client/src/App.test.jsx`
-- `server/package.json`
-- `server/.env.example`
-- `server/src/index.js`
-- `server/src/app.js`
-- `server/src/config/env.js`
-- `server/src/config/database.js`
-- `server/src/middleware/requestId.js`
-- `server/src/middleware/errorHandler.js`
-- `server/src/routes/health.js`
-- `server/tests/health.test.js`
-
-### Files Modified
-- `docs/PROJECT_CONTEXT.md` (synchronized with Phase 00 state)
-- `docs/CHANGELOG.md` (recorded Phase 00 additions)
-- `docs/DEPENDENCIES.md` (registered exact packages with rationales)
-- `docs/interview/INTERVIEW_GUIDE.md` (added Phase 00 questions and answers)
-
-### Dependencies Added
-- **Root**: `concurrently` (dev tooling for running client and server simultaneously)
-- **Client**: `react`, `react-dom`, `react-router-dom`, `vite`, `@vitejs/plugin-react`, `tailwindcss`, `postcss`, `autoprefixer`, `vitest`, `jsdom`, `@testing-library/react`
-- **Server**: `express`, `cors`, `dotenv`, `mongoose`, `morgan`, `vitest`, `supertest`
-
-### Architectural Changes
-- Standardized API prefix at `/api/v1`.
-- Standardized response envelope shape: `{ success: true, data: ..., meta: ... }` and error shape `{ success: false, error: { code, message, details }, requestId }`.
-- Abstracted database connection to handle offline/transient development environments gracefully without unhandled process termination.
-
-### Database Changes
-- None (Phase 00 strictly sets up connection abstraction; models deferred to Phase 01/03).
-
-### APIs Introduced
-- `GET /api/v1/health` — Returns status, timestamp, uptime, environment, and database connectivity.
-
-### Testing Performed
-- Server integration test verifying `GET /api/v1/health` returns `200 OK` with JSON envelope and correlation ID.
-- Server test verifying 404 handler returns structured error envelope.
-- Client unit test verifying App component mounts and displays LearnForge workspace status.
-
-### Problems Encountered & Solutions
-- **Problem**: Mongoose connection failure would cause unhandled promise rejections if a local MongoDB instance was offline during early foundation setup.
-- **Solution**: Implemented safe, resilient connection management in `server/src/config/database.js` that logs status without crashing the HTTP server in development, reflecting database status dynamically in the `/api/v1/health` response.
-
-### Documentation Updated
-- `docs/PROJECT_CONTEXT.md`
-- `docs/CHANGELOG.md`
-- `docs/DEPENDENCIES.md`
-- `docs/interview/INTERVIEW_GUIDE.md`
-- `docs/phases/phase-00-foundation.md`
-
-### Remaining Issues / Deferred Work
-- Phase 01 will implement user identity, Google OAuth, email OTP, and session tokens.
-- No business logic or premature AI logic was implemented in this phase.

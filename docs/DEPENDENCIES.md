@@ -49,9 +49,12 @@ Every package added to the project must be documented in this registry before th
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `express` | `^4.21.2` | `4.22.3` | HTTP API framework, routing, and middleware pipeline | Lightweight, ubiquitous, robust middleware ecosystem | Fastify, Koa, NestJS | Runtime |
 | `cors` | `^2.8.5` | `2.8.6` | Configures Cross-Origin Resource Sharing headers for API security | Standard, reliable Express CORS middleware | Custom header middleware | Runtime |
-| `dotenv` | `^16.4.7` | `16.6.1` | Loads environment variables from `.env` into `process.env` | Industry standard for 12-factor application configuration | Node native `--env-file` (less portable across package scripts) | Runtime |
+| `cookie-parser` | `^1.4.7` | `1.4.7` | Parse and sign HTTP-only session cookies (`learnforge_session`) | De facto standard for cookie parsing in Express, zero dependencies | Manual cookie string splitting | Runtime |
+| `dotenv` | `^16.4.7` | `16.6.1` | Loads environment variables from `.env` into `process.env` | Industry standard for 12-factor application configuration | Node native `--env-file` | Runtime |
+| `express-rate-limit` | `^8.7.0` | `8.7.0` | IP-based request throttling on OTP request/verify and auth endpoints | Standard Express rate limiter, battle-tested, flexible error handler | Custom in-memory rate limiter | Runtime |
+| `google-auth-library` | `^11.1.0` | `11.1.0` | Cryptographic verification of Google OpenID Connect ID tokens | Official Google SDK, caches Google public JWKS keys, handles rotation | Custom JWT verification via `jsonwebtoken` | Runtime |
 | `mongoose` | `^8.12.1` | `8.24.4` | MongoDB Object Data Modeling (ODM), schema validation, indexes | Schema integrity, middleware hooks, rich query builder for document model | Native MongoDB driver, Prisma | Runtime |
-| `morgan` | `^1.10.0` | `1.12.1` | HTTP request logging middleware with response time and correlation IDs | Standard, lightweight logging for developer observability | Pino, Winston (can upgrade in Phase 14) | Runtime |
+| `morgan` | `^1.10.0` | `1.12.1` | HTTP request logging middleware with response time and correlation IDs | Standard, lightweight logging for developer observability | Pino, Winston | Runtime |
 
 ### Development & Testing Dependencies
 

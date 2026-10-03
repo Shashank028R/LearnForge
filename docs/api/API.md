@@ -1,168 +1,234 @@
-# API Design
+# LearnForge — API Design & Contract Specification
 
 ## 1. API Principles
 
-- REST-style resource-oriented endpoints initially.
-- JSON request/response unless a binary upload/download requires another content type.
-- Consistent error format.
-- Authentication enforced server-side.
-- Authorization based on ownership and permissions.
-- Pagination for potentially large collections.
-- Idempotency where retries could create duplicates.
-- Version the API when breaking changes become necessary.
+- REST-style resource-oriented endpoints mounted under versioned base path `/api/v1`.
+- JSON request and response payloads with standardized envelopes.
+- Server-side cryptographic authentication and ownership-based authorization.
+- Correlation IDs (`X-Request-Id`) returned on every response.
+- Tiered rate limiting on authentication and resource-intensive endpoints.
+- Secure HTTP-only cookies for web sessions with `Authorization: Bearer <token>` support for mobile clients.
 
-## 2. Base Structure
+---
 
-Suggested base path:
+## 2. Standard Response Envelopes
 
-`/api/v1`
+### Success Envelope
+```json
+{
+  "success": true,
+  "data": { ... },
+  "meta": {
+    "requestId": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
 
-The exact public deployment path may differ, but the application should keep a version boundary in the backend.
-
-## 3. Authentication Endpoints
-
-Example resources:
-
-- `POST /auth/otp/request`
-- `POST /auth/otp/verify`
-- `POST /auth/google/start` or provider-specific flow
-- `GET /auth/me`
-- `POST /auth/logout`
-- `POST /auth/logout-all`
-
-The exact Google authentication flow must match the selected production auth mechanism.
-
-## 4. Subject Endpoints
-
-- `GET /subjects`
-- `POST /subjects`
-- `GET /subjects/:subjectId`
-- `PATCH /subjects/:subjectId`
-- `DELETE /subjects/:subjectId`
-- `GET /subjects/:subjectId/topics`
-
-## 5. Topic / Knowledge Endpoints
-
-- `POST /subjects/:subjectId/topics`
-- `PATCH /topics/:topicId`
-- `DELETE /topics/:topicId`
-- `GET /subjects/:subjectId/knowledge`
-- `GET /concepts/:conceptId`
-- `GET /subjects/:subjectId/progress`
-
-## 6. Chat Endpoints
-
-- `GET /chats`
-- `POST /chats`
-- `GET /chats/:chatId`
-- `PATCH /chats/:chatId`
-- `DELETE /chats/:chatId`
-- `GET /chats/:chatId/messages`
-- `POST /chats/:chatId/messages`
-
-Streaming may be used for assistant output, but the final message must still be persisted as a canonical message record.
-
-## 7. Study Mode Endpoints
-
-- `POST /study-sessions`
-- `GET /study-sessions/:id`
-- `POST /study-sessions/:id/respond`
-- `POST /study-sessions/:id/finish`
-
-Study Mode may reuse chat infrastructure but must maintain explicit session metadata and learning-state outcomes.
-
-## 8. Notes Endpoints
-
-- `GET /subjects/:subjectId/notes`
-- `GET /notes/:noteId`
-- `PATCH /notes/:noteId`
-- `POST /notes/:noteId/changes/preview`
-- `POST /notes/:noteId/changes/:changeId/approve`
-- `POST /notes/:noteId/changes/:changeId/reject`
-- `POST /notes/:noteId/revert`
-- `GET /notes/:noteId/versions`
-- `GET /notes/:noteId/export/pdf`
-
-## 9. Quiz Endpoints
-
-- `POST /quizzes/generate`
-- `GET /quizzes`
-- `GET /quizzes/:quizId`
-- `POST /quizzes/:quizId/start`
-- `POST /quizzes/:quizId/submit`
-- `GET /quiz-attempts/:attemptId`
-
-## 10. Import Endpoints
-
-- `POST /imports`
-- `GET /imports/:importId`
-- `POST /imports/:importId/analyze`
-- `GET /imports/:importId/merge-preview`
-- `POST /imports/:importId/merge`
-- `POST /imports/:importId/create-chat`
-- `POST /imports/:importId/create-subject`
-
-## 11. Profile / Progress Endpoints
-
-- `GET /profile`
-- `PATCH /profile`
-- `GET /profile/progress`
-- `GET /profile/activity`
-- `GET /subjects/:subjectId/progress`
-
-## 12. Error Contract
-
-Use a consistent shape such as:
-
+### Error Envelope
 ```json
 {
   "success": false,
   "error": {
     "code": "VALIDATION_ERROR",
-    "message": "One or more fields are invalid.",
+    "message": "Human-readable explanation of error.",
     "details": []
   },
-  "requestId": "..."
+  "requestId": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-Never leak provider keys, stack traces, database details, or sensitive internals to clients.
+---
 
-## 13. Success Contract
+## 3. Implemented Authentication Endpoints (Phase 01)
 
-```json
-{
-  "success": true,
-  "data": {},
-  "meta": {}
-}
-```
+### 3.1 Request Email OTP
+- **Endpoint**: `POST /api/v1/auth/otp/request`
+- **Rate Limit**: Max 5 requests per 15 min per IP; 60s per-email cooldown
+- **Request Body**:
+  ```json
+  {
+    "email": "student@learnforge.io"
+  }
+  ```
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "message": "If the provided email address is valid, a verification code has been dispatched.",
+      "cooldownSeconds": 60,
+      "expiresInMinutes": 10
+    },
+    "meta": { "requestId": "..." }
+  }
+  ```
+- **Error Codes**: `VALIDATION_ERROR` (400), `OTP_RATE_LIMITED` (429), `SERVICE_UNAVAILABLE` (503).
 
-Metadata is optional and may include pagination or request context.
+---
 
-## 14. Pagination
+### 3.2 Verify Email OTP
+- **Endpoint**: `POST /api/v1/auth/otp/verify`
+- **Rate Limit**: Max 10 attempts per 15 min per IP; Max 5 attempts per OTP code
+- **Request Body**:
+  ```json
+  {
+    "email": "student@learnforge.io",
+    "code": "849201"
+  }
+  ```
+- **Response (`200 OK`)**:
+  - Sets HTTP-Only Cookie: `learnforge_session=<raw_session_token>`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "user": {
+        "id": "67041a9f9...",
+        "email": "student@learnforge.io",
+        "displayName": "student",
+        "avatarUrl": null,
+        "status": "active",
+        "timezone": "UTC"
+      },
+      "sessionToken": "a9f8b2c4e..."
+    },
+    "meta": { "requestId": "..." }
+  }
+  ```
+- **Error Codes**: `VALIDATION_ERROR` (400), `INVALID_OTP` (400), `OTP_EXPIRED` (400), `MAX_ATTEMPTS_EXCEEDED` (429).
 
-Use cursor-based pagination for high-growth collections such as messages and activity once needed. Offset pagination can be used for small collections initially when it simplifies the UI.
+---
 
-## 15. Authorization
+### 3.3 Google OAuth Sign-In (OpenID Connect)
+- **Endpoint**: `POST /api/v1/auth/google`
+- **Rate Limit**: Max 15 attempts per 15 min per IP
+- **Request Body**:
+  ```json
+  {
+    "idToken": "eyJhbGciOiJSUzI1NiIs..."
+  }
+  ```
+- **Response (`200 OK`)**:
+  - Sets HTTP-Only Cookie: `learnforge_session=<raw_session_token>`
+  ```json
+  {
+    "success": true,
+    "data": {
+      "user": {
+        "id": "67041a9f9...",
+        "email": "student@gmail.com",
+        "displayName": "Student Name",
+        "avatarUrl": "https://lh3.googleusercontent.com/...",
+        "status": "active"
+      },
+      "sessionToken": "b4e8c1a7d..."
+    },
+    "meta": { "requestId": "..." }
+  }
+  ```
+- **Error Codes**: `VALIDATION_ERROR` (400), `INVALID_TOKEN` (401), `AUTH_PROVIDER_ERROR` (403).
 
-Every resource lookup must be checked against the authenticated user. Never rely on frontend subject/chat IDs as proof of ownership.
+---
 
-## 16. Rate Limits
+### 3.4 Get Current User Profile & Session
+- **Endpoint**: `GET /api/v1/auth/me`
+- **Authorization**: Required (`Cookie: learnforge_session=...` or `Authorization: Bearer <token>`)
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "user": {
+        "id": "67041a9f9...",
+        "email": "student@learnforge.io",
+        "displayName": "student",
+        "avatarUrl": null,
+        "status": "active",
+        "timezone": "UTC",
+        "preferences": {
+          "theme": "light",
+          "density": "normal",
+          "studyStrictness": "balanced",
+          "defaultMode": "chat"
+        },
+        "createdAt": "2026-10-03T16:00:00.000Z"
+      },
+      "session": {
+        "id": "67041b12...",
+        "authMethod": "otp",
+        "expiresAt": "2026-11-02T16:00:00.000Z",
+        "createdAt": "2026-10-03T16:00:00.000Z"
+      }
+    },
+    "meta": { "requestId": "..." }
+  }
+  ```
+- **Error Codes**: `AUTH_REQUIRED` (401), `SESSION_REVOKED` (401), `SESSION_EXPIRED` (401).
 
-Rate-limit at minimum:
+---
 
-- OTP requests;
-- OTP verification attempts;
-- authentication endpoints;
-- AI generation endpoints;
-- import endpoints;
-- PDF generation if expensive.
+### 3.5 Logout Active Session
+- **Endpoint**: `POST /api/v1/auth/logout`
+- **Authorization**: Required
+- **Response (`200 OK`)**:
+  - Clears `learnforge_session` cookie
+  ```json
+  {
+    "success": true,
+    "data": {
+      "message": "Logged out successfully."
+    },
+    "meta": { "requestId": "..." }
+  }
+  ```
 
-## 17. Idempotency
+---
 
-Where duplicate retries are harmful, support idempotency keys or unique request identifiers.
+### 3.6 Logout All Devices
+- **Endpoint**: `POST /api/v1/auth/logout-all`
+- **Authorization**: Required
+- **Response (`200 OK`)**:
+  - Sets `revokedAt` on all active sessions for current user; clears cookie
+  ```json
+  {
+    "success": true,
+    "data": {
+      "message": "All active sessions across all devices have been revoked."
+    },
+    "meta": { "requestId": "..." }
+  }
+  ```
 
-## 18. API Documentation
+---
 
-Once implementation starts, the project should maintain an OpenAPI specification or equivalent machine-readable API contract for stable endpoints.
+## 4. Planned Endpoints (Scheduled for Later Phases)
+
+### 4.1 System & Health (Phase 00 - Implemented)
+- `GET /api/v1/health` — System uptime, status, and database connectivity.
+
+### 4.2 Subjects & Topics (Phase 03 - Planned)
+- `GET /api/v1/subjects`
+- `POST /api/v1/subjects`
+- `GET /api/v1/subjects/:subjectId/topics`
+- `POST /api/v1/subjects/:subjectId/topics`
+
+### 4.3 Conversations & Messages (Phase 04 - Planned)
+- `GET /api/v1/chats`
+- `POST /api/v1/chats`
+- `GET /api/v1/chats/:chatId/messages`
+- `POST /api/v1/chats/:chatId/messages`
+
+### 4.4 Structured Notes (Phase 07/12 - Planned)
+- `GET /api/v1/subjects/:subjectId/notes`
+- `GET /api/v1/notes/:noteId`
+- `PATCH /api/v1/notes/:noteId`
+- `GET /api/v1/notes/:noteId/versions`
+- `GET /api/v1/notes/:noteId/export/pdf`
+
+### 4.5 Quizzes (Phase 10 - Planned)
+- `POST /api/v1/quizzes/generate`
+- `POST /api/v1/quizzes/:quizId/submit`
+
+### 4.6 Imports (Phase 11 - Planned)
+- `POST /api/v1/imports`
+- `GET /api/v1/imports/:importId/merge-preview`

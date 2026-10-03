@@ -84,3 +84,125 @@ Under ADR-008, a feature is **not** done merely because code was written. A feat
 4. Relevant documentation is updated (`PROJECT_CONTEXT.md`, `CHANGELOG.md`, `DEPENDENCIES.md`, `INTERVIEW_GUIDE.md`).
 5. A dedicated Phase Report is authored.
 6. The implementation can be defended and explained in a technical interview.
+
+---
+
+## 5. Phase 01 — Authentication & User Identity Architecture
+
+### Q12: Why did you choose self-managed sessions instead of managed services like Clerk, Supabase, or Auth0?
+**Answer**:  
+While managed providers like Clerk or Supabase offer out-of-the-box UI and auth workflows, LearnForge chose self-managed authentication for specific architectural reasons:
+1. **Direct Data Co-location & Domain Integrity**: LearnForge's core domain models (`User`, `UserPreferences`, `Subject`, `StudySession`) live in MongoDB. With managed auth, the primary identity lives in an external cloud database or PostgreSQL (in Supabase's case), requiring fragile webhook syncing or dual-write distributed transactions to keep user records synchronized with MongoDB.
+2. **Pedagogical Session Control**: LearnForge requires absolute programmatic control over session invalidation (such as revoking all active sessions upon security incidents or resetting study states) without paying per-MAU tier jumps or vendor lock-in fees.
+3. **Portability & Cost**: Self-managed auth eliminates recurring third-party auth subscriptions, running directly on our Express backend and MongoDB infrastructure while remaining fully portable across hosting environments.
+
+### Q13: Why not Clerk or Supabase specifically?
+**Answer**:  
+1. **Clerk**: While Clerk provides polished widgets and supports email OTP + Google OAuth, it operates as a hosted identity silo. User identity webhooks must be received, verified, and mapped into MongoDB. Furthermore, Clerk pricing escalates rapidly with monthly active users ($0.02+/MAU after free tier), penalizing high-volume student usage.
+2. **Supabase**: Supabase Auth (GoTrue) is tightly coupled to PostgreSQL row-level security (RLS). Using Supabase solely for authentication while running LearnForge’s document graphs and hierarchical study trees in MongoDB introduces architectural dissonance—managing both Postgres and MongoDB databases simultaneously without leveraging Supabase's core RLS or Postgres ecosystem.
+
+### Q14: How does Google authentication work in LearnForge, and why MUST credentials be validated on the server?
+**Answer**:  
+1. **Workflow**: The frontend uses Google Identity Services to authenticate the user and obtain an OpenID Connect (OIDC) ID token (JWT) signed by Google's private keys. The frontend posts this credential to `POST /api/v1/auth/google`.
+2. **Server-Side Validation**: In `GoogleAuthService.js`, the server uses `google-auth-library` (`OAuth2Client.verifyIdToken`) to fetch Google's public certificates (via JWKS) and cryptographically verify:
+   - **Signature**: Verified using Google's asymmetric public keys.
+   - **Audience (`aud`)**: Must strictly match our configured `GOOGLE_CLIENT_ID`.
+   - **Issuer (`iss`)**: Must be `accounts.google.com` or `https://accounts.google.com`.
+   - **Expiration (`exp`)**: Token must not be expired (`exp > now`).
+3. **Why Server-Side**: If the server trusted client-supplied claims (e.g. `{ email: "victim@example.com", name: "Victim" }`), an attacker could simply send any JSON payload with an arbitrary user's email and take over their account. Server-side cryptographic signature and audience verification guarantees that Google attested to that specific user's identity for our application.
+
+### Q15: Why use opaque database-backed sessions instead of stateless JWTs stored in the browser?
+**Answer**:  
+Stateless JWTs stored in browser localStorage or cookies cannot be revoked instantly without maintaining a distributed denylist (which defeats the "stateless" benefit). If a user's laptop is stolen, an attacker can use a leaked JWT until its expiration time expires.  
+In LearnForge:
+- **Instant Revocation**: When a user clicks "Log out" or "Log out all devices", the server updates or deletes the `UserSession` document in MongoDB. The next incoming request is immediately rejected.
+- **Opaque Entropy**: The client receives a 256-bit high-entropy random hex token (`crypto.randomBytes(32)`). It contains zero user data, no metadata, and no claims.
+- **Security Posture**: No client-side decoding or signature tampering risk.
+
+### Q16: Why do you hash session tokens before storing them in MongoDB?
+**Answer**:  
+If the MongoDB database is ever compromised, read via SQL/NoSQL injection, or exposed in an unencrypted backup snapshot, raw session tokens stored in plaintext would allow attackers to impersonate every active user on the platform.  
+By storing only the cryptographic SHA-256 hash of the session token (`crypto.createHash('sha256').update(rawToken).digest('hex')`):
+- The token behaves like a password: the server hashes the incoming token and looks up `sessionTokenHash`.
+- An attacker with read access to MongoDB cannot derive the raw 256-bit bearer token because SHA-256 is a one-way cryptographic hash function with $2^{256}$ search complexity.
+
+### Q17: Why use HTTP-only, SameSite, Secure cookies for web sessions?
+**Answer**:  
+1. **`HttpOnly: true`**: Prevents browser JavaScript from accessing the cookie (`document.cookie`). Even if an XSS vulnerability exists on the frontend, malicious scripts cannot extract or exfiltrate the session token.
+2. **`Secure: true`**: In production, forces cookies to be transmitted only over encrypted TLS/HTTPS connections, preventing cleartext sniffing on untrusted networks.
+3. **`SameSite: 'lax'`** (or `'strict'`): Prevents Cross-Site Request Forgery (CSRF). The browser refuses to send the cookie on cross-site state-changing requests (like cross-origin POSTs), neutralizing classic CSRF attacks without requiring complex token exchanges.
+
+### Q18: How does "Logout from all devices" work?
+**Answer**:  
+When a user calls `POST /api/v1/auth/logout-all`:
+1. The authentication middleware validates the caller's active session and extracts `req.user._id`.
+2. The controller executes:
+   ```javascript
+   await UserSession.updateMany(
+     { userId: req.user._id, revokedAt: null },
+     { $set: { revokedAt: new Date() } }
+   );
+   ```
+3. The server clears the active session cookie in the client response.
+4. Any other browser or mobile client attempting a request with an existing session token is immediately rejected because `revokedAt` is no longer `null`.
+
+### Q19: How do you prevent brute-force attacks against 6-digit email OTPs?
+**Answer**:  
+A 6-digit OTP has only $10^6$ (1,000,000) possible combinations. Without protection, an attacker could iterate all codes in minutes. We implement multi-layered defenses:
+1. **Strict Attempt Counter**: Each OTP document tracks `attempts`. After 5 incorrect attempts, the token is permanently invalidated and deleted. 5 attempts out of $1,000,000$ represents a $0.0005\%$ probability of guessing correctly.
+2. **Short Time-to-Live (TTL)**: OTPs expire in 10 minutes (`expiresAt`).
+3. **Resend Throttling**: A 60-second cooldown is enforced between requests for the same email.
+4. **IP Rate Limiting**: `express-rate-limit` caps OTP verification requests to 10 per 15 minutes per IP address, preventing distributed brute-force.
+5. **HMAC-SHA-256 with Server Pepper**: OTPs are hashed at rest using HMAC-SHA-256 with a secret server-side pepper (`OTP_HMAC_SECRET`). Even if the database is leaked, an offline brute-force attack cannot succeed without the application server's pepper.
+6. **Constant-Time Comparison**: Verification uses `crypto.timingSafeEqual` to prevent timing side-channel attacks.
+
+### Q20: How do you prevent account enumeration on the OTP request endpoint?
+**Answer**:  
+When a user submits `POST /api/v1/auth/otp/request` with an email address:
+- If the email belongs to an existing user: an OTP is generated and emailed.
+- If the email does NOT belong to an existing user: an OTP is still generated, stored, and emailed (as LearnForge allows passwordless onboarding).
+- If any internal condition occurs, the HTTP response envelope **always** returns the exact same payload:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "message": "If the email is valid, a verification code has been sent.",
+      "expiresIn": 600,
+      "resendCooldown": 60
+    }
+  }
+  ```
+The response reveals zero difference in timing or structure between registered and unregistered accounts, completely eliminating account enumeration.
+
+### Q21: How do you safely and deterministically link Google and Email identities (ADR-010)?
+**Answer**:  
+1. **Rule**: External OAuth accounts are linked to existing users **only if** the OAuth provider cryptographically certifies that the email is verified (`email_verified === true`) and matches an existing `User.normalizedEmail`.
+2. **Deterministic Lookup**:
+   - First, query `AuthIdentity` by `provider: 'google'` and `providerSubject: payload.sub`. If found, authenticate that user immediately.
+   - If not found, query `User` by `normalizedEmail`.
+   - If an existing user exists and Google asserts `email_verified: true`, create a new `AuthIdentity` linked to that `existingUser._id`.
+   - If no user exists, bootstrap a new `User` and create the `AuthIdentity` inside an idempotent creation flow.
+3. **Security Boundary**: We never allow client-initiated linking or unverified emails (`email_verified: false`) to merge into existing accounts, preventing account hijacking.
+
+### Q22: How will future mobile authentication work without breaking web cookie security?
+**Answer**:  
+In `server/src/middleware/auth.js`, the authentication middleware employs a dual-credential extraction strategy with strict precedence:
+1. **Cookie Inspection**: Checks `req.cookies[SESSION_COOKIE_NAME]` (first-class for browsers).
+2. **Bearer Token Inspection**: If no cookie is present, checks `Authorization: Bearer <session-token>`.
+3. Both extraction paths pass the extracted token into the identical SHA-256 hash resolver and MongoDB lookup.
+4. Mobile clients can safely store the raw token in secure platform storage (iOS Keychain, Android Keystore) and attach it as a Bearer header, while web clients benefit from HttpOnly cookies immune to XSS.
+
+### Q23: How do you handle concurrent signup/login requests and race conditions?
+**Answer**:  
+1. **Compound Unique Indexes**: `AuthIdentity` enforces `{ provider: 1, providerSubject: 1 }` with `{ unique: true }`. `User` enforces `{ normalizedEmail: 1 }` with `{ unique: true }`.
+2. **MongoDB Duplicate Key Handling**: If two concurrent Google sign-in requests for the same new user hit the server simultaneously, both will attempt creation. One succeeds; the second hits MongoDB duplicate key error code `11000`. The catch block intercepts error code 11000 and recovers by re-querying the existing record rather than failing with a 500 error.
+
+### Q24: What are the engineering trade-offs of your authentication design?
+**Answer**:  
+- **Trade-off 1: Database Trip on Authenticated Requests vs. Stateless JWT**:  
+  *Cost*: Every protected API call performs an indexed query on `UserSession` and `User`.  
+  *Benefit*: Instant session revocation, real-time user status checks (active/suspended), and zero JWT stale claim risks. MongoDB indexed lookups take <1ms.
+- **Trade-off 2: Self-Managed Auth vs. Turnkey SaaS**:  
+  *Cost*: We wrote ~1,500 lines of robust auth code, tests, and crypto utilities.  
+  *Benefit*: Zero recurring SaaS cost, complete architectural control, zero cross-database sync webhooks, and identical local/offline development velocity.
+

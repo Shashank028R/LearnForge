@@ -1,32 +1,69 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import App from './App.jsx';
 
-describe('LearnForge Client Foundation', () => {
-  it('renders the application header and product description', async () => {
-    // Mock global fetch for health check
-    global.fetch = vi.fn().mockImplementation(() =>
-      Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            success: true,
-            data: {
-              status: 'healthy',
-              service: 'LearnForge API',
-              version: '0.1.0',
-              database: 'disconnected',
-            },
-          }),
-      })
-    );
+describe('LearnForge Client Foundation & Auth Shell', () => {
+  beforeEach(() => {
+    // Mock global fetch for health check and auth check
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/v1/health')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              success: true,
+              data: {
+                status: 'healthy',
+                service: 'LearnForge API',
+                version: '0.1.0',
+                database: 'connected',
+              },
+            }),
+        });
+      }
+      if (url.includes('/api/v1/auth/me')) {
+        // Return unauthenticated on initial mount
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          json: () =>
+            Promise.resolve({
+              success: false,
+              error: { code: 'AUTH_REQUIRED' },
+            }),
+        });
+      }
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+    });
+  });
 
+  it('renders application header, auth status, and sign-in button', async () => {
     render(<App />);
 
     expect(screen.getByText('LearnForge')).toBeDefined();
-    expect(screen.getByText(/AI-Powered Knowledge & Learning Workspace/i)).toBeDefined();
-    expect(await screen.findByText('Phase 00 Verified')).toBeDefined();
-    expect(await screen.findByText(/LearnForge API/i)).toBeDefined();
+    expect(await screen.findByText('Auth Online')).toBeDefined();
+    expect(await screen.findAllByText(/Sign In/i)).toBeDefined();
+    expect(screen.getByText(/Authentication & User Identity/i)).toBeDefined();
+    expect(screen.getByText(/Passwordless & Google/i)).toBeDefined();
+  });
+
+  it('opens and closes the AuthModal dialog on button click', async () => {
+    render(<App />);
+
+    const signInBtn = await screen.findByRole('button', { name: /^sign in$/i });
+    fireEvent.click(signInBtn);
+
+    // Auth modal should now be visible
+    expect(await screen.findByRole('dialog')).toBeDefined();
+    expect(screen.getByText('Welcome to LearnForge')).toBeDefined();
+    expect(screen.getByText(/Continue with Google/i)).toBeDefined();
+    expect(screen.getByPlaceholderText('you@domain.com')).toBeDefined();
+
+    // Close button
+    const closeBtn = screen.getByRole('button', { name: /close dialog/i });
+    fireEvent.click(closeBtn);
+
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
