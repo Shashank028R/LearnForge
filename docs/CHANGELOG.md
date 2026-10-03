@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 28 backend tests in `server/tests/subjects.test.js` (server total 66 tests).
   - 6 frontend tests in `client/src/pages/Subjects.test.jsx` (client total 36 tests).
   - Total automated monorepo tests increased to 102 tests (100% passing).
+- **Topic Count Consistency & Lifecycle**:
+  - Documented that Subject `topicsCount` is maintained through coordinated application-level updates when topics are created or deleted, and reconciled from persisted Topic records upon read.
 - **Live Integration Verification**:
   - Live verification script `server/scripts/verify_phase03_live.js` passing against running local backend and live MongoDB Atlas (including `comprehensive` mastery creation, persistence, bidirectional updates, invalid rejection, and cross-tenant checks).
 

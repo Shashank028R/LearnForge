@@ -19,8 +19,8 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - Created `server/src/models/Subject.js` with fields: `userId`, `name`, `normalizedName`, `description`, `color`, `status`, `targetMasteryLevel`, `topicsCount`. Indexes: unique `{ userId: 1, normalizedName: 1 }`, `{ userId: 1, status: 1, updatedAt: -1 }`.
    - Created `server/src/models/Topic.js` with fields: `subjectId`, `userId`, `title`, `normalizedTitle`, `description`, `orderIndex`, `status`, `knowledgeState`, `notesCount`, `chatsCount`. Indexes: `{ subjectId: 1, orderIndex: 1 }`, `{ userId: 1, subjectId: 1 }`, unique `{ subjectId: 1, normalizedTitle: 1 }`.
 3. **API Implementation & REST Controllers**:
-   - `server/src/controllers/subjectController.js`: Handlers for `listSubjects`, `createSubject`, `getSubject`, `updateSubject`, `deleteSubject` (with application-level cascade delete of child topics).
-   - `server/src/controllers/topicController.js`: Handlers for `listTopicsForSubject`, `createTopic`, `getTopic`, `updateTopic`, `deleteTopic` (with automatic parent `topicsCount` maintenance).
+   - `server/src/controllers/subjectController.js`: Handlers for `listSubjects`, `createSubject`, `getSubject`, `updateSubject`, `deleteSubject` (with application-level cascade delete of child topics and read reconciliation of `topicsCount`).
+   - `server/src/controllers/topicController.js`: Handlers for `listTopicsForSubject`, `createTopic`, `getTopic`, `updateTopic`, `deleteTopic` (with Subject `topicsCount` maintained through coordinated application-level updates when topics are created or deleted, and reconciled from persisted Topic records).
    - `server/src/routes/subjects.js` & `server/src/routes/topics.js`: Protected via `requireDatabase` and `authenticateUser`. Supported both nested `/subjects/:subjectId/topics` and collection `/topics?subjectId=:id` endpoints.
 4. **Strict Security & Multi-Tenant Isolation**:
    - Every read, update, and delete query strictly filters by `userId: req.user._id`.

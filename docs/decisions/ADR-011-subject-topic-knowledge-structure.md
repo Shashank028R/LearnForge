@@ -110,7 +110,7 @@ Separate `Subject` and `Topic` collections in MongoDB with denormalized `userId`
 2. **Subject Scoping**: All Subject operations query `{ _id: subjectId, userId: req.user._id }`.
 3. **Topic Scoping**: All Topic mutations and reads verify `{ _id: topicId, userId: req.user._id }`.
 4. **Subject Creation Check for Topics**: When creating a topic under `/subjects/:subjectId/topics`, the system first validates that the target `subjectId` exists and belongs to `req.user._id`. If not, a `404 Not Found` is returned, preventing any unauthorized user from attaching topics to another student's subject.
-5. **Cascade Lifecycle**: When a Subject is deleted, `Topic.deleteMany({ subjectId, userId: req.user._id })` is executed atomically within application logic before returning success.
+5. **Cascade Lifecycle & Count Maintenance**: When a Subject is deleted, child topics are removed via application-level cascade (`Topic.deleteMany({ subjectId, userId: req.user._id })`). Subject `topicsCount` is maintained through coordinated application-level updates when topics are created or deleted, and can also be reconciled from persisted Topic records.
 
 ---
 

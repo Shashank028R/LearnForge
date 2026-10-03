@@ -128,7 +128,7 @@ Represents a user-owned learning discipline or course syllabus.
   color: String,             // Color hex code (default: '#3b82f6')
   status: String,            // 'active' | 'archived' (default: 'active')
   targetMasteryLevel: String,// 'beginner' | 'intermediate' | 'advanced' | 'comprehensive'
-  topicsCount: Number,       // Cached counter of child topics (default: 0)
+  topicsCount: Number,       // Cached counter of child topics maintained via coordinated application updates (default: 0)
   createdAt: Date,
   updatedAt: Date
 }
@@ -190,3 +190,5 @@ Represents a curriculum unit or module belonging to a Subject with an embedded k
 4. **Zero Stored Plaintext Credentials**: Plaintext OTP codes and raw session tokens are strictly barred from MongoDB storage.
 5. **Concurrent Bootstrap & Transaction Evaluation**:
    User bootstrap and external identity linking are designed around idempotent unique constraints (`normalizedEmail: unique`, `provider + providerSubject: unique`). In the event of simultaneous authentication requests for the same identity or email, MongoDB rejects duplicate insertions with error code 11000. Application logic intercepts error code 11000 and resolves the concurrently created document rather than throwing a 500 error. Multi-document MongoDB transactions were deliberately evaluated and avoided for user bootstrap because standalone MongoDB environments (standard in developer workstations and isolated test runners) do not support transactions without an active replica set (`rs.initiate()`). Relying on atomic upserts (`findOneAndUpdate` with `upsert: true`) and code 11000 recovery guarantees 100% race-free idempotency across standalone MongoDB, replica sets, and MongoDB Atlas.
+6. **Topic Count Consistency & Cascade Management**:
+   Subject `topicsCount` is maintained through coordinated application-level updates when topics are created or deleted. The count can also be reconciled from persisted Topic records upon single-subject retrieval. Similarly, cascading deletions are orchestrated at the application level (`Topic.deleteMany({ subjectId, userId })` followed by `Subject.deleteOne({ _id, userId })`), avoiding multi-document transaction dependencies while preserving cross-tenant data safety.

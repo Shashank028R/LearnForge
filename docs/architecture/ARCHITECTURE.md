@@ -180,10 +180,10 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - Denormalizing `userId` on the `Topic` model enables O(1) indexed authorization without relational `$lookup` joins.
 - Cross-tenant requests return `404 Not Found` rather than `403 Forbidden` to prevent resource ID enumeration attacks.
 
-### 6.2 Cascade Lifecycle Management
+### 6.2 Cascade Lifecycle & Counter Management
 - When a `Subject` is deleted, all associated `Topic` records are purged:
   `await Topic.deleteMany({ subjectId: subject._id, userId: req.user._id });`
-- When a `Topic` is created or deleted, the parent subject's `topicsCount` counter is atomically updated.
+- Subject `topicsCount` is maintained through coordinated application-level updates when topics are created or deleted. The count can also be reconciled from persisted Topic records upon single-subject queries.
 
 ---
 

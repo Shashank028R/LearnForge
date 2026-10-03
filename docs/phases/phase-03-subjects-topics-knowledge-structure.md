@@ -36,7 +36,7 @@ LearnForge organizes learning hierarchy into two primary persistent domain entit
 ### Key Architectural Decisions (ADR-011)
 1. **Denormalized Ownership**: Both `Subject` and `Topic` store `userId: ObjectId`. This allows topic queries (`findOne`, `updateOne`, `deleteOne`) to enforce user ownership in a single indexed query (`{ _id: topicId, userId: req.user._id }`) without requiring an expensive cross-collection join against the parent subject.
 2. **Normalized Collections**: Topics are stored in a dedicated `topics` collection rather than embedded in an unbounded array inside `Subject`. This avoids MongoDB's 16MB document size limit and enables direct indexing and foreign key references from future chats and notes.
-3. **Application-Level Cascading Deletions**: Deleting a subject triggers a scoped cascade delete (`await Topic.deleteMany({ subjectId: subject._id, userId: req.user._id })`), ensuring orphaned topic records never linger in the database.
+3. **Application-Level Cascading Deletions & Count Maintenance**: Deleting a subject triggers a scoped cascade delete (`await Topic.deleteMany({ subjectId: subject._id, userId: req.user._id })`), ensuring orphaned topic records never linger in the database. Subject `topicsCount` is maintained through coordinated application-level updates when topics are created or deleted. The count can also be reconciled from persisted Topic records.
 4. **Knowledge State Boundary**: `knowledgeState` subdocument is persisted directly within `Topic`. In Phase 03, the schema foundation is fully established and exposed for manual curation; automatic AI extraction and background LLM synchronization are deferred to Phases 05 and 06.
 
 ---
@@ -54,7 +54,7 @@ LearnForge organizes learning hierarchy into two primary persistent domain entit
   color: String,             // Color hex code (default: '#3b82f6')
   status: String,            // 'active' | 'archived' (default: 'active')
   targetMasteryLevel: String,// 'beginner' | 'intermediate' | 'advanced' | 'comprehensive'
-  topicsCount: Number,       // Cached counter (default: 0)
+  topicsCount: Number,       // Cached counter maintained via coordinated application updates (default: 0)
   createdAt: Date,
   updatedAt: Date
 }
@@ -284,3 +284,6 @@ To maintain strict architectural modularity, the following capabilities are expl
 
 #### Q3: How do you handle cascade deletion without transactions?
 **Answer**: Because LearnForge supports local and standalone MongoDB instances without requiring replica sets, we use application-level orchestration: when `deleteSubject` is invoked, we delete all child topics matching `{ subjectId: subject._id, userId: req.user._id }` prior to removing the subject document itself. In the event of a crash, orphaned topics remain inaccessible because all list queries require an existing owned parent subject.
+
+#### Q4: How is `topicsCount` consistency maintained between Subject and Topics?
+**Answer**: Subject `topicsCount` is maintained through coordinated application-level updates when topics are created or deleted. The count can also be reconciled from persisted Topic records upon single-subject retrieval (`GET /api/v1/subjects/:subjectId`), guaranteeing eventual consistency without introducing distributed multi-document transaction overhead.
