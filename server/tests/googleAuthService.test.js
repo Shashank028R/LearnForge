@@ -42,4 +42,56 @@ describe('GoogleAuthService OIDC Token Verification Boundary', () => {
       'Google account email has not been verified by Google'
     );
   });
+
+  it('rejects invalid signature or corrupt OIDC token', async () => {
+    googleAuthService.setMockVerifier(async () => {
+      const err = new Error('Invalid token signature.');
+      err.code = 'INVALID_OIDC_TOKEN';
+      err.statusCode = 401;
+      throw err;
+    });
+
+    await expect(googleAuthService.verifyGoogleToken('corrupt_signature_token')).rejects.toThrow(
+      'Invalid token signature'
+    );
+  });
+
+  it('rejects token when audience does not match configured GOOGLE_CLIENT_ID', async () => {
+    googleAuthService.setMockVerifier(async () => {
+      const err = new Error('Token audience does not match GOOGLE_CLIENT_ID.');
+      err.code = 'INVALID_AUDIENCE';
+      err.statusCode = 401;
+      throw err;
+    });
+
+    await expect(googleAuthService.verifyGoogleToken('wrong_audience_token')).rejects.toThrow(
+      'Token audience does not match GOOGLE_CLIENT_ID'
+    );
+  });
+
+  it('rejects token when issuer is not accounts.google.com', async () => {
+    googleAuthService.setMockVerifier(async () => {
+      const err = new Error('Invalid token issuer. Must be accounts.google.com.');
+      err.code = 'INVALID_ISSUER';
+      err.statusCode = 401;
+      throw err;
+    });
+
+    await expect(googleAuthService.verifyGoogleToken('rogue_issuer_token')).rejects.toThrow(
+      'Invalid token issuer'
+    );
+  });
+
+  it('rejects expired Google credential', async () => {
+    googleAuthService.setMockVerifier(async () => {
+      const err = new Error('Token has expired.');
+      err.code = 'TOKEN_EXPIRED';
+      err.statusCode = 401;
+      throw err;
+    });
+
+    await expect(googleAuthService.verifyGoogleToken('expired_google_token')).rejects.toThrow(
+      'Token has expired'
+    );
+  });
 });

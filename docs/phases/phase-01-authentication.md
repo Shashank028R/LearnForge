@@ -30,15 +30,18 @@ Implement reliable production-oriented authentication using Google sign-in and e
 
 ## Acceptance Criteria Verification
 
-- [x] New user can register/login with Google (server-verified OIDC JWT);
+- [x] New user can register/login with Google (server-verified OIDC JWT via Google Identity Services);
 - [x] User can sign in with email OTP (cryptographically secure 6-digit code);
 - [x] Same email is handled deterministically (ADR-010 account linking);
 - [x] Closing/reopening browser preserves session via persistent HTTP-only cookie;
+- [x] Browser receives zero raw session tokens in JSON responses (`POST /auth/otp/verify` & `POST /auth/google`);
+- [x] Web client stores zero credentials in `localStorage` or `sessionStorage`;
 - [x] Logout works (cookie cleared, session revoked in DB);
 - [x] Logout-all works (all active sessions for user marked revoked);
 - [x] Protected APIs reject unauthenticated users with 401 `AUTH_REQUIRED`;
-- [x] Cross-user resource access is denied;
-- [x] Mobile bearer fallback tested and operational.
+- [x] Concurrent user creation race (code 11000) resolved gracefully without 500 error;
+- [x] Mobile bearer fallback tested and operational;
+- [x] All 33 automated tests pass.
 
 ## Documentation
 

@@ -12,6 +12,8 @@ export default function AuthModal({ isOpen, onClose }) {
   const [cooldown, setCooldown] = useState(0);
 
   const inputRefs = useRef([]);
+  const googleButtonRef = useRef(null);
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
   // Reset state when modal opens
   useEffect(() => {
@@ -30,6 +32,51 @@ export default function AuthModal({ isOpen, onClose }) {
     }, 1000);
     return () => clearInterval(timer);
   }, [cooldown]);
+
+  // Initialize official Google Identity Services button
+  useEffect(() => {
+    if (!isOpen || step !== 'email') return;
+
+    const handleGoogleCredentialResponse = async (response) => {
+      if (!response?.credential) {
+        setErrorMsg('Google did not return a valid authentication credential.');
+        return;
+      }
+      setLoading(true);
+      setErrorMsg('');
+      try {
+        await authenticateGoogle(response.credential);
+        onClose();
+      } catch (err) {
+        setErrorMsg(err.message || 'Google sign-in was not completed.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (window.google?.accounts?.id && googleClientId) {
+      try {
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: handleGoogleCredentialResponse,
+          auto_select: false,
+        });
+
+        if (googleButtonRef.current) {
+          googleButtonRef.current.innerHTML = '';
+          window.google.accounts.id.renderButton(googleButtonRef.current, {
+            theme: 'outline',
+            size: 'large',
+            width: 380,
+            text: 'continue_with',
+            shape: 'rectangular',
+          });
+        }
+      } catch (err) {
+        console.warn('Google Identity Services initialization notice:', err);
+      }
+    }
+  }, [isOpen, step, googleClientId, authenticateGoogle, onClose]);
 
   if (!isOpen) return null;
 
@@ -114,24 +161,15 @@ export default function AuthModal({ isOpen, onClose }) {
     }
   };
 
-  const handleGoogleDemo = async () => {
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      // In production, Google Identity Services supplies idToken.
-      // In test/demo environment without configured Google Client ID,
-      // prompt for test token or verify mock.
-      const simulatedToken = prompt('Enter Google ID Token (or leave blank for test token):');
-      if (simulatedToken === null) {
-        setLoading(false);
-        return;
-      }
-      await authenticateGoogle(simulatedToken || 'mock_google_id_token_demo');
-      onClose();
-    } catch (err) {
-      setErrorMsg(err.message || 'Google sign-in was not completed.');
-    } finally {
-      setLoading(false);
+  const handleGoogleClick = () => {
+    if (!googleClientId) {
+      setErrorMsg('Google Sign-In requires VITE_GOOGLE_CLIENT_ID to be configured in your environment.');
+      return;
+    }
+    if (window.google?.accounts?.id) {
+      window.google.accounts.id.prompt();
+    } else {
+      setErrorMsg('Google Identity Services is currently unavailable. Please check your network or try email OTP.');
     }
   };
 
@@ -179,33 +217,39 @@ export default function AuthModal({ isOpen, onClose }) {
         {/* Step 1: Email & Google */}
         {step === 'email' && (
           <div className="space-y-4">
-            {/* Google Sign-In Button */}
-            <button
-              type="button"
-              onClick={handleGoogleDemo}
-              disabled={loading}
-              className="w-full flex items-center justify-center space-x-3 px-4 py-2.5 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 transition-colors disabled:opacity-60"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.02h3.87c2.26-2.09 3.675-5.17 3.675-9.12z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.02c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.24v3.12C3.26 21.36 7.33 24 12 24z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.27 14.27c-.25-.72-.39-1.49-.39-2.27s.14-1.55.39-2.27V6.61H1.24C.45 8.24 0 10.06 0 12s.45 3.76 1.24 5.39l4.03-3.12z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.24 6.61l4.03 3.12c.95-2.85 3.6-4.98 6.73-4.98z"
-                />
-              </svg>
-              <span>Continue with Google</span>
-            </button>
+            {/* Google Sign-In Container & Fallback Trigger */}
+            <div className="w-full flex justify-center">
+              <div ref={googleButtonRef} className="w-full flex justify-center" />
+            </div>
+
+            {(!googleClientId || !window.google?.accounts?.id) && (
+              <button
+                type="button"
+                onClick={handleGoogleClick}
+                disabled={loading}
+                className="w-full flex items-center justify-center space-x-3 px-4 py-2.5 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 transition-colors disabled:opacity-60"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.02h3.87c2.26-2.09 3.675-5.17 3.675-9.12z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.02c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.24v3.12C3.26 21.36 7.33 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.27 14.27c-.25-.72-.39-1.49-.39-2.27s.14-1.55.39-2.27V6.61H1.24C.45 8.24 0 10.06 0 12s.45 3.76 1.24 5.39l4.03-3.12z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.24 6.61l4.03 3.12c.95-2.85 3.6-4.98 6.73-4.98z"
+                  />
+                </svg>
+                <span>Continue with Google</span>
+              </button>
+            )}
 
             {/* Divider */}
             <div className="relative flex items-center justify-center my-4">

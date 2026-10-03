@@ -42,7 +42,7 @@ Knowledge  Study     Import           AI
 
 ---
 
-## 3. Implemented Auth Domain Architecture (Phase 01)
+## 3. Implemented Auth Domain Architecture (Phase 01 & 01.1)
 
 ```text
 Incoming Request
@@ -93,18 +93,23 @@ Resolve User   Check User.findOne({ normalizedEmail: verifiedEmail })
         User Exists     User Does Not Exist
              │               │
         Link Identity   Create User & Link Identity
-             │               │
+             │          (Harden vs Code 11000 Races)
              └───────┬───────┘
                      ▼
            Issue Opaque Session
-        (Set Cookie & Return Token)
+  (Set Secure HttpOnly Cookie; Return User/Session Metadata)
+  *Note: Raw token is NEVER returned in JSON response to browser*
 ```
+
+### 4.1 Future Mobile Bearer Path
+Future mobile applications will authenticate through a dedicated mobile authentication flow (such as a dedicated mobile token-issuance endpoint or OAuth PKCE flow) that delivers the bearer token directly to the mobile device for secure storage in hardware keystores (iOS Keychain / Android Keystore). The centralized `authenticateUser` middleware is already architected to resolve `Authorization: Bearer <token>` without any code changes.
 
 ---
 
 ## 5. Domain Boundaries
 
-- **Auth Domain (Phase 01 - Implemented)**: User identity, AuthIdentity linking, UserSession tracking, OTP generation/hashing, and session revocation.
+- **Auth Domain (Phase 01 & 01.1 - Implemented)**: User identity, AuthIdentity linking, UserSession tracking, OTP generation/hashing, and session revocation.
+- **UI Shell Domain (Phase 02 - Planned)**: Professional application shell, navigation, and core design system.
 - **Study Domain (Phase 03 - Planned)**: Subjects, topics, concepts, and study sessions.
 - **Conversation Domain (Phase 04 - Planned)**: Chats, messages, and streaming response delivery.
 - **AI Domain (Phase 05 - Planned)**: AI Gateway, task classification, and provider adapters.

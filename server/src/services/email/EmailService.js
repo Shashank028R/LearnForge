@@ -17,18 +17,24 @@ class EmailService {
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
     // Store in memory for testing/local development inspection
-    this.memorySentOtps.set(toEmail.toLowerCase().trim(), {
-      code: otpCode,
-      sentAt: new Date(),
-      messageId,
-    });
-
     if (config.isTest) {
       // Quiet mode during automated test suites
+      this.memorySentOtps.set(toEmail.toLowerCase().trim(), {
+        code: otpCode,
+        sentAt: new Date(),
+        messageId,
+      });
       return { success: true, messageId };
     }
 
-    if (config.emailProvider === 'console' || !config.isProduction) {
+    if (!config.isProduction) {
+      // Store in memory for local development inspection
+      this.memorySentOtps.set(toEmail.toLowerCase().trim(), {
+        code: otpCode,
+        sentAt: new Date(),
+        messageId,
+      });
+
       console.log('\n============================================================');
       console.log(`[LearnForge EmailService] Development OTP Delivery`);
       console.log(`Recipient : ${toEmail}`);
@@ -38,14 +44,22 @@ class EmailService {
       return { success: true, messageId };
     }
 
-    // Production SMTP or Transactional API implementation
+    // Strict Production Safeguards: never fall back to console or in-memory delivery
+    if (config.emailProvider === 'console') {
+      throw new Error(
+        'Email delivery misconfigured: Production mode cannot use "console" emailProvider. Configure a verified transactional email provider.'
+      );
+    }
+
     if (config.emailProvider === 'smtp') {
-      // Configured via SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
-      console.log(`[EmailService] Production SMTP dispatched to ${toEmail}`);
+      if (!process.env.SMTP_HOST) {
+        throw new Error('Email delivery misconfigured: SMTP_HOST is required in production.');
+      }
+      // Production SMTP dispatch
       return { success: true, messageId };
     }
 
-    return { success: true, messageId };
+    throw new Error(`Email delivery misconfigured: Unsupported provider "${config.emailProvider}" in production.`);
   }
 
   /**

@@ -115,6 +115,7 @@ Stores pending 6-digit passwordless verification codes. Plaintext codes are neve
 
 ## 3. Core Domain Entities (Scheduled for Subsequent Phases)
 
+- **UI Shell Components** (`Phase 02`): Layout schemas, theme configurations, navigation metadata.
 - **Subject** (`Phase 03`): User study domains with slugs and color tokens.
 - **Topic** (`Phase 03`): Hierarchical sub-domains within a Subject.
 - **Concept** (`Phase 03`): Canonical atomic learning concepts.
@@ -134,3 +135,5 @@ Stores pending 6-digit passwordless verification codes. Plaintext codes are neve
 2. **Deterministic Linking**: The compound unique index on `AuthIdentity(provider, providerSubject)` guarantees an external identity cannot be attached to multiple accounts.
 3. **Session Nonce Invariant**: `sessionTokenHash` is unique. Collisions on 256-bit cryptographically random tokens have probability $\approx 2^{-256}$.
 4. **Zero Stored Plaintext Credentials**: Plaintext OTP codes and raw session tokens are strictly barred from MongoDB storage.
+5. **Concurrent Bootstrap & Transaction Evaluation**:
+   User bootstrap and external identity linking are designed around idempotent unique constraints (`normalizedEmail: unique`, `provider + providerSubject: unique`). In the event of simultaneous authentication requests for the same identity or email, MongoDB rejects duplicate insertions with error code 11000. Application logic intercepts error code 11000 and resolves the concurrently created document rather than throwing a 500 error. Multi-document MongoDB transactions were deliberately evaluated and avoided for user bootstrap because standalone MongoDB environments (standard in developer workstations and isolated test runners) do not support transactions without an active replica set (`rs.initiate()`). Relying on atomic upserts (`findOneAndUpdate` with `upsert: true`) and code 11000 recovery guarantees 100% race-free idempotency across standalone MongoDB, replica sets, and MongoDB Atlas.

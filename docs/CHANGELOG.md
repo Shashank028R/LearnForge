@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2026-10-03
+
+### Phase 01.1 — Authentication Security Corrections & Production Readiness
+
+#### Security & Hardening
+- **Zero Web Session Token Exposure**: Removed raw session token leakage from `POST /api/v1/auth/otp/verify` and `POST /api/v1/auth/google` JSON response payloads. Web clients authenticate strictly via `HttpOnly`, `SameSite: 'lax'`, `Secure` cookies.
+- **Removed Client Credential Storage**: Purged all `localStorage` and `sessionStorage` token writes (`learnforge_bearer_fallback`) from `AuthContext.jsx`. The browser stores zero authentication credentials in JavaScript-accessible storage.
+- **Official Google Identity Services (GIS)**: Replaced mock token prompts and development shortcuts with real Google Identity Services client integration, using `window.google.accounts.id` and the official Google Sign-In button container.
+- **Concurrency & Race Condition Hardening**: Hardened `User` and `AuthIdentity` creation in `authController.js` by catching MongoDB duplicate key errors (code 11000) on `normalizedEmail` and compound unique index `{ provider, providerSubject }`, resolving concurrent registration races without 500 errors.
+- **Strict Production Email Delivery Safeguards**: Updated `EmailService.js` to strictly reject `console` delivery in production and fail explicitly if transactional email credentials are missing.
+- **Mobile Bearer Parity**: Retained `Authorization: Bearer <token>` in `authenticateUser` for future mobile clients with hardware keystores.
+- **Testing**: Expanded automated test suite from 26 to 33 tests covering web session security, OIDC verification boundaries, and concurrent registration races. All 33 tests passing.
+
+---
+
 ## [0.2.0] - 2026-10-03
 
 ### Phase 01 — Authentication & User Identity

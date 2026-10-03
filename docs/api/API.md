@@ -77,7 +77,8 @@
   }
   ```
 - **Response (`200 OK`)**:
-  - Sets HTTP-Only Cookie: `learnforge_session=<raw_session_token>`
+  - Sets HTTP-Only Cookie: `learnforge_session=<raw_session_token>; HttpOnly; SameSite=Lax; Path=/`
+  - *Note*: Raw session tokens are never exposed in JSON responses to protect against XSS token harvesting.
   ```json
   {
     "success": true,
@@ -90,7 +91,11 @@
         "status": "active",
         "timezone": "UTC"
       },
-      "sessionToken": "a9f8b2c4e..."
+      "session": {
+        "id": "67041a9f9...",
+        "expiresAt": "2026-11-02T18:00:00.000Z",
+        "authMethod": "otp"
+      }
     },
     "meta": { "requestId": "..." }
   }
@@ -101,7 +106,7 @@
 
 ### 3.3 Google OAuth Sign-In (OpenID Connect)
 - **Endpoint**: `POST /api/v1/auth/google`
-- **Rate Limit**: Max 15 attempts per 15 min per IP
+- **Rate Limit**: Max 30 attempts per 15 min per IP
 - **Request Body**:
   ```json
   {
@@ -109,7 +114,8 @@
   }
   ```
 - **Response (`200 OK`)**:
-  - Sets HTTP-Only Cookie: `learnforge_session=<raw_session_token>`
+  - Sets HTTP-Only Cookie: `learnforge_session=<raw_session_token>; HttpOnly; SameSite=Lax; Path=/`
+  - *Note*: Raw session tokens are never exposed in JSON responses.
   ```json
   {
     "success": true,
@@ -121,7 +127,11 @@
         "avatarUrl": "https://lh3.googleusercontent.com/...",
         "status": "active"
       },
-      "sessionToken": "b4e8c1a7d..."
+      "session": {
+        "id": "67041a9f9...",
+        "expiresAt": "2026-11-02T18:00:00.000Z",
+        "authMethod": "google"
+      }
     },
     "meta": { "requestId": "..." }
   }

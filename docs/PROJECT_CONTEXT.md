@@ -25,20 +25,22 @@
 - Architectural review (`docs/architecture/ARCHITECTURE_REVIEW.md`) and canonical security specification (`docs/SECURITY.md`).
 - Architectural decisions ADR-001 through ADR-009.
 
-### Phase 01 (Authentication & User Identity)
+### Phase 01 & 01.1 (Authentication & User Identity Hardening)
 - **Passwordless Email OTP**: 6-digit numeric OTP generation using cryptographic randomness, secured at rest via HMAC-SHA-256 with a server-side secret pepper (`OTP_HMAC_SECRET`), 10-minute expiration, 5-attempt brute-force lockout, and 60-second resend cooldown.
-- **Google OAuth 2.0 (OpenID Connect)**: Server-side cryptographic token verification using `google-auth-library` with issuer, audience, expiration, and `email_verified` validation.
+- **Google OAuth 2.0 (OpenID Connect)**: Server-side cryptographic token verification using `google-auth-library` with issuer, audience, expiration, and `email_verified` validation. Real Google Identity Services client flow with no dev mock prompts.
+- **Critical Web Session Security**: Raw session tokens are never returned in JSON to web clients and never stored in `localStorage` or `sessionStorage`. Browser authentication relies exclusively on `HttpOnly`, `SameSite: 'lax'`, `Secure` cookies.
+- **Mobile Bearer Parity**: Centralized middleware retains `Authorization: Bearer <session-token>` resolution for future mobile clients.
 - **Deterministic Account Linking (ADR-010)**: Automated, safe reconciliation of Google OAuth and Email OTP identities based on verified email matching, preventing duplicate accounts.
-- **Stateful Database Sessions**: Opaque 256-bit session tokens hashed (SHA-256) into MongoDB `UserSession`, supported via HTTP-only, SameSite, Secure cookies for web and `Authorization: Bearer <token>` for future mobile applications.
+- **Concurrent User Bootstrap Hardening**: MongoDB duplicate key race conditions (error code 11000) on `normalizedEmail` and compound unique index `{ provider, providerSubject }` are caught and safely resolved without 500 errors.
 - **Session Revocation**: Single session logout and global all-device revocation (`/api/v1/auth/logout-all`).
 - **Tiered Rate Limiting**: Protection against brute-force and email abuse using `express-rate-limit`.
 - **Frontend Authentication UI**: Accessible, responsive React modal and navigation components with Google sign-in and 6-digit OTP verification inputs.
-- **Testing**: 26 automated unit and integration tests passing across client and server.
+- **Testing**: 33 automated unit and integration tests passing across client and server.
 
 ---
 
 ## 4. Current Work
-- Finalizing Phase 01 documentation and git commit.
+- Phase 01.1 completed and verified.
 - Awaiting project owner authorization before initiating Phase 02.
 
 ---

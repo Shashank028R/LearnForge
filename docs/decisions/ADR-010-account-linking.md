@@ -1,9 +1,9 @@
 # ADR-010 — Deterministic Account Linking Policy
 
-- **Status**: Accepted
+- **Status**: Accepted (Updated with Phase 01.1 Concurrency Hardening)
 - **Date**: October 2026
 - **Decider**: Senior Full-Stack Software Architect
-- **Target Phase**: Phase 01 (Authentication & User Identity)
+- **Target Phase**: Phase 01 & 01.1 (Authentication & User Identity)
 
 ---
 
@@ -56,7 +56,7 @@ LearnForge implements a **server-enforced deterministic account linking policy**
 | :--- | :--- | :--- |
 | **Unverified Email Account Takeover**: Attacker creates a Google account with victim's email, but Google has not verified it. | Critical | **Strict `email_verified: true` check**: Google ID token claim `email_verified` must be boolean `true`. Unverified Google accounts are rejected. |
 | **Identity Hijacking via Client-Supplied IDs**: Malicious client sends target `userId` in request body. | Critical | **Zero Client-Side Trust**: Client cannot specify `userId`. Linking logic exclusively uses verified server-side claims (`ticket.getPayload().email`). |
-| **Race Conditions on Concurrent Registration**: Simultaneous sign-in via Google and OTP for the same email. | Medium | **MongoDB Unique Index**: Unique index on `User.normalizedEmail` and compound unique index on `AuthIdentity(provider, providerSubject)`. Concurrent attempts catch duplicate key errors (`E11000`) and retry resolution deterministically. |
+| **Race Conditions on Concurrent Registration**: Simultaneous sign-in via Google and OTP for the same email. | Medium | **MongoDB Unique Constraints & Code 11000 Interception**: Compound unique index `{ provider: 1, providerSubject: 1 }` and `{ normalizedEmail: 1 }`. Concurrent creations catch code `11000` duplicate key errors, safely resolving the winning document without returning 500 errors. |
 
 ---
 

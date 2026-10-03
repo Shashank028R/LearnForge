@@ -279,7 +279,7 @@ describe('Authentication & User Identity API (/api/v1/auth)', () => {
       expect(res.body.error.code).toBe('OTP_EXPIRED');
     });
 
-    it('POST /auth/otp/verify creates user, session, sets cookie, and destroys OTP', async () => {
+    it('POST /auth/otp/verify creates user, session, sets secure cookie, and destroys OTP without exposing sessionToken in JSON', async () => {
       const email = 'newuser@learnforge.io';
       await request(app).post('/api/v1/auth/otp/request').send({ email });
       const { code } = emailService.getLastSentOtp(email);
@@ -291,13 +291,23 @@ describe('Authentication & User Identity API (/api/v1/auth)', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.user.email).toBe(email);
-      expect(res.body.data.sessionToken).toBeDefined();
+      // CRITICAL SECURITY ASSERTION: Browser response MUST NOT contain raw sessionToken in JSON
+      expect(res.body.data.sessionToken).toBeUndefined();
+      expect(res.body.data.session).toBeDefined();
+      expect(res.body.data.session.authMethod).toBe('otp');
 
-      // Check HTTP-only cookie set
+      // Check HTTP-only cookie set with expected security flags
       const cookies = res.headers['set-cookie'];
       expect(cookies).toBeDefined();
       expect(cookies[0]).toContain('learnforge_session=');
       expect(cookies[0]).toContain('HttpOnly');
+      expect(cookies[0]).toContain('SameSite=Lax');
+      expect(cookies[0]).toContain('Path=/');
+
+      // Extract raw token from Set-Cookie header to verify database hash
+      const rawTokenMatch = cookies[0].match(/learnforge_session=([^;]+)/);
+      expect(rawTokenMatch).toBeDefined();
+      const extractedRawToken = rawTokenMatch[1];
 
       // Verify OTP is single-use and destroyed
       expect(otpTokensStore.has(email)).toBe(false);
@@ -307,7 +317,41 @@ describe('Authentication & User Identity API (/api/v1/auth)', () => {
       // Verify Session is persisted with hashed token
       expect(sessionsStore.size).toBe(1);
       const session = Array.from(sessionsStore.values())[0];
-      expect(session.sessionTokenHash).toBe(hashSessionToken(res.body.data.sessionToken));
+      expect(session.sessionTokenHash).toBe(hashSessionToken(extractedRawToken));
+    });
+
+    it('POST /auth/otp/verify handles concurrent user creation race (code 11000) gracefully', async () => {
+      const email = 'race_user@learnforge.io';
+      await request(app).post('/api/v1/auth/otp/request').send({ email });
+      const { code } = emailService.getLastSentOtp(email);
+
+      // Pre-seed an existing user to simulate another thread winning the User.create race
+      const originalCreate = User.create;
+      let firstAttempt = true;
+      vi.spyOn(User, 'create').mockImplementationOnce(async (data) => {
+        // Pre-create user in store to simulate concurrent winner
+        const existing = {
+          _id: new mongoose.Types.ObjectId().toString(),
+          email: data.email,
+          normalizedEmail: data.normalizedEmail,
+          displayName: 'Concurrent Winner',
+          status: 'active',
+          preferences: { theme: 'light' },
+        };
+        usersStore.set(existing._id, existing);
+        const duplicateErr = new Error('E11000 duplicate key error collection: users index: normalizedEmail_1');
+        duplicateErr.code = 11000;
+        throw duplicateErr;
+      });
+
+      const res = await request(app)
+        .post('/api/v1/auth/otp/verify')
+        .send({ email, code });
+
+      // Must succeed without 500 error, resolving the concurrently created user
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.user.displayName).toBe('Concurrent Winner');
     });
   });
 
@@ -315,7 +359,7 @@ describe('Authentication & User Identity API (/api/v1/auth)', () => {
    * 2. GOOGLE OAUTH & ACCOUNT LINKING (ADR-010)
    * ------------------------------------------------------------- */
   describe('Google OAuth & Deterministic Account Linking', () => {
-    it('POST /auth/google creates new user when identity does not exist', async () => {
+    it('POST /auth/google creates new user and sets cookie without leaking sessionToken in JSON', async () => {
       googleAuthService.setMockVerifier(async () => ({
         sub: 'google_user_001',
         email: 'google_student@gmail.com',
@@ -331,7 +375,44 @@ describe('Authentication & User Identity API (/api/v1/auth)', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.user.email).toBe('google_student@gmail.com');
       expect(res.body.data.user.displayName).toBe('Google Student');
+      // CRITICAL: sessionToken must NOT be present in JSON
+      expect(res.body.data.sessionToken).toBeUndefined();
+      expect(res.body.data.session).toBeDefined();
       expect(res.headers['set-cookie']).toBeDefined();
+      expect(res.headers['set-cookie'][0]).toContain('HttpOnly');
+    });
+
+    it('POST /auth/google handles concurrent Google signup race (code 11000) gracefully', async () => {
+      googleAuthService.setMockVerifier(async () => ({
+        sub: 'google_concurrent_sub',
+        email: 'concurrent_google@gmail.com',
+        emailVerified: true,
+        name: 'Concurrent Google User',
+        picture: 'https://avatar.com/pic.png',
+      }));
+
+      vi.spyOn(User, 'create').mockImplementationOnce(async (data) => {
+        const existing = {
+          _id: new mongoose.Types.ObjectId().toString(),
+          email: data.email,
+          normalizedEmail: data.normalizedEmail,
+          displayName: 'Concurrent Google Winner',
+          status: 'active',
+          preferences: { theme: 'light' },
+        };
+        usersStore.set(existing._id, existing);
+        const duplicateErr = new Error('E11000 duplicate key error');
+        duplicateErr.code = 11000;
+        throw duplicateErr;
+      });
+
+      const res = await request(app)
+        .post('/api/v1/auth/google')
+        .send({ idToken: 'valid_concurrent_token' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.user.displayName).toBe('Concurrent Google Winner');
     });
 
     it('POST /auth/google deterministically links to existing email-OTP user (ADR-010)', async () => {
@@ -418,11 +499,13 @@ describe('Authentication & User Identity API (/api/v1/auth)', () => {
       const { code } = emailService.getLastSentOtp(email);
       const verifyRes = await request(app).post('/api/v1/auth/otp/verify').send({ email, code });
 
-      const sessionToken = verifyRes.body.data.sessionToken;
+      // In mobile flow, the mobile client receives the token via dedicated mobile authentication
+      // For testing bearer parity, extract token from Set-Cookie header to test the backend bearer resolver
+      const rawSessionToken = verifyRes.headers['set-cookie'][0].match(/learnforge_session=([^;]+)/)[1];
 
       const res = await request(app)
         .get('/api/v1/auth/me')
-        .set('Authorization', `Bearer ${sessionToken}`);
+        .set('Authorization', `Bearer ${rawSessionToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.data.user.email).toBe(email);

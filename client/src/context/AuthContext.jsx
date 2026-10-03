@@ -73,10 +73,7 @@ export function AuthProvider({ children }) {
     }
 
     setUser(data.data.user);
-    // If running in mobile or non-cookie client, store sessionToken in secure storage
-    if (data.data.sessionToken) {
-      localStorage.setItem('learnforge_bearer_fallback', data.data.sessionToken);
-    }
+    setSession(data.data.session);
     return data.data;
   };
 
@@ -97,9 +94,7 @@ export function AuthProvider({ children }) {
     }
 
     setUser(data.data.user);
-    if (data.data.sessionToken) {
-      localStorage.setItem('learnforge_bearer_fallback', data.data.sessionToken);
-    }
+    setSession(data.data.session);
     return data.data;
   };
 
@@ -113,7 +108,6 @@ export function AuthProvider({ children }) {
     } finally {
       setUser(null);
       setSession(null);
-      localStorage.removeItem('learnforge_bearer_fallback');
     }
   };
 
@@ -127,7 +121,6 @@ export function AuthProvider({ children }) {
     } finally {
       setUser(null);
       setSession(null);
-      localStorage.removeItem('learnforge_bearer_fallback');
     }
   };
 

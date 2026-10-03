@@ -1,9 +1,9 @@
 # ADR-009 — Authentication Architecture: Self-Managed Native Sessions vs. Managed Provider
 
-- **Status**: Accepted (Updated with Technical Corrections for Phase 01)
+- **Status**: Accepted (Updated with Technical Corrections for Phase 01 & 01.1)
 - **Date**: October 2026
 - **Decider**: Senior Full-Stack Software Architect
-- **Target Phase**: Phase 01 (Authentication & User Identity)
+- **Target Phase**: Phase 01 & 01.1 (Authentication & User Identity)
 
 ---
 
@@ -82,8 +82,9 @@ In this approach, the Express backend directly manages identity and sessions usi
 Authentication is implemented in Phase 01 using:
 1. **Google OAuth 2.0 (OpenID Connect)**: Server-side validation of Google credentials via `google-auth-library`.
 2. **Passwordless Email OTP**: 6-digit cryptographic tokens (`crypto.randomInt(100000, 1000000)`), secured using HMAC-SHA-256 with a dedicated server-side secret key (`OTP_HMAC_SECRET`), with 10-minute expiration and a strict 5-attempt limit.
-3. **Stateful Native Sessions**: Opaque 256-bit session tokens hashed (SHA-256) and tracked in the `UserSession` MongoDB collection, delivered via HTTP-only, SameSite, Secure cookies for web, with dual Bearer token header resolution for mobile clients.
-4. **Zero Stored Passwords**: No password hashing, salting, or storage libraries will be introduced.
+3. **Stateful Native Sessions**: Opaque 256-bit session tokens hashed (SHA-256) and tracked in the `UserSession` MongoDB collection, delivered exclusively via HTTP-only, SameSite, Secure cookies for web browsers.
+4. **Mobile Bearer Parity**: Centralized authentication middleware resolves `Authorization: Bearer <token>` for future mobile applications.
+5. **Zero Stored Passwords**: No password hashing, salting, or storage libraries will be introduced.
 
 ---
 
@@ -104,34 +105,31 @@ If an attacker compromises or gains a read-only dump of the MongoDB database:
 
 ---
 
-## 7. Why the Decision Was Chosen
+## 7. Web Session Token Security & Zero-Leak Policy (Phase 01.1 Amendment)
 
-1. **Elimination of the Split-Brain Problem**:  
-   By keeping user identity, auth identities, and user sessions inside MongoDB, LearnForge maintains a single, unified database. When a user authenticates for the first time, their profile is initialized atomically in the same database operation that creates their default preferences.
-2. **Elimination of Password Breach Liabilities**:  
-   Passwordless authentication removes password storage and password credential-stuffing concerns. Managing 6-digit OTP hashes and opaque session tokens in Node.js is clean, well-understood, and safe.
-3. **Exact Product UX Control**:  
-   Direct control over the 6-digit OTP verification code experience without external redirects or third-party iframe overlays.
-4. **Complete Data Sovereignty & Portability**:  
-   All user records remain under direct control in MongoDB without vendor lock-in or subscription tiers.
+Under Phase 01.1 security hardening:
+- **No Token in JSON**: The raw session token is **never returned in JSON** to web clients upon sign-in or OTP verification. Responses return only user and session metadata (`{ user, session: { id, expiresAt, authMethod } }`).
+- **No Client-Side Credential Storage**: The browser client is strictly prohibited from storing session tokens in `localStorage`, `sessionStorage`, IndexedDB, or React state.
+- **Pure Cookie Authentication**: Browser sessions authenticate exclusively via the `HttpOnly`, `SameSite: 'lax'`, `Secure` cookie (`learnforge_session`), fully neutralizing XSS credential theft.
 
 ---
 
-## 8. Trade-offs & Mitigations
+## 8. Why the Decision Was Chosen
+
+1. **Elimination of the Split-Brain Problem**: Single source of truth in MongoDB.
+2. **Elimination of Password Breach Liabilities**: Zero stored passwords.
+3. **Exact Product UX Control**: Custom 6-digit OTP UI and official Google Identity Services button.
+4. **Complete Data Sovereignty & Portability**: Zero vendor lock-in or recurring per-MAU fees.
+
+---
+
+## 9. Trade-offs & Mitigations
 
 | Trade-off | Mitigation |
 | :--- | :--- |
-| **Email Delivery Dependency**: Email OTP requires a reliable transactional email service (e.g. Resend, SendGrid, Amazon SES). | Abstract the email sender behind an `EmailService` interface. For local development, log OTP codes to the console/test log so development is completely offline-capable. |
-| **Brute-Force & Rate Limiting Responsibility**: Developer must handle OTP abuse prevention. | Implement strict tiered rate limiting in Express (`express-rate-limit`): maximum 5 verification attempts per OTP, 1 request per 60 seconds per email, and 5 requests per 15 minutes per IP. |
-| **Session Cleanup**: Expired sessions in MongoDB must not accumulate indefinitely. | Use native MongoDB TTL (Time-To-Live) indexes on the `expiresAt` field in the `UserSession` collection to allow MongoDB to purge expired records automatically, while explicitly checking `expiresAt > now` at authorization time. |
-
----
-
-## 9. Migration / Exit Considerations
-
-If LearnForge ever scales to an enterprise level requiring SAML/SSO or enterprise compliance (SOC2, HIPAA) that justifies a dedicated identity provider (e.g. Okta, WorkOS):
-- The `AuthIdentity` collection stores `(provider, providerSubject)`. Migrating to an external identity provider simply requires adding an adapter that maps the external provider subject to `AuthIdentity.providerSubject`.
-- Because session verification is centralized in the `authenticateUser` middleware, swapping the session verification mechanism requires altering only that single middleware without modifying domain controllers.
+| **Email Delivery Dependency** | Abstract the email sender behind `EmailService`. For local development, log OTP codes to console. In production, require verified transactional email credentials. |
+| **Brute-Force & Rate Limiting Responsibility** | Implement strict tiered rate limiting in Express (`express-rate-limit`): maximum 5 verification attempts per OTP, 1 request per 60 seconds per email, and 5 requests per 15 minutes per IP. |
+| **Session Cleanup** | Use native MongoDB TTL indexes on `expiresAt` in `UserSession`, while explicitly checking `expiresAt > now` at authorization time. |
 
 ---
 
@@ -139,13 +137,7 @@ If LearnForge ever scales to an enterprise level requiring SAML/SSO or enterpris
 
 ### Positive Consequences
 - Zero external database synchronization or webhook latency.
-- Full atomic transactions in MongoDB across user creation and default workspace bootstrap.
-- No separate managed-auth subscription is required; infrastructure and transactional email still incur operational costs.
+- Full atomic transactions/idempotent upserts in MongoDB across user creation and default workspace bootstrap.
+- No separate managed-auth subscription is required.
 - Exact control over 6-digit OTP UX and email branding.
 - Unified web and mobile API contracts (`/api/v1/auth/*`).
-
-### Obligations for Phase 01 Implementation
-- Implement rate limiting (`express-rate-limit`) and brute-force throttling for OTP endpoints.
-- Maintain `OTP_HMAC_SECRET` in environment variables.
-- Abstract transactional email delivery via `EmailService`.
-- Verify Google OAuth OpenID Connect ID tokens server-side using `google-auth-library`.

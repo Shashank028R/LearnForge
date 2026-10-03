@@ -4,6 +4,42 @@ This log is the permanent chronological engineering journal for the LearnForge p
 
 ---
 
+## [Phase 01.1] Authentication Security Corrections & Production Readiness
+
+- **Date**: October 3, 2026
+- **Status**: Completed
+- **Phase**: Phase 01.1 — Authentication Security Corrections & Production Readiness
+- **Objective**: Correct production security and architecture gaps identified during review: eliminate raw session token exposure in JSON responses, remove all `localStorage` token storage from the web client, replace the mock Google token prompt with real Google Identity Services (GIS), harden user bootstrap against concurrent duplicate key races (error code 11000), update Phase 02 roadmap references, and expand automated tests.
+
+### Work Performed
+1. **Critical Security Fix — Web Session Token**:
+   - Updated `authController.js` (`verifyOtp` and `authenticateGoogle`) to remove `sessionToken` from JSON response payloads.
+   - Responses return user profile and session metadata only (`{ user, session: { id, expiresAt, authMethod } }`).
+   - Browser authenticates strictly through the secure `HttpOnly`, `SameSite: 'lax'`, `Secure` cookie.
+2. **Client Storage Sanitation**:
+   - Removed all `localStorage.setItem('learnforge_bearer_fallback', ...)` and `localStorage.removeItem(...)` from `AuthContext.jsx`.
+   - Verified via automated grep that `localStorage` and `sessionStorage` contain zero authentication tokens in `client/src`.
+3. **Real Google Identity Services Flow**:
+   - Removed `prompt(...)` and `mock_google_id_token_demo` from `AuthModal.jsx`.
+   - Injected official Google Identity Services script in `client/index.html`.
+   - Initialized `window.google.accounts.id` with `VITE_GOOGLE_CLIENT_ID` and rendered the official Google Sign-In button container.
+   - Real ID token JWT from Google callback is transmitted to `POST /api/v1/auth/google`.
+   - Configured fallback with clean, accessible notification if `VITE_GOOGLE_CLIENT_ID` is unconfigured.
+4. **Concurrent User Creation Hardening**:
+   - Hardened `verifyOtp` and `authenticateGoogle` to catch MongoDB duplicate key error code `11000` on `normalizedEmail` and compound index `{ provider, providerSubject }`.
+   - Safely re-queries the winning user document, eliminating 500 errors during simultaneous authentication requests.
+5. **Strict Production Email Safeguards**:
+   - Updated `EmailService.js` to reject `console` delivery in production and fail explicitly if transactional email credentials are missing.
+6. **Mobile Bearer Parity**:
+   - Preserved `Authorization: Bearer <token>` in `authenticateUser` for future mobile applications.
+7. **Testing**:
+   - Added tests in `server/tests/auth.test.js` asserting zero raw `sessionToken` in JSON, testing cookie flags, and verifying concurrent race resolution.
+   - Added OIDC verification boundary tests in `server/tests/googleAuthService.test.js` (signature failure, audience mismatch, issuer mismatch, expired credential).
+   - Added client test in `client/src/App.test.jsx` verifying `localStorage` and `sessionStorage` have 0 tokens.
+   - All 33 tests passing across backend and frontend.
+
+---
+
 ## [Phase 01] Authentication & User Identity
 
 - **Date**: October 3, 2026

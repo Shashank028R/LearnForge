@@ -206,3 +206,11 @@ In `server/src/middleware/auth.js`, the authentication middleware employs a dual
   *Cost*: We wrote ~1,500 lines of robust auth code, tests, and crypto utilities.  
   *Benefit*: Zero recurring SaaS cost, complete architectural control, zero cross-database sync webhooks, and identical local/offline development velocity.
 
+### Q25: Why don't you store the session token in localStorage?
+**Answer**:  
+Because the web application uses an `HttpOnly` cookie so JavaScript cannot directly read the authentication credential (`document.cookie`). Storing the raw session token in `localStorage` would unnecessarily expose a bearer credential to JavaScript and dramatically increase the blast radius of any Cross-Site Scripting (XSS) vulnerability. Mobile bearer-token support is retained at the backend boundary without exposing the token through normal browser authentication responses.
+
+### Q26: How will mobile authentication work?
+**Answer**:  
+The backend authentication middleware (`authenticateUser`) retains first-class Bearer token resolution (`Authorization: Bearer <session-token>`). Future mobile clients will obtain this token through a dedicated mobile authentication flow (such as an explicit mobile token-issuance endpoint or OAuth PKCE flow), rather than leaking the web session token to browser JavaScript. Mobile clients will securely store the token in hardware-backed storage (iOS Keychain or Android Keystore) and attach it to subsequent requests.
+

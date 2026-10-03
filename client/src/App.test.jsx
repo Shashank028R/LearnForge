@@ -66,4 +66,13 @@ describe('LearnForge Client Foundation & Auth Shell', () => {
 
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  it('verifies web client does NOT persist session tokens in localStorage or sessionStorage', async () => {
+    // Ensure localStorage and sessionStorage remain untouched
+    expect(localStorage.getItem('learnforge_bearer_fallback')).toBeNull();
+    expect(localStorage.getItem('sessionToken')).toBeNull();
+    expect(sessionStorage.getItem('sessionToken')).toBeNull();
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+  });
 });

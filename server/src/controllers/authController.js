@@ -230,29 +230,48 @@ export async function verifyOtp(req, res, next) {
     // Code verified: immediately invalidate/destroy token
     await EmailOtpToken.deleteOne({ _id: tokenDoc._id });
 
-    // Resolve or bootstrap user
+    // Resolve or bootstrap user with concurrent race protection
     let user = await User.findOne({ normalizedEmail });
     if (!user) {
-      user = await User.create({
-        email: normalizedEmail,
-        normalizedEmail,
-        displayName: normalizedEmail.split('@')[0],
-      });
+      try {
+        user = await User.create({
+          email: normalizedEmail,
+          normalizedEmail,
+          displayName: normalizedEmail.split('@')[0],
+        });
+      } catch (err) {
+        if (err.code === 11000) {
+          // Concurrent creation race: another request created the user simultaneously
+          user = await User.findOne({ normalizedEmail });
+          if (!user) throw err;
+        } else {
+          throw err;
+        }
+      }
     }
 
-    // Ensure AuthIdentity for email provider is linked
-    await AuthIdentity.findOneAndUpdate(
-      { provider: 'email', providerSubject: normalizedEmail },
-      { userId: user._id, emailAtProvider: normalizedEmail },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    // Ensure AuthIdentity for email provider is linked idempotently
+    try {
+      await AuthIdentity.findOneAndUpdate(
+        { provider: 'email', providerSubject: normalizedEmail },
+        { userId: user._id, emailAtProvider: normalizedEmail },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    } catch (err) {
+      if (err.code === 11000) {
+        // Handled idempotent upsert race
+        await AuthIdentity.findOne({ provider: 'email', providerSubject: normalizedEmail });
+      } else {
+        throw err;
+      }
+    }
 
     // Issue opaque session token
     const rawSessionToken = generateSessionToken();
     const sessionTokenHash = hashSessionToken(rawSessionToken);
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
-    await UserSession.create({
+    const sessionDoc = await UserSession.create({
       userId: user._id,
       sessionTokenHash,
       authMethod: 'otp',
@@ -263,14 +282,18 @@ export async function verifyOtp(req, res, next) {
       expiresAt,
     });
 
-    // Set secure HTTP-only cookie
+    // Set secure HTTP-only cookie — raw session token is NEVER returned in JSON
     setSessionCookie(res, rawSessionToken);
 
     return res.status(200).json({
       success: true,
       data: {
         user: sanitizeUser(user),
-        sessionToken: rawSessionToken, // Returned for future mobile clients to store in secure storage
+        session: {
+          id: sessionDoc._id,
+          expiresAt,
+          authMethod: 'otp',
+        },
       },
       meta: {
         requestId: req.id || 'unknown',
@@ -326,21 +349,43 @@ export async function authenticateGoogle(req, res, next) {
           await user.save();
         }
       } else {
-        // 3. New user registration
-        user = await User.create({
-          email: normalizedEmail,
-          normalizedEmail,
-          displayName: name || normalizedEmail.split('@')[0],
-          avatarUrl: picture || null,
-        });
+        // 3. New user registration with concurrent race protection
+        try {
+          user = await User.create({
+            email: normalizedEmail,
+            normalizedEmail,
+            displayName: name || normalizedEmail.split('@')[0],
+            avatarUrl: picture || null,
+          });
+        } catch (err) {
+          if (err.code === 11000) {
+            // Concurrent creation race: another request created the user concurrently
+            user = await User.findOne({ normalizedEmail });
+            if (!user) throw err;
+          } else {
+            throw err;
+          }
+        }
       }
 
-      // Link identity record
-      await AuthIdentity.findOneAndUpdate(
-        { provider: 'google', providerSubject: sub },
-        { userId: user._id, emailAtProvider: normalizedEmail },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
+      // Link identity record idempotently
+      try {
+        await AuthIdentity.findOneAndUpdate(
+          { provider: 'google', providerSubject: sub },
+          { userId: user._id, emailAtProvider: normalizedEmail },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+      } catch (err) {
+        if (err.code === 11000) {
+          // If another concurrent request created this identity, re-verify link
+          await AuthIdentity.findOneAndUpdate(
+            { provider: 'google', providerSubject: sub },
+            { $set: { userId: user._id, emailAtProvider: normalizedEmail } }
+          );
+        } else {
+          throw err;
+        }
+      }
     }
 
     if (user.status !== 'active') {
@@ -360,7 +405,7 @@ export async function authenticateGoogle(req, res, next) {
     const sessionTokenHash = hashSessionToken(rawSessionToken);
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
-    await UserSession.create({
+    const sessionDoc = await UserSession.create({
       userId: user._id,
       sessionTokenHash,
       authMethod: 'google',
@@ -371,13 +416,18 @@ export async function authenticateGoogle(req, res, next) {
       expiresAt,
     });
 
+    // Set secure HTTP-only cookie — raw session token is NEVER returned in JSON
     setSessionCookie(res, rawSessionToken);
 
     return res.status(200).json({
       success: true,
       data: {
         user: sanitizeUser(user),
-        sessionToken: rawSessionToken,
+        session: {
+          id: sessionDoc._id,
+          expiresAt,
+          authMethod: 'google',
+        },
       },
       meta: {
         requestId: req.id || 'unknown',

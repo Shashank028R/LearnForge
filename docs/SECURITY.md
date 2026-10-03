@@ -90,16 +90,20 @@ This document is the authoritative security architecture specification for **Lea
 ### 3.4 Session Management & Cookie Security
 - **Opaque Session Tokens**: High-entropy cryptographically random 256-bit token (`crypto.randomBytes(32).toString('hex')`).
 - **Database Tracking**: MongoDB stores `sessionTokenHash` (SHA-256 of the token), `userId`, `deviceInfo`, `expiresAt` (30 days), and `revokedAt`. Raw tokens are never stored in the database.
+- **Zero Web Token Exposure**: Raw session tokens are **never** returned in JSON responses to the browser (`POST /api/v1/auth/otp/verify` and `POST /api/v1/auth/google` return only user and session metadata).
+- **No Browser Credential Storage**: Authentication credentials are strictly prohibited from `localStorage`, `sessionStorage`, IndexedDB, or persistent React state.
 - **Cookie Security Flags**:
-  - `HttpOnly`: Inaccessible to browser JavaScript (protects against XSS token theft).
+  - `HttpOnly`: Inaccessible to browser JavaScript (completely neutralizing XSS token theft).
   - `Secure`: Transmitted only over HTTPS (in production).
   - `SameSite: 'Lax'`: Defends against Cross-Site Request Forgery (CSRF).
+  - `Path=/` and explicit 30-day lifetime.
 - **Session Revocation**:
   - Single logout (`POST /api/v1/auth/logout`): Marks the active session `revokedAt = new Date()` and clears the cookie.
   - Global logout (`POST /api/v1/auth/logout-all`): Sets `revokedAt = new Date()` on all active sessions for `userId`.
-- **Mobile Support**: The `authenticateUser` middleware supports dual resolution:
+- **Mobile Architecture Parity**: The `authenticateUser` middleware supports dual resolution:
   1. Primary for web: Read session token from secure HTTP-only cookie (`learnforge_session`).
-  2. Fallback for mobile: Read session token from `Authorization: Bearer <session_token>` header.
+  2. Fallback for mobile: Read session token from `Authorization: Bearer <session_token>` header. Mobile clients will obtain tokens via a dedicated mobile authentication endpoint and store them in hardware-backed storage (iOS Keychain / Android Keystore).
+- **Concurrent User Bootstrap Hardening**: User and identity creation handles MongoDB duplicate key error code 11000 on `normalizedEmail` and compound unique index `{ provider: 1, providerSubject: 1 }` gracefully, resolving the winner of the race condition without returning 500 errors.
 
 ---
 
