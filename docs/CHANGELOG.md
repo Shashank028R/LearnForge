@@ -5,6 +5,37 @@ All notable changes to the LearnForge project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-04
+
+### Phase 04 — Chat Infrastructure
+
+#### Added
+- **Domain Models & Persistence**:
+  - `Chat.js`: User-owned chat sessions optionally linked to `Subject` and `Topic` with status, message counter, and compound activity indexes.
+  - `Message.js`: User-owned message turns with compound unique sequential indexing `{ chatId: 1, sequenceIndex: 1 }` and metadata readiness for downstream AI features.
+- **REST APIs**:
+  - Full CRUD endpoints under `/api/v1/chats` (`GET /`, `POST /`, `GET /:id`, `PUT /:id`, `DELETE /:id`).
+  - Message exchange endpoints under `/api/v1/chats/:id/messages` (`GET /`, `POST /`).
+- **Interactive Two-Pane UI**:
+  - `ChatsPage.jsx`: Full responsive conversation history sidebar, search filter, status tabs, New Chat modal with topic/subject selector, message thread with student & assistant avatars, copy utility, and auto-expanding composer.
+  - `chatsApi.js`: Centralized client API service for chats and messages.
+  - Added native SVG icons in `Icon.jsx`: `send`, `sparkles`, `copy`, `archive`.
+  - Connected `/chats` and `/chats/:chatId` in `AppRoutes.jsx`.
+- **Cascading Lifecycle & Security**:
+  - Automated cascade deletion from Subject → Topic → Chat → Messages.
+  - Topic `chatsCount` increment/decrement lifecycle and read reconciliation.
+  - Strict tenant isolation returning 404 on cross-user queries.
+- **Architectural Documentation**:
+  - Authored `docs/decisions/ADR-012-chat-and-message-infrastructure.md`.
+  - Authored `docs/phases/phase-04-chat-infrastructure.md`.
+- **Automated & Live Tests**:
+  - 17 backend tests in `server/tests/chats.test.js` (total server tests: 83).
+  - 4 frontend tests in `client/src/pages/Chats.test.jsx` (total client tests: 40).
+  - Total automated monorepo tests increased to 123 tests (100% passing).
+  - Live verification script `server/scripts/verify_phase04_live.js` passing against live MongoDB Atlas.
+
+---
+
 ## [0.4.0] - 2026-10-03
 
 ### Phase 03 — Subjects, Topics & Knowledge Structure

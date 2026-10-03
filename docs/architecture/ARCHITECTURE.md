@@ -177,13 +177,16 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - All reads and mutations query `userId: req.user._id` directly:
   - `Subject.findOne({ _id: subjectId, userId: req.user._id })`
   - `Topic.findOne({ _id: topicId, userId: req.user._id })`
-- Denormalizing `userId` on the `Topic` model enables O(1) indexed authorization without relational `$lookup` joins.
+  - `Chat.findOne({ _id: chatId, userId: req.user._id })`
+  - `Message.find({ chatId, userId: req.user._id })`
+- Denormalizing `userId` on `Topic`, `Chat`, and `Message` models enables O(1) indexed authorization without relational `$lookup` joins.
 - Cross-tenant requests return `404 Not Found` rather than `403 Forbidden` to prevent resource ID enumeration attacks.
 
 ### 6.2 Cascade Lifecycle & Counter Management
-- When a `Subject` is deleted, all associated `Topic` records are purged:
-  `await Topic.deleteMany({ subjectId: subject._id, userId: req.user._id });`
-- Subject `topicsCount` is maintained through coordinated application-level updates when topics are created or deleted. The count can also be reconciled from persisted Topic records upon single-subject queries.
+- When a `Subject` is deleted, all associated `Topic`, `Chat`, and `Message` records are purged.
+- When a `Topic` is deleted, all associated `Chat` and `Message` records are purged.
+- When a `Chat` is deleted, all child `Message` records are purged.
+- Subject `topicsCount` and Topic `chatsCount` are maintained through coordinated application-level updates and reconciled on read lookups.
 
 ---
 
@@ -192,7 +195,7 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - **Auth Domain (Phase 01 & 01.1 - Implemented)**: User identity, AuthIdentity linking, UserSession tracking, OTP generation/hashing, and session revocation.
 - **UI Shell Domain (Phase 02 & 02.1 - Implemented)**: Professional application shell, navigation, design tokens, route boundaries, and reusable primitives.
 - **Knowledge Hierarchy Domain (Phase 03 - Implemented)**: Subjects, topics, sequential ordering, and embedded knowledge state foundation.
-- **Conversation Domain (Phase 04 - Planned)**: Socratic dialogue, messages, and streaming response delivery.
+- **Conversation Domain (Phase 04 - Implemented)**: Chat sessions, chronological message sequencing (`sequenceIndex`), topic/subject context linking, and responsive two-pane workspace.
 - **AI Domain (Phase 05 - Planned)**: AI Gateway, task classification, and provider adapters (Gemini, OpenAI, Anthropic).
 - **Knowledge Extraction Domain (Phase 06 - Planned)**: Concept extraction, confidence tracking, and misconception detection.
 - **Notes Domain (Phase 07 - Planned)**: Structured block notes, versioning, and diff proposals.

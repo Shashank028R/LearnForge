@@ -50,10 +50,7 @@ export function AppRoutes({ onOpenAuth }) {
           <Route path="subjects" element={<SubjectsPage />} />
           <Route path="subjects/:subjectId" element={<SubjectDetailPage />} />
           <Route path="chats" element={<ChatsPage />} />
-          <Route
-            path="chats/:chatId"
-            element={<PlaceholderDetailPage resourceType="Chat" />}
-          />
+          <Route path="chats/:chatId" element={<ChatsPage />} />
           <Route path="notes" element={<NotesPage />} />
           <Route
             path="notes/:noteId"

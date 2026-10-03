@@ -9,6 +9,7 @@ import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
 import subjectsRouter from './routes/subjects.js';
 import topicsRouter from './routes/topics.js';
+import chatsRouter from './routes/chats.js';
 
 export function createApp() {
   const app = express();
@@ -34,6 +35,7 @@ export function createApp() {
   apiRouter.use(authRouter);
   apiRouter.use(subjectsRouter);
   apiRouter.use(topicsRouter);
+  apiRouter.use(chatsRouter);
 
   app.use(config.apiPrefix, apiRouter);
 

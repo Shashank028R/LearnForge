@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
 import { Topic } from '../models/Topic.js';
 import { Subject } from '../models/Subject.js';
+import { Chat } from '../models/Chat.js';
+import { Message } from '../models/Message.js';
 
 function sanitizeTopic(topic) {
   return {
@@ -312,6 +314,13 @@ export async function getTopic(req, res, next) {
       });
     }
 
+    // Reconcile chats counter on read
+    const actualChatsCount = await Chat.countDocuments({ topicId: topic._id, userId: req.user._id });
+    if (topic.chatsCount !== actualChatsCount) {
+      topic.chatsCount = actualChatsCount;
+      await topic.save();
+    }
+
     return res.status(200).json({
       success: true,
       data: {
@@ -540,6 +549,18 @@ export async function deleteTopic(req, res, next) {
     }
 
     const subjectId = topic.subjectId;
+
+    // Cascade delete any chats and messages associated with this topic
+    const topicChats = await Chat.find({
+      topicId: topic._id,
+      userId: req.user._id,
+    }).select('_id');
+
+    if (topicChats.length > 0) {
+      const chatIds = topicChats.map((c) => c._id);
+      await Message.deleteMany({ chatId: { $in: chatIds }, userId: req.user._id });
+      await Chat.deleteMany({ _id: { $in: chatIds }, userId: req.user._id });
+    }
 
     await Topic.deleteOne({ _id: topic._id });
 

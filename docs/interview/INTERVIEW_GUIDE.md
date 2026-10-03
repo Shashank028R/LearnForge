@@ -367,4 +367,17 @@ Because both deletions are strictly scoped to `req.user._id`, there is zero blas
 - `lastStudiedAt`: Date timestamp updated during Phase 08 Socratic study sessions.
 By standardizing this persistence contract in Phase 03, future phases can mutate and query canonical knowledge states without requiring database migrations.
 
+### Q46: Why use integer sequence indexing (`sequenceIndex`) rather than timestamp sorting for message history?
+**Answer**:  
+In distributed environments, device clocks and container clocks can experience clock drift or sub-millisecond concurrency overlaps. Relying solely on `createdAt` timestamps for sorting conversational messages can lead to race conditions where assistant responses appear before user questions. By enforcing a compound unique index `{ chatId: 1, sequenceIndex: 1 }`, LearnForge guarantees deterministic, zero-collision chronological message ordering.
+
+### Q47: Why separate `Chat` and `Message` into dedicated collections?
+**Answer**:  
+Storing messages in an embedded array inside the `Chat` document quickly runs into MongoDB's 16MB document size limit for active dialogues and prevents granular message-level pagination (`beforeSequence`, `limit`). Normalizing `Message` into a dedicated collection enables unbounded thread depth, paginated history retrieval, and allows individual message ObjectIds to be referenced as persistent evidence by the Phase 06 Knowledge Extraction and Phase 07 Notes pipelines.
+
+### Q48: How is the Chat loop decoupled from downstream AI extraction to preserve response latency?
+**Answer**:  
+The synchronous HTTP response cycle for `POST /api/v1/chats/:id/messages` only performs fast message validation, persistence, and assistant message delivery (sub-50ms). Post-interaction cognitive workloads—such as extracting conceptual understanding into `Topic.knowledgeState` or proposing note block diffs—are decoupled as background domain events, preventing user-perceived chat latency.
+
+
 

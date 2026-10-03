@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
 import { Subject } from '../models/Subject.js';
 import { Topic } from '../models/Topic.js';
+import { Chat } from '../models/Chat.js';
+import { Message } from '../models/Message.js';
 
 export const VALID_MASTERY_LEVELS = ['beginner', 'intermediate', 'advanced', 'comprehensive'];
 
@@ -421,6 +423,18 @@ export async function deleteSubject(req, res, next) {
       subjectId: subject._id,
       userId: req.user._id,
     });
+
+    // Cascade deletion of all chats and messages linked to this subject
+    const subjectChats = await Chat.find({
+      subjectId: subject._id,
+      userId: req.user._id,
+    }).select('_id');
+
+    if (subjectChats.length > 0) {
+      const chatIds = subjectChats.map((c) => c._id);
+      await Message.deleteMany({ chatId: { $in: chatIds }, userId: req.user._id });
+      await Chat.deleteMany({ _id: { $in: chatIds }, userId: req.user._id });
+    }
 
     await Subject.deleteOne({ _id: subject._id });
 

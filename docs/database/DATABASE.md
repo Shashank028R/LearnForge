@@ -171,10 +171,56 @@ Represents a curriculum unit or module belonging to a Subject with an embedded k
 
 ---
 
+### 3.3 Chat
+Represents an interactive conversation session optionally anchored to a Subject and Topic.
+
+```javascript
+{
+  _id: ObjectId,
+  userId: ObjectId,          // Ref: 'User', indexed, required
+  subjectId: ObjectId,       // Ref: 'Subject', indexed, nullable
+  topicId: ObjectId,         // Ref: 'Topic', indexed, nullable
+  title: String,             // Trimmed, max 200 chars (default: 'New Conversation')
+  status: String,            // 'active' | 'archived' (default: 'active')
+  messagesCount: Number,     // Cached counter of child messages (default: 0)
+  lastMessageAt: Date,       // Timestamp of most recent message (default: Date.now)
+  metadata: Object,          // Extensible key-value metadata (default: {})
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Compound Active Listing Index: `{ userId: 1, status: 1, lastMessageAt: -1 }` — fast retrieval of user's active/archived chats.
+- Topic-Scoped Query Index: `{ userId: 1, topicId: 1, lastMessageAt: -1 }` — fast topic-scoped chat retrieval.
+- Subject-Scoped Query Index: `{ userId: 1, subjectId: 1, lastMessageAt: -1 }` — fast subject-scoped chat retrieval.
+
+---
+
+### 3.4 Message
+Represents an immutable conversational turn within a Chat session.
+
+```javascript
+{
+  _id: ObjectId,
+  chatId: ObjectId,          // Ref: 'Chat', indexed, required
+  userId: ObjectId,          // Ref: 'User', indexed, required (denormalized ownership)
+  role: String,              // 'user' | 'assistant' | 'system', required
+  content: String,           // Trimmed, 1-20,000 chars, required
+  sequenceIndex: Number,     // 0-indexed sequential position counter, required
+  status: String,            // 'sent' | 'delivered' | 'error' (default: 'sent')
+  metadata: Object,          // Extensible metadata for tokens, model, citations
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Unique Compound Sequence Index: `{ chatId: 1, sequenceIndex: 1 }, { unique: true }` — guarantees strict deterministic chronological ordering and prevents collisions.
+- Tenant & Chat Query Index: `{ userId: 1, chatId: 1 }` — supports fast user-scoped aggregation and authorization.
+
+---
+
 ## 4. Core Domain Entities (Scheduled for Subsequent Phases)
 
-- **Chat** (`Phase 04`): Subject-scoped and general conversation sessions.
-- **Message** (`Phase 04`): Ordered messages with sequence indexing.
 - **LearningEvent** (`Phase 06`): Learning observations and concept interactions.
 - **NoteDocument & NoteVersion** (`Phase 07`): Typed block notes and immutable snapshots.
 - **Quiz & QuizAttempt** (`Phase 10`): Dynamic assessments and scored student responses.
