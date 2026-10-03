@@ -10,17 +10,20 @@
 
 ## 2. Current Phase Status
 
-- **Current Phase**: **Phase 00 — Project Foundation & Architecture (COMPLETED)**
+- **Current Phase**: **Phase 00.1 — Documentation Reconciliation & Foundation Corrections (COMPLETED)**
 - **Next Phase**: **Phase 01 — Authentication & User Identity**
 - **Repository Remote**: `https://github.com/Shashank028R/LearnForge.git`
 - **Default Branch**: `main`
 
 ---
 
-## 3. Completed Work (Phase 00)
+## 3. Completed Foundation Work
 
 - **Comprehensive Architecture Review**: Analyzed all 18 phase specifications, ADRs, database designs, API contracts, and security rules. Documented findings and resolved naming and architectural ambiguities in `docs/architecture/ARCHITECTURE_REVIEW.md`.
 - **Engineering Documentation System**: Established the formal documentation hierarchy (`/docs/architecture`, `/docs/api`, `/docs/database`, `/docs/features`, `/docs/phases`, `/docs/decisions`, `/docs/interview`, `/docs/operations`), created living logs (`docs/IMPLEMENTATION_LOG.md`), and authored Mermaid system diagrams (`docs/architecture/SYSTEM_DIAGRAMS.md`).
+- **Canonical Security Specification**: Created `docs/SECURITY.md` defining the Phase 00 baseline and explicit security requirements for Phase 01 and future phases.
+- **Authentication Architecture Decision**: Authored `docs/decisions/ADR-009-authentication-architecture.md` formally establishing the self-managed native MongoDB session architecture (Google OAuth + passwordless email OTP) prior to Phase 01 implementation.
+- **Dependency Registry Accuracy**: Updated `docs/DEPENDENCIES.md` distinguishing declared semver ranges in `package.json` from resolved exact versions in `package-lock.json`.
 - **Monorepo Architecture**: Configured npm workspaces linking `/client` and `/server` with clean orchestration scripts.
 - **Frontend Foundation (`/client`)**: Initialized React 18, Vite, React Router DOM, and Tailwind CSS configured for a restrained, professional productivity aesthetic (strictly zero neon, glassmorphism, or decorative bloat).
 - **Backend Foundation (`/server`)**: Initialized Node.js Express (ES Modules) with centralized environment loading, correlation ID tracking (`X-Request-ID`), standardized JSON error/success envelopes, and resilient MongoDB connectivity abstraction.
@@ -31,20 +34,25 @@
 
 ---
 
-## 4. Current Work
+## 4. Current Work (Phase 00.1)
 
-- Final validation of Phase 00 test suites and package manifests.
-- Preparing Phase 00 commit (`chore: initialize LearnForge project foundation`) and push to `main`.
+- Reconciling documentation with actual repository state.
+- Formally anchoring ADR-009 before writing any authentication code.
+- Publishing canonical `docs/SECURITY.md`.
+- Correcting dependency registry version descriptions.
 - Awaiting project owner authorization before initiating Phase 01.
 
 ---
 
 ## 5. Upcoming Work (Phase 01)
 
-- Formulate `ADR-009` defining final authentication architecture (self-managed cryptographic sessions vs. managed provider).
-- Implement Google OAuth 2.0 and passwordless email OTP request/verification pipelines.
-- Establish server-side session tracking and route protection middleware.
-- Build login and account recovery UI shell.
+- Implement Google OAuth 2.0 (OpenID Connect) server-side verification using `google-auth-library`.
+- Implement passwordless email OTP request/verification pipelines with cryptographic generation and hashing.
+- Implement server-side stateful session tracking in MongoDB (`UserSession`) with HTTP-only cookies and mobile Bearer token support.
+- Build login and authentication modal/shell UI in React client.
+- Secure protected routes with authentication middleware.
+
+*(Note: Authentication has NOT been implemented yet. It is the core deliverable of Phase 01.)*
 
 ---
 
@@ -77,19 +85,18 @@
 - **ADR-006**: API-first, mobile-ready backend contracts.
 - **ADR-007**: Risk-based note update automation policy.
 - **ADR-008**: Documentation as an immutable build requirement.
-- **Phase 00 Decisions**: Vitest as unified test runner; asynchronous knowledge extraction event flow; standard JSON response envelopes.
+- **ADR-009**: Self-Managed Native MongoDB Session Architecture for authentication (Google OAuth + Passwordless Email OTP).
 
 ---
 
 ## 8. Known Issues & Limitations
 
 - Local MongoDB instance may not be present in offline developer environments; handled gracefully by connection abstraction without crashing HTTP server.
-- Product feature endpoints (auth, chat, notes, AI) are deliberately unmounted in Phase 00 per foundation boundaries.
+- Product feature endpoints (auth, chat, notes, AI) are deliberately unmounted until their scheduled phases.
 
 ---
 
 ## 9. Deferred Decisions
 
-- **Authentication Provider**: Specific provider selection (e.g., self-managed session tokens in MongoDB vs. external identity service) deferred to Phase 01.
 - **AI Model Selection**: Specific provider models (e.g. Gemini 1.5 Pro/Flash, Claude 3.5 Sonnet, GPT-4o) deferred to Phase 05.
 - **Cloud Object Storage Provider**: AWS S3 vs. Cloudflare R2 deferred to Phase 11.
