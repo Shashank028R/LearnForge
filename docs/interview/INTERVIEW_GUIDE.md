@@ -214,3 +214,77 @@ Because the web application uses an `HttpOnly` cookie so JavaScript cannot direc
 **Answer**:  
 The backend authentication middleware (`authenticateUser`) retains first-class Bearer token resolution (`Authorization: Bearer <session-token>`). Future mobile clients will obtain this token through a dedicated mobile authentication flow (such as an explicit mobile token-issuance endpoint or OAuth PKCE flow), rather than leaking the web session token to browser JavaScript. Mobile clients will securely store the token in hardware-backed storage (iOS Keychain or Android Keystore) and attach it to subsequent requests.
 
+---
+
+## 6. Phase 02 — Professional UI Shell & Design System
+
+### Q27: Why did you avoid a component library (e.g. Radix, MUI, Chakra) and build a controlled design system?
+**Answer**:  
+1. **Zero Bundle Bloat & Zero Version Churn**: External UI component libraries bring extensive runtime code, complex styling abstractions, and frequent breaking changes.
+2. **Strict Aesthetic & Brand Control**: Prebuilt component libraries tend to look like generic SaaS templates. LearnForge requires a calm, information-dense, distraction-free environment tailored for hours of intense academic study.
+3. **Targeted Accessibility Without Indirection**: By crafting atomic primitives (`Button`, `Input`, `Dialog`, `Dropdown`, `EmptyState`, `Skeleton`) directly in React with Tailwind semantic tokens, we maintain 100% control over ARIA attributes, focus management, keyboard handlers (Escape, Tab), and touch targets without wrapper overhead.
+
+### Q28: How did you structure reusable React components?
+**Answer**:  
+Components follow a strict atomic separation of concerns:
+- `client/src/components/ui/`: Micro-primitives (`Button`, `IconButton`, `Input`, `Badge`, `Avatar`, `Dialog`, `Dropdown`, `EmptyState`, `Skeleton`, `LoadingState`, `ErrorState`, `Tabs`, `Divider`, `Icon`). These contain zero domain-specific or API business logic; they operate purely on props and accessible callbacks.
+- `client/src/components/layout/`: Structural frame components (`Sidebar`, `TopBar`, `UserNav`, `AppShell`) that manage application navigation state, breadcrumbs, responsive drawer behavior, and user account actions.
+- `client/src/components/auth/`: Specialized authentication views (`AuthModal`) refactored to consume UI primitives while integrating with the `useAuth()` context.
+- `client/src/pages/`: Route-level views consuming layout context and rendering authentic empty states without fake data.
+
+### Q29: How does the authenticated shell know whether the user is logged in?
+**Answer**:  
+On application mount, `AuthProvider` (`client/src/context/AuthContext.jsx`) executes a session hydration probe: `GET /api/v1/auth/me` with `credentials: 'include'`.
+- If the browser holds a valid `HttpOnly` session cookie (`learnforge_session`), the backend verifies the SHA-256 hash in MongoDB and returns `{ user, session }`. The client sets `user`, `session`, `isAuthenticated = true`, and `loading = false`.
+- If no cookie exists or the session is expired/revoked, the server returns 401. The client sets `user = null`, `session = null`, `isAuthenticated = false`, and `loading = false`.
+- The shell re-renders reactively without storing any credentials in JavaScript `localStorage` or `sessionStorage`.
+
+### Q30: How do protected routes work?
+**Answer**:  
+In `client/src/routes/ProtectedRoute.jsx`:
+1. It queries `const { isAuthenticated, loading } = useAuth();`.
+2. While `loading === true`, it renders a calm `<LoadingState type="route" message="Validating secure session..." />`.
+3. If `loading === false` and `isAuthenticated === false`, rather than abruptly bouncing the user with jarring URL redirects, it renders an accessible `<EmptyState>` with a shield icon, explanation ("This section of your workspace requires an active, authenticated LearnForge session"), and a direct `[Sign In]` button that opens `AuthModal`.
+4. If authenticated, it renders `children`.
+
+### Q31: How did you make the application responsive?
+**Answer**:  
+1. **Desktop (>= 768px)**: The `<Sidebar>` is a persistent, sticky 240px (`w-60`) vertical rail. The main workspace frame scrolls independently without horizontal overflow.
+2. **Mobile (< 768px)**:
+   - The desktop sidebar is hidden (`hidden md:block`).
+   - The `<TopBar>` dynamically exposes an accessible hamburger icon button (`IconButton` with `aria-label="Open navigation menu"`).
+   - Clicking the hamburger opens an off-canvas drawer overlay (`fixed inset-0 z-50`) with a dark backdrop. Clicking the backdrop or navigating to any link automatically closes the drawer.
+   - Touch targets for buttons, inputs, and tabs meet the minimum 44x44px ergonomic standard.
+
+### Q32: How did you handle loading and empty states?
+**Answer**:  
+- **Loading States**: Full-screen spinners were eliminated. Instead, `Skeleton.jsx` provides animated pulse placeholders matching the exact physical layout of future cards, list rows, or text blocks. For initial route boot, `LoadingState.jsx` provides a subtle indicator.
+- **Empty States**: Generic or decorative illustrations were replaced with clean, calm `<EmptyState>` components. Each empty state communicates:
+  1. What is currently missing (e.g. "No subjects yet.").
+  2. Why it is empty and how it will populate (e.g. "Create your first subject to organize study material...").
+  3. A clear, single primary action button (e.g. `[Create Subject]`).
+  Crucially, zero fake data, mock streak counters, or synthetic activity graphs were fabricated.
+
+### Q33: How did you approach accessibility (A11y)?
+**Answer**:  
+- **Keyboard Navigation**: Universal focus ring (`*:focus-visible` with `ring-2 ring-brand-500 ring-offset-1`). All interactive elements are native semantic HTML `<button>`, `<a>`, `<input>` elements. No unsemantic `<div onClick>` elements.
+- **Accessible Names**: All icon buttons enforce explicit `aria-label` attributes.
+- **Form Controls**: Inputs link labels via `htmlFor`, errors via `role="alert"`, and inputs via `aria-invalid="true"` and `aria-describedby`.
+- **Dialogs**: `Dialog.jsx` and `AuthModal.jsx` implement `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, `aria-describedby`, Escape-key listeners, and focus traps.
+- **Contrast Ratios**: Color tokens pass WCAG AA contrast standards (minimum 4.5:1 for standard text against light and dark surfaces).
+
+### Q34: Why avoid glassmorphism and heavy visual effects?
+**Answer**:  
+Glassmorphism (translucent cards with `backdrop-filter: blur()`, glowing borders, and floating colorful gradient blobs) is a fleeting visual gimmick popular in AI demos that actively harms serious productivity:
+1. **Visual Fatigue**: Excessive blur and glow distract the human eye, increasing cognitive strain during long reading and study sessions.
+2. **Accessibility Failure**: Transparent and translucent backgrounds make text contrast unpredictable across varied backgrounds.
+3. **GPU Performance Overhead**: Heavy `backdrop-filter` triggers continuous GPU composition layers, causing frame drops and battery drain on laptops and mobile devices.
+LearnForge uses solid surfaces, crisp 1px neutral borders (`var(--color-border-default)`), and deliberate typography hierarchy to establish quality.
+
+### Q35: How would the same design system evolve when Chat, Notes, and Study Mode are introduced?
+**Answer**:  
+Because the design system is decoupled from feature logic and built on foundational tokens:
+1. **Chat (Phase 04)**: The main workspace container will host the conversational thread, utilizing `Avatar` for user/assistant messages, `Input`/`Textarea` for the message prompt, and `Skeleton` for streaming chunk placeholders.
+2. **Notes (Phase 07)**: The structured block note editor will use the typography scale (`.text-title`, `.text-body`, `font-mono`) and 1px border dividers without needing custom CSS overrides.
+3. **Study Mode (Phase 08)**: The distraction-free mode will cleanly collapse the `<Sidebar>`, centering the active recall card within the max-width content container while preserving dark/light mode tokens.
+

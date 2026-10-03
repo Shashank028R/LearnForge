@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-10-03
+
+### Phase 02 — Professional UI Shell & Design System
+
+#### Added
+- **Design System & Token Architecture**: Complete token foundations in `client/tailwind.config.js` and `client/src/index.css` supporting calm neutrals (`app.*`), restrained brand blues (`brand.*`), semantic feedback (`status.*`), micro-radii, and subtle elevations.
+- **Theme Architecture**: Implemented `ThemeContext.jsx` with light and low-distraction dark mode support, persistence to `localStorage`, and OS preference synchronization.
+- **Application Shell Components**:
+  - `Sidebar.jsx`: Persistent 240px desktop sidebar and mobile off-canvas drawer with active route states and version indicator.
+  - `TopBar.jsx`: Restrained navigation header featuring breadcrumbs, quick search trigger placeholder, theme toggle button, and authenticated `UserNav`.
+  - `AppShell.jsx`: Unified shell layout managing responsive mobile drawer state and scrollable workspace content frame.
+- **Reusable UI Primitives Suite** (`client/src/components/ui/`):
+  - `Button`, `IconButton`, `Input`, `Dialog`, `Dropdown`, `EmptyState`, `Skeleton`, `LoadingState`, `ErrorState`, `Tabs`, `Divider`, `Avatar`, `Badge`, and unified 1.5-stroke vector `Icon`.
+- **Authentic Routing Architecture**:
+  - Routes for Home (`/`), Subjects (`/subjects`), Chats (`/chats`), Notes (`/notes`), Study (`/study`), Quizzes (`/quizzes`), Progress (`/progress`), Import (`/import`), Profile (`/profile`), and Settings (`/settings`).
+  - Detail route placeholders (`/subjects/:subjectId`, `/chats/:chatId`, `/notes/:noteId`).
+  - `ProtectedRoute` wrapper displaying accessible sign-in prompts for unauthenticated access.
+  - Authentic empty states for all feature areas with zero fake metrics or mock data.
+- **Refactored Auth UI Integration**: Refactored `AuthModal.jsx` to adhere to the new design system, eliminating glassmorphism and backdrop blurs while preserving official Google Identity Services, 6-digit OTP, paste support, and HttpOnly session cookies.
+- **Automated Tests**: 17 unit tests for UI primitives and App shell behavior. Monorepo total at 47 passing tests.
+- **Design System Documentation**: Created canonical design specification at `docs/features/DESIGN_SYSTEM.md`.
+
+---
+
 ## [0.2.1] - 2026-10-03
 
 ### Phase 01.1 — Authentication Security Corrections & Production Readiness

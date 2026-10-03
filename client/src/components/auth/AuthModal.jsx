@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { Button, Input, Icon, IconButton, Divider } from '../ui';
 
+/**
+ * Professional Authentication Modal adhering to LearnForge Design System.
+ * Replaces demo styling with calm, restrained layout.
+ * Strictly avoids glassmorphism, glowing borders, and backdrop blurs.
+ */
 export default function AuthModal({ isOpen, onClose }) {
   const { requestOtp, verifyOtp, authenticateGoogle } = useAuth();
 
@@ -67,7 +73,7 @@ export default function AuthModal({ isOpen, onClose }) {
           window.google.accounts.id.renderButton(googleButtonRef.current, {
             theme: 'outline',
             size: 'large',
-            width: 380,
+            width: 360,
             text: 'continue_with',
             shape: 'rectangular',
           });
@@ -94,7 +100,6 @@ export default function AuthModal({ isOpen, onClose }) {
       setStep('otp');
       setCooldown(data.cooldownSeconds || 60);
       setOtpDigits(['', '', '', '', '', '']);
-      // Focus first OTP input after render
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
     } catch (err) {
       setErrorMsg(err.message || 'Unable to dispatch verification code.');
@@ -104,7 +109,6 @@ export default function AuthModal({ isOpen, onClose }) {
   };
 
   const handleOtpChange = (index, value) => {
-    // Only accept numeric digit
     const char = value.slice(-1);
     if (char && !/^\d$/.test(char)) return;
 
@@ -113,12 +117,10 @@ export default function AuthModal({ isOpen, onClose }) {
     setOtpDigits(newDigits);
     setErrorMsg('');
 
-    // Advance focus
     if (char && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
 
-    // Auto-submit if all 6 digits entered
     const fullCode = newDigits.join('');
     if (fullCode.length === 6) {
       handleVerify(fullCode);
@@ -178,128 +180,126 @@ export default function AuthModal({ isOpen, onClose }) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xl max-w-md w-full p-6 sm:p-8 relative">
+      {/* Neutral backdrop without blur filter */}
+      <div
+        className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 transition-opacity"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      <div className="relative z-10 bg-app-surface border border-app-border rounded-lg shadow-modal max-w-md w-full p-6 sm:p-7">
         {/* Close Button */}
-        <button
-          onClick={onClose}
-          aria-label="Close dialog"
-          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <div className="absolute top-4 right-4">
+          <IconButton
+            icon={<Icon name="x" size={16} />}
+            label="Close authentication modal"
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+          />
+        </div>
 
         {/* Modal Header */}
         <div className="mb-6">
-          <div className="w-10 h-10 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-xl mb-3">
-            L
+          <div className="w-8 h-8 rounded bg-brand-500 text-white flex items-center justify-center font-bold text-xs mb-3 shadow-subtle">
+            LF
           </div>
-          <h2 id="auth-modal-title" className="text-xl font-bold text-slate-900">
+          <h2 id="auth-modal-title" className="text-lg font-semibold text-app-text-primary">
             {step === 'email' ? 'Welcome to LearnForge' : 'Enter Verification Code'}
           </h2>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="text-xs text-app-text-secondary mt-1 leading-relaxed">
             {step === 'email'
-              ? 'Sign in to access your study workspace, structured notes, and quizzes.'
+              ? 'Sign in to access your personal study workspace, structured notes, and knowledge graph.'
               : `We sent a 6-digit code to ${email}.`}
           </p>
         </div>
 
         {/* Error Alert */}
         {errorMsg && (
-          <div role="alert" className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-            {errorMsg}
+          <div
+            role="alert"
+            className="mb-4 p-3 rounded bg-status-danger-bg border border-status-danger/20 text-status-danger-text text-xs font-medium flex items-start gap-2"
+          >
+            <Icon name="alert" size={15} className="flex-shrink-0 mt-0.5 text-status-danger" />
+            <span>{errorMsg}</span>
           </div>
         )}
 
         {/* Step 1: Email & Google */}
         {step === 'email' && (
           <div className="space-y-4">
-            {/* Google Sign-In Container & Fallback Trigger */}
+            {/* Google Sign-In Container */}
             <div className="w-full flex justify-center">
-              <div ref={googleButtonRef} className="w-full flex justify-center" />
+              <div ref={googleButtonRef} className="w-full flex justify-center min-h-[40px]" />
             </div>
 
             {(!googleClientId || !window.google?.accounts?.id) && (
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="md"
+                fullWidth
                 onClick={handleGoogleClick}
                 disabled={loading}
-                className="w-full flex items-center justify-center space-x-3 px-4 py-2.5 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 transition-colors disabled:opacity-60"
+                icon={
+                  <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.02h3.87c2.26-2.09 3.675-5.17 3.675-9.12z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.02c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.24v3.12C3.26 21.36 7.33 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.27 14.27c-.25-.72-.39-1.49-.39-2.27s.14-1.55.39-2.27V6.61H1.24C.45 8.24 0 10.06 0 12s.45 3.76 1.24 5.39l4.03-3.12z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.24 6.61l4.03 3.12c.95-2.85 3.6-4.98 6.73-4.98z"
+                    />
+                  </svg>
+                }
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.02h3.87c2.26-2.09 3.675-5.17 3.675-9.12z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.02c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.24v3.12C3.26 21.36 7.33 24 12 24z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.27 14.27c-.25-.72-.39-1.49-.39-2.27s.14-1.55.39-2.27V6.61H1.24C.45 8.24 0 10.06 0 12s.45 3.76 1.24 5.39l4.03-3.12z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.24 6.61l4.03 3.12c.95-2.85 3.6-4.98 6.73-4.98z"
-                  />
-                </svg>
-                <span>Continue with Google</span>
-              </button>
+                Continue with Google
+              </Button>
             )}
 
-            {/* Divider */}
-            <div className="relative flex items-center justify-center my-4">
-              <div className="border-t border-slate-200 w-full" />
-              <span className="bg-white px-3 text-xs font-mono text-slate-400 uppercase tracking-wider">
-                or email
-              </span>
-              <div className="border-t border-slate-200 w-full" />
-            </div>
+            <Divider label="or email" />
 
-            {/* Email OTP Request Form */}
-            <form onSubmit={handleRequestOtp} className="space-y-4">
-              <div>
-                <label htmlFor="auth-email-input" className="block text-xs font-medium text-slate-700 mb-1">
-                  Email Address
-                </label>
-                <input
-                  id="auth-email-input"
-                  type="email"
-                  required
-                  placeholder="you@domain.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  disabled={loading}
-                />
-              </div>
+            {/* Email OTP Form */}
+            <form onSubmit={handleRequestOtp} className="space-y-3">
+              <Input
+                id="auth-email-input"
+                type="email"
+                required
+                label="Email Address"
+                placeholder="student@domain.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+              />
 
-              <button
+              <Button
                 type="submit"
+                variant="primary"
+                size="md"
+                fullWidth
                 disabled={loading || !email}
-                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 transition-colors disabled:opacity-60 flex items-center justify-center space-x-2"
+                loading={loading}
               >
-                {loading && (
-                  <svg className="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                )}
-                <span>Send Verification Code</span>
-              </button>
+                Send Verification Code
+              </Button>
             </form>
           </div>
         )}
 
-        {/* Step 2: 6-Digit OTP Verification */}
+        {/* Step 2: 6-Digit OTP */}
         {step === 'otp' && (
           <div className="space-y-5">
-            {/* 6-Digit Input Row */}
-            <div className="flex justify-between gap-2" onPaste={handlePaste}>
+            <div className="flex justify-between gap-1.5 sm:gap-2" onPaste={handlePaste}>
               {otpDigits.map((digit, index) => (
                 <input
                   key={index}
@@ -311,58 +311,52 @@ export default function AuthModal({ isOpen, onClose }) {
                   onChange={(e) => handleOtpChange(index, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(index, e)}
                   aria-label={`Digit ${index + 1} of 6`}
-                  className="w-12 h-14 text-center text-xl font-mono font-bold bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
+                  className="w-10 sm:w-12 h-12 sm:h-14 text-center text-lg sm:text-xl font-mono font-bold bg-app-surface border border-app-border rounded text-app-text-primary focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all"
                   disabled={loading}
                 />
               ))}
             </div>
 
-            {/* Actions & Resend */}
-            <div className="flex items-center justify-between text-xs text-slate-500 pt-2">
+            <div className="flex items-center justify-between text-xs text-app-text-secondary pt-1">
               <button
                 type="button"
                 onClick={() => setStep('email')}
-                className="text-indigo-600 hover:underline font-medium"
+                className="text-brand-600 dark:text-brand-400 hover:underline font-medium"
               >
                 ← Change Email
               </button>
 
               {cooldown > 0 ? (
-                <span className="font-mono text-slate-400">Resend code in {cooldown}s</span>
+                <span className="font-mono text-app-text-muted">Resend in {cooldown}s</span>
               ) : (
                 <button
                   type="button"
                   onClick={handleRequestOtp}
                   disabled={loading}
-                  className="text-indigo-600 hover:underline font-medium disabled:opacity-50"
+                  className="text-brand-600 dark:text-brand-400 hover:underline font-medium disabled:opacity-50"
                 >
                   Resend Code
                 </button>
               )}
             </div>
 
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="md"
+              fullWidth
               onClick={() => handleVerify()}
               disabled={loading || otpDigits.join('').length !== 6}
-              className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 transition-colors disabled:opacity-60 flex items-center justify-center space-x-2"
+              loading={loading}
             >
-              {loading && (
-                <svg className="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                </svg>
-              )}
-              <span>Verify & Continue</span>
-            </button>
+              Verify & Continue
+            </Button>
           </div>
         )}
 
-        {/* Security Assurance Footer */}
-        <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center space-x-1.5 text-xs text-slate-400">
-          <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
+        {/* Footer */}
+        <div className="mt-5 pt-3 border-t border-app-border flex items-center justify-center gap-1.5 text-[11px] text-app-text-muted">
+          <Icon name="shield" size={13} className="opacity-70" />
           <span>Passwordless & Secured by LearnForge</span>
         </div>
       </div>

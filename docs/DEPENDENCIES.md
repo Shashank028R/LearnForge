@@ -65,6 +65,17 @@ Every package added to the project must be documented in this registry before th
 
 ---
 
+## Phase 02 — Design System & UI Evaluation
+
+During Phase 02 (Professional UI Shell & Design System), a deliberate architectural decision was made to **avoid introducing external component libraries** (such as Shadcn/Radix, MUI, Chakra, or Lucide icons):
+
+| Candidate / Considered | Decision | Rationale | Alternatives Evaluated |
+| :--- | :--- | :--- | :--- |
+| `lucide-react` / `@heroicons/react` | **Rejected** | Introducing a 1,000+ icon package increases dependency surface area, bundle bloat, and version churn. Instead, LearnForge implemented a native, high-performance SVG vector icon primitive (`client/src/components/ui/Icon.jsx`) utilizing a unified 1.5-stroke aesthetic with exactly 24 tailored icons and zero runtime dependencies. | External icon packages |
+| `@radix-ui/*` / `headlessui` | **Rejected** | LearnForge requirements prioritized custom design system control, calm low-distraction styling, keyboard trap control, and zero glassmorphism. Hand-crafted primitives (`Dialog`, `Dropdown`, `Tabs`, `Button`, `Input`) in Tailwind CSS fulfilled all accessibility requirements (WCAG AA, ARIA roles, Escape dismiss, focus trap) with zero third-party packages. | Radix Primitives, Headless UI |
+
+---
+
 ## Dependency Management Rules
 1. **Never install unvetted libraries**: Trivial one-line helpers or packages with heavy transitive dependencies must be avoided.
 2. **Lockfile Enforcement**: `package-lock.json` is strictly committed and maintained.

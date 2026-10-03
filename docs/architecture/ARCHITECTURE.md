@@ -106,11 +106,42 @@ Future mobile applications will authenticate through a dedicated mobile authenti
 
 ---
 
-## 5. Domain Boundaries
+---
+
+## 5. UI Shell & Design System Architecture (Phase 02)
+
+```text
+                     App Root (<App />)
+                             │
+     ┌───────────────────────┴───────────────────────┐
+     ▼                                               ▼
+ThemeProvider (light/dark)               AuthProvider (session hydrate)
+     │                                               │
+     └───────────────────────┬───────────────────────┘
+                             ▼
+                    AppRoutes & Shell
+     ┌───────────────────────┴───────────────────────┐
+     ▼                                               ▼
+TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
+     │                                               │
+     └───────────────────────┬───────────────────────┘
+                             ▼
+                   Workspace Main Area
+       (Route Placeholders, Empty States, Protected Views)
+```
+
+### 5.1 Presentation Strategy
+- **Restrained Tokens**: CSS custom properties for neutral surfaces, crisp borders, and subtle elevation.
+- **Micro-Primitives**: Low-dependency atomic components (`Button`, `Input`, `Dialog`, `Dropdown`, `EmptyState`, `Skeleton`, `Icon`).
+- **Session Continuity**: Auth status hydrated on boot via `/api/v1/auth/me`; no client-side token caching.
+
+---
+
+## 6. Domain Boundaries
 
 - **Auth Domain (Phase 01 & 01.1 - Implemented)**: User identity, AuthIdentity linking, UserSession tracking, OTP generation/hashing, and session revocation.
-- **UI Shell Domain (Phase 02 - Planned)**: Professional application shell, navigation, and core design system.
-- **Study Domain (Phase 03 - Planned)**: Subjects, topics, concepts, and study sessions.
+- **UI Shell Domain (Phase 02 - Implemented)**: Professional application shell, navigation, design tokens, and reusable primitives.
+- **Study Domain (Phase 03 - Next Phase)**: Subjects, topics, concepts, and study sessions.
 - **Conversation Domain (Phase 04 - Planned)**: Chats, messages, and streaming response delivery.
 - **AI Domain (Phase 05 - Planned)**: AI Gateway, task classification, and provider adapters.
 - **Knowledge Domain (Phase 06 - Planned)**: Concept extraction, confidence tracking, and misconception detection.

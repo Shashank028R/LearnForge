@@ -3,11 +3,84 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Light Theme (Default) */
+    --color-bg-app: #f8fafc;
+    --color-bg-surface: #ffffff;
+    --color-bg-surface-muted: #f1f5f9;
+    --color-bg-surface-hover: #f8fafc;
+    --color-border-default: #e2e8f0;
+    --color-border-subtle: #edf2f7;
+    --color-text-primary: #0f172a;
+    --color-text-secondary: #475569;
+    --color-text-muted: #64748b;
+
+    /* Semantic Feedback Backgrounds & Texts */
+    --color-success-bg: #ecfdf5;
+    --color-success-text: #065f46;
+    --color-warning-bg: #fffbeb;
+    --color-warning-text: #92400e;
+    --color-danger-bg: #fef2f2;
+    --color-danger-text: #991b1b;
+  }
+
+  .dark {
+    /* Restrained, Low-Distraction Dark Mode */
+    --color-bg-app: #0f172a;
+    --color-bg-surface: #1e293b;
+    --color-bg-surface-muted: #334155;
+    --color-bg-surface-hover: #243248;
+    --color-border-default: #334155;
+    --color-border-subtle: #1e293b;
+    --color-text-primary: #f8fafc;
+    --color-text-secondary: #94a3b8;
+    --color-text-muted: #64748b;
+
+    --color-success-bg: #064e3b;
+    --color-success-text: #a7f3d0;
+    --color-warning-bg: #78350f;
+    --color-warning-text: #fde68a;
+    --color-danger-bg: #7f1d1d;
+    --color-danger-text: #fecaca;
+  }
+
   html {
-    color-scheme: light;
+    @apply antialiased text-slate-800;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
   }
 
   body {
-    @apply bg-slate-50 text-slate-800 selection:bg-indigo-100 selection:text-indigo-900;
+    background-color: var(--color-bg-app);
+    color: var(--color-text-primary);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  /* Accessible, restrained focus ring across all interactive controls */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-1;
+    ring-offset-color: var(--color-bg-surface);
+  }
+}
+
+/* Reusable typography utility classes */
+@layer utilities {
+  .text-display {
+    @apply text-2xl font-bold tracking-tight text-app-text-primary;
+  }
+  .text-title {
+    @apply text-lg font-semibold tracking-tight text-app-text-primary;
+  }
+  .text-subtitle {
+    @apply text-sm font-medium text-app-text-secondary;
+  }
+  .text-body {
+    @apply text-sm text-app-text-primary leading-relaxed;
+  }
+  .text-caption {
+    @apply text-xs text-app-text-muted;
+  }
+  .text-label {
+    @apply text-xs font-medium uppercase tracking-wider text-app-text-secondary;
   }
 }
