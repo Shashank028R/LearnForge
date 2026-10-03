@@ -1,0 +1,29 @@
+{
+  "name": "learnforge-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered learning workspace that turns conversations into structured knowledge, adaptive study sessions, notes, quizzes, and measurable learning progress.",
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n \"server,client\" -c \"blue,green\" \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "build:client": "npm --prefix client run build",
+    "test": "npm run test:server && npm run test:client",
+    "test:client": "npm --prefix client run test",
+    "test:server": "npm --prefix server run test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "author": "Shashank",
+  "license": "MIT"
+}
