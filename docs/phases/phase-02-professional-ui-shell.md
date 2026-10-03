@@ -62,44 +62,49 @@ All primitives reside in `client/src/components/ui/` with zero third-party UI li
 * `Divider`: Subdued separator with optional centered text label.
 * `Avatar`: Circular avatar with image or computed initials.
 * `Badge`: Restrained status indicators.
-* `Icon`: Complete 1.5-stroke SVG icon set with uniform 24x24 viewBox.
+* `Icon`: Cohesive 1.5-stroke SVG icon set with uniform 24x24 viewBox. Uses `close` as the canonical dismiss identifier across all dialogs, drawers, and modals. Warns in development if an unrecognized name is requested and gracefully falls back to `info`.
 
 ---
 
-## 5. Route Architecture & Placeholders
+## 5. Route Architecture & Protected Route Hierarchy (Hardened in Phase 02.1)
 
-1. **Public & Workspace Routes**:
+1. **Public Routes**:
    * `/`: Home workspace with onboarding steps and feature launch cards.
-   * `/subjects`: Subjects empty state ("No subjects yet.").
-   * `/subjects/:subjectId`: Route placeholder for individual curriculum structures.
-   * `/chats`: Chats empty state ("No conversations yet.").
-   * `/chats/:chatId`: Route placeholder for Socratic conversation sessions.
-   * `/notes`: Notes empty state ("Your notes will appear here as you learn.").
-   * `/notes/:noteId`: Route placeholder for notes editor.
-   * `/study`: Study mode empty state ("Study queue is currently clear.").
-   * `/quizzes`: Quizzes empty state ("Study a topic first to generate a quiz.").
-   * `/progress`: Progress empty state ("Your learning progress will appear after you start studying.").
-   * `/import`: Import empty state ("Import a conversation to bring existing knowledge into LearnForge.").
-   * `/settings`: Workspace preferences (theme toggle, keyboard navigation cheatsheet).
+   * `/settings`: Workspace preferences (theme toggle, keyboard navigation cheatsheet). Intentionally made public so users can configure visual theme and keyboard ergonomics prior to authentication.
    * `*`: 404 page with recovery action.
-2. **Protected Routes (`ProtectedRoute.jsx`)**:
-   * `/profile`: Displays user identity, auth method, HttpOnly session posture, and logout actions. Prompts unauthenticated users with a clean sign-in invitation.
+2. **Protected Workspace Routes Hierarchy (`ProtectedRoute.jsx`)**:
+   All user-specific workspace routes and detail routes are nested under a unified `ProtectedRoute` layout:
+   * `/subjects` & `/subjects/:subjectId`
+   * `/chats` & `/chats/:chatId`
+   * `/notes` & `/notes/:noteId`
+   * `/study`
+   * `/quizzes`
+   * `/progress`
+   * `/import`
+   * `/profile`
+3. **Authentication Loading State & Zero Flicker**:
+   * While `loading === true`, `ProtectedRoute` renders `<LoadingState type="route" message="Validating secure session..." />`.
+   * Protected content and empty states never render prematurely while session status is resolving, completely eliminating layout flicker.
+4. **Dialog Focus Management (`useFocusTrap`)**:
+   * Trapped focus loop: Tab cycles forward from last element to first element; Shift+Tab cycles backward.
+   * Escape key dismisses dialog.
+   * Focus restoration: Upon closing, focus returns to the element that triggered the dialog.
+   * Unique ARIA IDs: `aria-labelledby` and `aria-describedby` dynamically bind to `useId()` generated elements.
 
 ---
 
 ## 6. Verification Results
 
 ### Unit Tests
-* **Monorepo Tests**: 47/47 passing (100%).
+* **Monorepo Tests**: 60/60 passing (100%).
   * Server: 30/30 tests passing (`tests/auth.test.js`, `tests/authCrypto.test.js`, `tests/googleAuthService.test.js`, `tests/health.test.js`).
-  * Client: 17/17 tests passing (`src/App.test.jsx`, `src/components/ui/UIPrimitives.test.jsx`).
-* **Production Build**: Clean Vite production build in 11.58s (`dist/index.html` 1.35 kB, `dist/assets/index.js` 223 kB).
+  * Client: 30/30 tests passing (`src/App.test.jsx`, `src/components/ui/UIPrimitives.test.jsx`).
+* **Production Build**: Clean Vite production build in 11.76s (`dist/index.html` 1.35 kB, `dist/assets/index.js` 225.68 kB).
 
 ### Visual Browser Subagent Review
 * Desktop Home view: Verified calm aesthetic, sidebar, topbar, cards, and zero fake stats.
-* Subjects empty state: Verified `/subjects` with "No subjects yet." prompt.
-* Chats empty state: Verified `/chats` with "No conversations yet." prompt.
-* Quizzes empty state: Verified `/quizzes` with "Study a topic first to generate a quiz." prompt.
-* Auth modal: Verified opening, GIS button, email input, clean tokens, and closing.
+* Protected routes verification: Verified `/subjects`, `/chats`, `/notes` display "Sign in required" with shield icon and sign-in action when unauthenticated.
+* Public settings verification: Verified `/settings` is accessible before sign in.
+* Dialog & Focus Trap: Verified `AuthModal` opening, focus trapping, Escape dismiss, canonical `close` icon (X mark), and focus restoration to opener.
 * Dark mode: Verified toggle across all UI surfaces without visual friction.
 * Mobile view (390x844): Verified hidden sidebar, hamburger button, no horizontal overflow, and open drawer slideout.

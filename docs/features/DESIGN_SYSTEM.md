@@ -93,7 +93,7 @@ All primitives reside in `client/src/components/ui/` and export through `index.j
 * `Button`: Primary, secondary, outline, ghost, danger variants. Supports `loading`, `icon`, `size` (`sm`, `md`, `lg`), `fullWidth`.
 * `IconButton`: Accessible button for icon-only triggers with required `aria-label` or `label`.
 * `Input`: Accessible form input with label, left/right icon slots, `error`, `helperText`, `aria-invalid`, `aria-describedby`.
-* `Dialog`: Accessible modal with overlay backdrop, Escape key handling, focus trap, accessible title/description bindings, close button.
+* `Dialog`: Accessible modal with overlay backdrop, complete keyboard focus trap (`useFocusTrap`), forward/reverse Tab cycling, Escape key dismiss, focus restoration to opener, unique `useId()` ARIA attribute bindings, and content click-propagation isolation.
 * `Dropdown`: Click-outside and keyboard-dismissible popover menu supporting headers, items, icons, badges, and destructive items.
 * `EmptyState`: Clean container with icon, title, description, and primary/secondary action triggers.
 * `Skeleton`: Accessible shimmer placeholder with text, circular, and rectangular shapes.
@@ -103,7 +103,7 @@ All primitives reside in `client/src/components/ui/` and export through `index.j
 * `Divider`: Border separator with optional text label.
 * `Avatar`: Circular user identity badge with fallback initials calculation.
 * `Badge`: Status tags (neutral, success, warning, danger, brand).
-* `Icon`: Cohesive 1.5-stroke vector suite with 24x24 viewBox.
+* `Icon`: Cohesive 1.5-stroke vector suite with 24x24 viewBox. Uses `close` as the canonical dismiss identifier across all dialogs, drawers, and modals. Warns in development if an unrecognized name is requested and gracefully falls back to `info`.
 
 ---
 
@@ -112,9 +112,16 @@ All primitives reside in `client/src/components/ui/` and export through `index.j
 1. **Focus Ring**: Uniform 2px focus ring (`ring-2 ring-brand-500 ring-offset-1`) via `*:focus-visible` without default browser outline bleed.
 2. **Accessible Names**: All icon-only buttons include descriptive `aria-label`.
 3. **Form Controls**: Labels use explicit `htmlFor` matching input `id`; error states set `aria-invalid="true"` and `aria-describedby`.
-4. **Dialogs**: Implement `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, and `aria-describedby`.
-5. **Color Contrast**: All text styles meet WCAG AA contrast (minimum 4.5:1 for normal text, 3:1 for large text).
-6. **Semantic HTML**: `<aside>` for sidebar, `<header>` for topbar, `<main>` for workspace, `<nav>` for breadcrumbs and link lists.
+4. **Modal Focus Management (`useFocusTrap`)**:
+   - Initial Focus: Focus automatically shifts into the modal on open (targeting first focusable control).
+   - Trapped Tab Loop: Tab key cycles forward; Shift+Tab cycles backwards without leaking focus outside the dialog container.
+   - Escape Key: Closes modal cleanly.
+   - Focus Restoration: Upon modal close, focus is automatically returned to the triggering element.
+5. **Dialog ARIA Semantics**:
+   - Implements `role="dialog"` and `aria-modal="true"`.
+   - `aria-labelledby` and `aria-describedby` utilize unique generated IDs via React's `useId()` and are omitted when title or description is not provided.
+6. **Color Contrast**: All text styles meet WCAG AA contrast (minimum 4.5:1 for normal text, 3:1 for large text).
+7. **Semantic HTML**: `<aside>` for sidebar, `<header>` for topbar, `<main>` for workspace, `<nav>` for breadcrumbs and link lists.
 
 ---
 

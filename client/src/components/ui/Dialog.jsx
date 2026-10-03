@@ -1,10 +1,16 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef, useId } from 'react';
 import { Icon } from './Icon';
 import { IconButton } from './IconButton';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 /**
  * Accessible Dialog/Modal component adhering to LearnForge design system.
- * Restrained styling, no glassmorphism, no neon borders, subtle shadow.
+ * - Restrained styling, no glassmorphism, no neon borders, subtle shadow.
+ * - Full accessible focus trap: Tab and Shift+Tab cycle within modal.
+ * - Escape key dismisses modal.
+ * - Restores focus to trigger element upon closing.
+ * - Unique IDs for aria-labelledby and aria-describedby.
+ * - Backdrop click closes modal; clicking content container does not.
  */
 export function Dialog({
   isOpen,
@@ -16,26 +22,17 @@ export function Dialog({
   className = '',
 }) {
   const dialogRef = useRef(null);
+  const uniqueId = useId();
 
-  // Close on Escape key press
-  useEffect(() => {
-    function handleKeyDown(e) {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-      }
-    }
-    if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  const titleId = title ? `dialog-title-${uniqueId}` : undefined;
+  const descriptionId = description ? `dialog-desc-${uniqueId}` : undefined;
 
-  // Focus trap: focus dialog on open
-  useEffect(() => {
-    if (isOpen && dialogRef.current) {
-      dialogRef.current.focus();
-    }
-  }, [isOpen]);
+  // Accessible keyboard trap, escape listener, and focus restoration
+  useFocusTrap({
+    containerRef: dialogRef,
+    isOpen,
+    onClose,
+  });
 
   if (!isOpen) return null;
 
@@ -44,8 +41,8 @@ export function Dialog({
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-labelledby={title ? 'dialog-title' : undefined}
-      aria-describedby={description ? 'dialog-description' : undefined}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
     >
       {/* Backdrop: neutral, non-glassmorphic, subtle dark tint */}
       <div
@@ -58,6 +55,7 @@ export function Dialog({
       <div
         ref={dialogRef}
         tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
         className={`
           relative z-10 w-full ${maxWidth}
           bg-app-surface text-app-text-primary
@@ -71,7 +69,7 @@ export function Dialog({
           <div>
             {title && (
               <h2
-                id="dialog-title"
+                id={titleId}
                 className="text-lg font-semibold text-app-text-primary leading-snug"
               >
                 {title}
@@ -79,7 +77,7 @@ export function Dialog({
             )}
             {description && (
               <p
-                id="dialog-description"
+                id={descriptionId}
                 className="text-xs text-app-text-muted mt-1 leading-relaxed"
               >
                 {description}
@@ -87,7 +85,7 @@ export function Dialog({
             )}
           </div>
           <IconButton
-            icon={<Icon name="x" size={16} />}
+            icon={<Icon name="close" size={16} />}
             label="Close dialog"
             variant="ghost"
             size="sm"

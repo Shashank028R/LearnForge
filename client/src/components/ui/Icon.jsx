@@ -3,6 +3,12 @@ import React from 'react';
 /**
  * Cohesive, lightweight SVG Icon suite for LearnForge.
  * Consistent 24x24 viewBox, stroke-width 1.5, stroke="currentColor", fill="none".
+ * 
+ * Canonical Icon Identifiers:
+ * - Navigation: 'home', 'book', 'chat', 'notes', 'study', 'quiz', 'progress', 'import'
+ * - Account & Control: 'user', 'settings', 'search', 'menu', 'logout', 'sun', 'moon'
+ * - Actions & Feedback: 'close' (canonical dismiss), 'plus', 'check', 'alert', 'info', 'bell', 'shield'
+ * - Directional: 'chevron-right', 'chevron-left', 'chevron-down', 'arrow-left'
  */
 export function Icon({ name, size = 20, className = '', ...props }) {
   const icons = {
@@ -13,14 +19,14 @@ export function Icon({ name, size = 20, className = '', ...props }) {
         d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"
       />
     ),
-    subjects: (
+    book: (
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"
       />
     ),
-    chats: (
+    chat: (
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -41,7 +47,7 @@ export function Icon({ name, size = 20, className = '', ...props }) {
         d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-5.25 6.557q0 .06.002.12"
       />
     ),
-    quizzes: (
+    quiz: (
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -62,7 +68,7 @@ export function Icon({ name, size = 20, className = '', ...props }) {
         d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
       />
     ),
-    profile: (
+    user: (
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -90,6 +96,7 @@ export function Icon({ name, size = 20, className = '', ...props }) {
         d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
       />
     ),
+    // Canonical dismiss/close icon identifier
     close: (
       <path
         strokeLinecap="round"
@@ -97,14 +104,17 @@ export function Icon({ name, size = 20, className = '', ...props }) {
         d="M6 18L18 6M6 6l12 12"
       />
     ),
-    chevronRight: (
+    'chevron-right': (
       <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
     ),
-    chevronLeft: (
+    'chevron-left': (
       <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
     ),
-    chevronDown: (
+    'chevron-down': (
       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+    ),
+    'arrow-left': (
+      <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
     ),
     logout: (
       <path
@@ -133,11 +143,18 @@ export function Icon({ name, size = 20, className = '', ...props }) {
     check: (
       <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
     ),
-    alertCircle: (
+    alert: (
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+      />
+    ),
+    shield: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"
       />
     ),
     info: (
@@ -156,7 +173,22 @@ export function Icon({ name, size = 20, className = '', ...props }) {
     ),
   };
 
-  const selectedPath = icons[name] || icons.info;
+  // Aliases for camelCase/domain variations
+  icons.subjects = icons.book;
+  icons.chats = icons.chat;
+  icons.quizzes = icons.quiz;
+  icons.profile = icons.user;
+  icons.chevronRight = icons['chevron-right'];
+  icons.chevronLeft = icons['chevron-left'];
+  icons.chevronDown = icons['chevron-down'];
+  icons.arrowLeft = icons['arrow-left'];
+  icons.alertCircle = icons.alert;
+
+  const selectedPath = icons[name];
+
+  if (!selectedPath && process.env.NODE_ENV !== 'production') {
+    console.warn(`[Icon] Unknown icon name "${name}". Falling back to 'info'.`);
+  }
 
   return (
     <svg
@@ -170,7 +202,7 @@ export function Icon({ name, size = 20, className = '', ...props }) {
       aria-hidden="true"
       {...props}
     >
-      {selectedPath}
+      {selectedPath || icons.info}
     </svg>
   );
 }

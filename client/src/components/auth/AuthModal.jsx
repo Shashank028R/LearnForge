@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { Button, Input, Icon, IconButton, Divider } from '../ui';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 /**
  * Professional Authentication Modal adhering to LearnForge Design System.
@@ -19,7 +20,15 @@ export default function AuthModal({ isOpen, onClose }) {
 
   const inputRefs = useRef([]);
   const googleButtonRef = useRef(null);
+  const modalRef = useRef(null);
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+
+  // Accessible keyboard focus trap & escape key handler
+  useFocusTrap({
+    containerRef: modalRef,
+    isOpen,
+    onClose,
+  });
 
   // Reset state when modal opens
   useEffect(() => {
@@ -189,11 +198,16 @@ export default function AuthModal({ isOpen, onClose }) {
         aria-hidden="true"
       />
 
-      <div className="relative z-10 bg-app-surface border border-app-border rounded-lg shadow-modal max-w-md w-full p-6 sm:p-7">
+      <div
+        ref={modalRef}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        className="relative z-10 bg-app-surface border border-app-border rounded-lg shadow-modal max-w-md w-full p-6 sm:p-7 focus:outline-none"
+      >
         {/* Close Button */}
         <div className="absolute top-4 right-4">
           <IconButton
-            icon={<Icon name="x" size={16} />}
+            icon={<Icon name="close" size={16} />}
             label="Close authentication modal"
             variant="ghost"
             size="sm"

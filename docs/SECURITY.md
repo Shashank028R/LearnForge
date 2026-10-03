@@ -107,7 +107,17 @@ This document is the authoritative security architecture specification for **Lea
 
 ---
 
-## 4. Required in Later Phases
+## 4. Implemented in Phase 02 & 02.1 (UI Shell & Route Protection Boundaries)
+
+### 4.1 Frontend Route Protection vs. Authoritative Backend Authorization
+- **UI Route Boundary (`ProtectedRoute.jsx`)**: User-specific workspace routes (`/subjects`, `/chats`, `/notes`, `/study`, `/quizzes`, `/progress`, `/import`, `/profile` and nested parameter routes) are wrapped in a client-side layout guard. Unauthenticated users see an accessible sign-in invitation rather than private UI structures.
+- **Zero Premature Content Rendering**: While session status is resolving (`loading === true`), `ProtectedRoute` renders a calm loading state, preventing any layout flicker or brief exposure of protected UI views.
+- **Authoritative Security Principle**: Frontend route guards are strictly for user experience guidance. The browser environment is inherently client-controlled; therefore, the backend API (`server/src/middleware/auth.js`) remains the sole, authoritative boundary for data access. Every protected API endpoint independently authenticates the session and validates user ownership.
+- **Zero Browser Storage Leakage**: The client never caches raw session tokens or user credentials in `localStorage` or `sessionStorage`. Authentication state is continuously backed by secure `HttpOnly`, `SameSite: 'lax'` cookies.
+
+---
+
+## 5. Required in Later Phases
 
 ### 4.1 Strict User Data Ownership Enforcement (Phase 03+)
 - **Never Trust Client Identifiers**: Client requests containing `:subjectId`, `:chatId`, `:noteId`, or `:importId` must be authorized against the authenticated user:

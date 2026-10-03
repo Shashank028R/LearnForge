@@ -4,6 +4,43 @@ This log is the permanent chronological engineering journal for the LearnForge p
 
 ---
 
+## [Phase 02.1] UI Shell Corrections & Accessibility Hardening
+
+- **Date**: October 3, 2026
+- **Status**: Completed
+- **Phase**: Phase 02.1 — UI Shell Corrections & Accessibility Hardening
+- **Objective**: Correct workspace route authentication boundaries, unify the canonical `close` icon across the client, implement full modal keyboard focus traps and focus restoration, harden modal ARIA accessibility, document the architectural boundary between frontend route guards and backend authorization, and expand automated tests.
+
+### Work Performed
+1. **Protected Workspace Route Hierarchy**:
+   - Reorganized `AppRoutes.jsx` with a single unified `<Route element={<ProtectedRoute onOpenAuth={onOpenAuth} />}>` parent layout.
+   - Enforces authentication across all workspace routes: `/subjects`, `/subjects/:subjectId`, `/chats`, `/chats/:chatId`, `/notes`, `/notes/:noteId`, `/study`, `/quizzes`, `/progress`, `/import`, and `/profile`.
+   - Nested detail routes automatically inherit protection without duplicated boilerplate.
+2. **Zero-Flicker Authentication Loading**:
+   - `ProtectedRoute.jsx` renders `<LoadingState type="route" message="Validating secure session..." />` while `loading === true`, preventing premature rendering of protected content or redirect flicker.
+3. **Canonical Icon Registry & Bug Fix**:
+   - Standardized on `close` as the canonical dismiss icon identifier.
+   - Replaced all invalid `name="x"` references with `name="close"` in `Dialog.jsx`, `Sidebar.jsx`, and `AuthModal.jsx`.
+   - Enhanced `Icon.jsx` to log developer console warnings when unknown icon names are requested while gracefully falling back to `info`.
+4. **Modal Focus Trap & Accessibility Hardening (`useFocusTrap.js`)**:
+   - Created reusable, zero-dependency `useFocusTrap` hook.
+   - Moves focus into modal on open.
+   - Traps Tab and Shift+Tab cycling within focusable elements without focus leakage.
+   - Listens for Escape key to close modal.
+   - Automatically restores keyboard focus to the triggering element upon modal close.
+   - Isolated click event propagation on dialog content so backdrop click dismisses while content click does not.
+   - Generated dynamic unique IDs via React `useId()` for `aria-labelledby` and `aria-describedby` in `Dialog.jsx`.
+5. **Testing & Verification**:
+   - Updated `UIPrimitives.test.jsx` testing canonical icon, unknown fallback warning, Tab/Shift+Tab focus trap, Escape dismiss, backdrop click isolation, and focus restoration.
+   - Updated `App.test.jsx` with parameterized tests asserting unauthenticated blocks across all workspace routes and detail routes, authenticated access, and loading state rendering.
+   - 60/60 monorepo tests passing (30 server + 30 client).
+   - Vite production build succeeded cleanly in 11.76s.
+   - Verified in real browser session via browser subagent.
+6. **Documentation**:
+   - Updated `docs/features/DESIGN_SYSTEM.md`, `docs/phases/phase-02-professional-ui-shell.md`, `docs/architecture/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/interview/INTERVIEW_GUIDE.md`, and `docs/CHANGELOG.md`.
+
+---
+
 ## [Phase 02] Professional UI Shell & Design System
 
 - **Date**: October 3, 2026

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React, { useState } from 'react';
 import {
   Button,
@@ -11,11 +11,32 @@ import {
   Badge,
   Avatar,
   Tabs,
+  Icon,
   ErrorState,
   LoadingState,
 } from './index';
 
 describe('UI Primitives — Design System Verification', () => {
+  describe('Icon', () => {
+    it('renders canonical close icon and known vector paths', () => {
+      const { container } = render(<Icon name="close" size={16} />);
+      const svg = container.querySelector('svg');
+      expect(svg).toBeDefined();
+      const path = container.querySelector('path');
+      expect(path.getAttribute('d')).toContain('M6 18L18 6M6 6l12 12');
+    });
+
+    it('falls back gracefully to info icon for unknown icon names with console warning', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { container } = render(<Icon name="non_existent_icon_name" size={16} />);
+      expect(container.querySelector('svg')).toBeDefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[Icon] Unknown icon name "non_existent_icon_name"')
+      );
+      warnSpy.mockRestore();
+    });
+  });
+
   describe('Button', () => {
     it('renders with children, handles click events, and supports loading state', () => {
       const handleClick = vi.fn();
@@ -81,40 +102,94 @@ describe('UI Primitives — Design System Verification', () => {
   });
 
   describe('Dialog', () => {
-    it('renders modal dialog when open, manages escape key and close action', () => {
-      const handleClose = vi.fn();
-      const { rerender } = render(
-        <Dialog
-          isOpen={true}
-          onClose={handleClose}
-          title="Test Dialog Title"
-          description="Test dialog description"
-        >
-          <div>Dialog Inner Body</div>
-        </Dialog>
+    function DialogHarness() {
+      const [isOpen, setIsOpen] = useState(false);
+      return (
+        <div>
+          <button id="open-btn" onClick={() => setIsOpen(true)}>
+            Open Test Dialog
+          </button>
+          <Dialog
+            isOpen={isOpen}
+            onClose={() => setIsOpen(false)}
+            title="Test Dialog Title"
+            description="Test dialog description"
+          >
+            <div>
+              <input id="modal-input-1" placeholder="First Field" />
+              <button id="modal-action-btn">Action Button</button>
+            </div>
+          </Dialog>
+        </div>
       );
+    }
 
-      expect(screen.getByRole('dialog')).toBeDefined();
-      expect(screen.getByText('Test Dialog Title')).toBeDefined();
-      expect(screen.getByText('Test dialog description')).toBeDefined();
-      expect(screen.getByText('Dialog Inner Body')).toBeDefined();
+    it('manages focus trap, Tab/Shift+Tab cycling, Escape key, and focus restoration', async () => {
+      render(<DialogHarness />);
 
-      // Close button
+      const triggerBtn = screen.getByRole('button', { name: /open test dialog/i });
+      triggerBtn.focus();
+      expect(document.activeElement).toBe(triggerBtn);
+
+      // Open dialog
+      fireEvent.click(triggerBtn);
+
+      // Dialog is rendered with correct ARIA attributes
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toBeDefined();
+      expect(dialog.getAttribute('aria-modal')).toBe('true');
+      expect(dialog.getAttribute('aria-labelledby')).toMatch(/dialog-title-/);
+      expect(dialog.getAttribute('aria-describedby')).toMatch(/dialog-desc-/);
+
+      // First focusable element receives focus
+      await waitFor(() => {
+        expect(document.activeElement).not.toBe(triggerBtn);
+      });
+
+      // Get all focusables in modal
       const closeBtn = screen.getByRole('button', { name: /close dialog/i });
-      fireEvent.click(closeBtn);
-      expect(handleClose).toHaveBeenCalledTimes(1);
+      const firstInput = screen.getByPlaceholderText('First Field');
+      const actionBtn = screen.getByRole('button', { name: /action button/i });
 
-      // Escape key
+      // Focus last element (actionBtn) and press Tab -> should wrap to first focusable element
+      actionBtn.focus();
+      expect(document.activeElement).toBe(actionBtn);
+
+      fireEvent.keyDown(window, { key: 'Tab' });
+      expect(document.activeElement).toBe(closeBtn);
+
+      // Press Shift+Tab on first element (closeBtn) -> should wrap to last element
+      fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+      expect(document.activeElement).toBe(actionBtn);
+
+      // Press Escape -> closes dialog
       fireEvent.keyDown(window, { key: 'Escape' });
-      expect(handleClose).toHaveBeenCalledTimes(2);
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
 
-      // When closed, should not render in DOM
-      rerender(
-        <Dialog isOpen={false} onClose={handleClose} title="Closed">
-          <div>Hidden</div>
+      // Focus restores to trigger button
+      expect(document.activeElement).toBe(triggerBtn);
+    });
+
+    it('closes on backdrop click but not on dialog content click', async () => {
+      const handleClose = vi.fn();
+      render(
+        <Dialog isOpen={true} onClose={handleClose} title="Backdrop Test">
+          <p>Dialog Body Content</p>
         </Dialog>
       );
-      expect(screen.queryByRole('dialog')).toBeNull();
+
+      // Clicking dialog content container does NOT close
+      const content = screen.getByText('Dialog Body Content');
+      fireEvent.click(content);
+      expect(handleClose).not.toHaveBeenCalled();
+
+      // Backdrop click closes dialog
+      const backdrop = document.querySelector('[aria-hidden="true"]');
+      expect(backdrop).toBeDefined();
+      fireEvent.click(backdrop);
+      expect(handleClose).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -57,7 +57,7 @@ export function Sidebar({ isOpen, onClose }) {
         {/* Mobile close button */}
         <div className="md:hidden">
           <IconButton
-            icon={<Icon name="x" size={16} />}
+            icon={<Icon name="close" size={16} />}
             label="Close navigation"
             variant="ghost"
             size="sm"

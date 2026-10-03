@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.1] - 2026-10-03
+
+### Phase 02.1 — UI Shell Corrections & Accessibility Hardening
+
+#### Changed & Hardened
+- **Protected Workspace Route Hierarchy**: Reorganized `AppRoutes.jsx` with a unified layout-level `ProtectedRoute` protecting all user-specific workspace routes (`/subjects`, `/subjects/:subjectId`, `/chats`, `/chats/:chatId`, `/notes`, `/notes/:noteId`, `/study`, `/quizzes`, `/progress`, `/import`, `/profile`). Nested detail routes inherit protection automatically.
+- **Zero-Flicker Auth Loading State**: Ensured `ProtectedRoute` renders a calm `LoadingState` while authentication state is resolving (`loading === true`), preventing premature rendering of protected content or redirect flicker.
+- **Canonical Close Icon Unification**: Replaced all invalid `name="x"` references with canonical `name="close"` across `Dialog.jsx`, `Sidebar.jsx`, and `AuthModal.jsx`.
+- **Enhanced Icon Fallback**: Updated `Icon.jsx` to log clear developer console warnings when unknown icon names are requested while gracefully falling back to `info`.
+- **Accessible Modal Focus Trap & Restoration**: Implemented custom `useFocusTrap` hook for `Dialog.jsx` and `AuthModal.jsx`, ensuring focus shifts into dialog on open, Tab and Shift+Tab cycle within focusables without leaking, Escape key dismisses modal, click-propagation is isolated from backdrop, and focus is restored to opener upon closing.
+- **Unique Modal ARIA Identifiers**: Dynamic unique ID generation via React `useId()` for `aria-labelledby` and `aria-describedby` in `Dialog.jsx`.
+- **Public Accessibility of `/settings`**: Documented deliberate architectural decision keeping `/settings` publicly accessible for pre-auth theme and keyboard ergonomics.
+- **Test Expansion**: Expanded client automated test suite from 17 to 30 tests (monorepo total 60 tests passing 100%).
+
+---
+
 ## [0.3.0] - 2026-10-03
 
 ### Phase 02 — Professional UI Shell & Design System

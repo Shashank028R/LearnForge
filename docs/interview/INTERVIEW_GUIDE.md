@@ -288,3 +288,34 @@ Because the design system is decoupled from feature logic and built on foundatio
 2. **Notes (Phase 07)**: The structured block note editor will use the typography scale (`.text-title`, `.text-body`, `font-mono`) and 1px border dividers without needing custom CSS overrides.
 3. **Study Mode (Phase 08)**: The distraction-free mode will cleanly collapse the `<Sidebar>`, centering the active recall card within the max-width content container while preserving dark/light mode tokens.
 
+### Q36: How do you protect user-specific frontend routes?
+**Answer**:  
+In React Router 6, all user-specific workspace routes (`/subjects`, `/chats`, `/notes`, `/study`, `/quizzes`, `/progress`, `/import`, `/profile` and nested parameter routes like `/subjects/:subjectId`) are structured under a single parent `<Route element={<ProtectedRoute onOpenAuth={onOpenAuth} />}>`.
+1. The `ProtectedRoute` component queries authentication state (`{ isAuthenticated, loading } = useAuth()`).
+2. If `loading === true`, it renders a calm `<LoadingState>` without rendering any protected tree elements, completely preventing layout flicker or flash of unauthorized content.
+3. If `!isAuthenticated`, it renders an accessible `<EmptyState>` with a shield icon, explanation, and an action button to open the sign-in modal.
+4. When authenticated, it renders `<Outlet />`, granting clean access to all nested child routes.
+
+### Q37: Why is frontend route protection not sufficient for authorization?
+**Answer**:  
+Frontend route guards operate exclusively on the client (the user's browser), where JavaScript execution, DOM trees, and network responses are easily inspected, bypassed, or modified by client-side tools, developer consoles, or custom HTTP clients.
+True security and authorization must always be enforced at the **backend API layer**:
+1. Every private API endpoint (`server/src/middleware/auth.js`) independently verifies the `HttpOnly` session cookie or Bearer token against MongoDB.
+2. Database queries filter by `userId: req.user._id` to enforce strict tenant isolation.
+3. Frontend route guards are strictly an ergonomic UX feature to prevent rendering broken layouts and guide unauthenticated users to sign in.
+
+### Q38: How does your modal manage keyboard focus?
+**Answer**:  
+Modal dialogs (`Dialog.jsx` and `AuthModal.jsx`) utilize a custom accessibility hook `useFocusTrap`:
+1. **Initial Focus**: On open, it automatically moves focus to the first focusable element inside the modal container (`button, input, select, textarea, [href]`), or falls back to the container itself if no interactive elements exist.
+2. **Tab Cycling**: A `keydown` listener intercepts `Tab` key presses:
+   - When Tab is pressed on the last focusable element, it prevents the default focus leak and wraps focus back to the first element.
+   - When Shift+Tab is pressed on the first focusable element, it wraps focus back to the last element.
+3. **Escape Key Dismiss**: Listens for the `Escape` key to cleanly trigger `onClose()`.
+4. **Click-Propagation Isolation**: The inner dialog container attaches `onClick={(e) => e.stopPropagation()}` so clicking inside the modal content does not trigger backdrop dismissal.
+
+### Q39: What happens to focus after a modal closes?
+**Answer**:  
+When a modal opens, `useFocusTrap` saves a reference to `document.activeElement` (`previousActiveElement.current`), capturing the exact trigger element (such as the "Sign In" button or "Open Dialog" button) that initiated the modal.
+Upon closing (when the modal unmounts or `isOpen` becomes false), the `useEffect` cleanup hook verifies that `previousActiveElement.current` still exists in the DOM and calls `.focus()`. This restores keyboard focus seamlessly to the trigger element, satisfying WCAG 2.1 Success Criterion 2.4.3 (Focus Order) and preventing focus loss to `<body>`.
+

@@ -135,6 +135,11 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - **Micro-Primitives**: Low-dependency atomic components (`Button`, `Input`, `Dialog`, `Dropdown`, `EmptyState`, `Skeleton`, `Icon`).
 - **Session Continuity**: Auth status hydrated on boot via `/api/v1/auth/me`; no client-side token caching.
 
+### 5.2 Protected Route Hierarchy & Boundaries (Phase 02.1)
+- **Protected Layout Wrapper**: All user-specific workspace routes (`/subjects`, `/chats`, `/notes`, `/study`, `/quizzes`, `/progress`, `/import`, `/profile` and nested parameter routes like `/subjects/:subjectId`) are grouped under a unified `<ProtectedRoute />` layout. Unauthenticated access displays an accessible sign-in prompt without layout flicker.
+- **Public Accessibility of `/settings`**: The `/settings` route is intentionally public so users can configure appearance (dark mode) and inspect keyboard shortcuts before signing in.
+- **Authoritative Boundary Note**: Frontend route protection provides responsive user guidance; the backend API (`server/src/middleware/auth.js`) remains the absolute, authoritative authentication and authorization boundary for all data access.
+
 ---
 
 ## 6. Domain Boundaries
