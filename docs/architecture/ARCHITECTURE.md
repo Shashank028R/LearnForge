@@ -186,14 +186,18 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - When a `Subject` is deleted, all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` records are purged.
 - When a `Topic` is deleted, all associated `Chat`, `Message`, and `Annotation` records are purged.
 - When a `Chat` is deleted, all child `Message` and `Annotation` records are purged.
-- Subject `topicsCount` and Topic `chatsCount` are maintained through coordinated application-level updates and reconciled on read lookups.
+- **Subject `topicsCount` Contract**: Strictly defined as the count of active syllabus topics (`isActiveInSyllabus: true`). Inactive/historical topics remain persisted for history/evidence preservation but are excluded from `topicsCount`. Counts are maintained through coordinated application-level updates and reconciled on read lookups (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`).
 
-### 6.3 Syllabus Lifecycle & Versioning (Phase 04.1)
+### 6.3 Syllabus Lifecycle & Topic History Governance (Phase 04.1)
 - Subjects start in `no_syllabus` state and do NOT require an approved syllabus for creation or topic management.
 - Draft syllabi are created with hierarchical sections and topics (`SyllabusVersion`, status: `draft`).
 - Multiple drafts can be edited safely; explicit user approval (`POST /api/v1/subjects/:id/syllabus/versions/:version/approve`) commits canonical topics into the `Topic` collection.
-- Approval reconciles canonical topics while preserving existing Topic `_id`s, descriptions, `notesCount`, `chatsCount`, and `knowledgeState` for matching normalized titles.
-- Prior approved versions transition to `superseded` status, ensuring an immutable version history.
+- **Topic Reconciliation & History Preservation**:
+  1. Matching topics remain active (`isActiveInSyllabus: true`) with stable `_id` and preserved learning history (`knowledgeState`, `chatsCount`, `notesCount`).
+  2. Newly introduced topics are created with `isActiveInSyllabus: true`.
+  3. Topics removed in the new syllabus version are preserved with `isActiveInSyllabus: false` (historical/retired) — no data or chat history is destroyed.
+  4. Topics re-added in subsequent versions are reactivated (`isActiveInSyllabus: true`) with their existing `_id` and cumulative learning state preserved.
+- Prior approved versions transition to `superseded` status, maintaining exactly one active approved version per subject.
 
 ### 6.4 Knowledge Semantic Layers & Annotation Subsystem (Phase 04.1)
 - LearnForge enforces strict distinction across 7 semantic layers:

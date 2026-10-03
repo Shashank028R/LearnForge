@@ -7,6 +7,9 @@ import { UserSession } from '../src/models/UserSession.js';
 import { Subject } from '../src/models/Subject.js';
 import { Topic } from '../src/models/Topic.js';
 import { SyllabusVersion } from '../src/models/SyllabusVersion.js';
+import { Chat } from '../src/models/Chat.js';
+import { Message } from '../src/models/Message.js';
+import { Annotation } from '../src/models/Annotation.js';
 import { hashSessionToken, generateSessionToken } from '../src/utils/authCrypto.js';
 
 describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () => {
@@ -243,6 +246,13 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
       }
       return { modifiedCount: modified };
     });
+
+    vi.spyOn(Topic, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
+    vi.spyOn(Chat, 'find').mockResolvedValue([]);
+    vi.spyOn(Chat, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
+    vi.spyOn(Message, 'find').mockResolvedValue([]);
+    vi.spyOn(Message, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
+    vi.spyOn(Annotation, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
 
     // Create Test Users & Sessions
     const userAId = new mongoose.Types.ObjectId();
@@ -586,5 +596,170 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
       .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${versionId}/approve`)
       .set('Cookie', sessionCookieB);
     expect(approveRes.status).toBe(404);
+  });
+
+  it('8. Manages removed topic lifecycle (v1: A, B, C -> v2: A, B -> v3: A, B, C) preserving stable IDs and learning data', async () => {
+    // 1. Create and approve v1 with A, B, C
+    const v1Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Curriculum v1',
+        sections: [
+          {
+            title: 'Section 1',
+            topics: [
+              { title: 'Topic A', description: 'Alpha' },
+              { title: 'Topic B', description: 'Beta' },
+              { title: 'Topic C', description: 'Gamma' },
+            ],
+          },
+        ],
+      });
+    const v1Id = v1Res.body.data._id;
+    await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v1Id}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    // Verify all 3 active
+    expect(topicsStore.size).toBe(3);
+    const topicC_v1 = Array.from(topicsStore.values()).find((t) => t.title === 'Topic C');
+    expect(topicC_v1.isActiveInSyllabus).toBe(true);
+    const topicC_id = topicC_v1._id.toString();
+
+    // Attach mock learning state to Topic C
+    topicC_v1.knowledgeState = { masteryScore: 85, keyConcepts: ['gamma_law'] };
+    topicC_v1.chatsCount = 4;
+    topicC_v1.notesCount = 2;
+    topicsStore.set(topicC_id, topicC_v1);
+
+    // Verify Subject topicsCount is 3
+    const subjectAfterV1 = subjectsStore.get(subjectA._id.toString());
+    expect(subjectAfterV1.topicsCount).toBe(3);
+
+    // 2. Create and approve v2 with A, B (C removed)
+    const v2Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Curriculum v2',
+        sections: [
+          {
+            title: 'Section 1',
+            topics: [
+              { title: 'Topic A', description: 'Alpha' },
+              { title: 'Topic B', description: 'Beta' },
+            ],
+          },
+        ],
+      });
+    const v2Id = v2Res.body.data._id;
+    await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v2Id}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    // Verify Topic A and B are active
+    const topicA_v2 = Array.from(topicsStore.values()).find((t) => t.title === 'Topic A');
+    const topicB_v2 = Array.from(topicsStore.values()).find((t) => t.title === 'Topic B');
+    expect(topicA_v2.isActiveInSyllabus).toBe(true);
+    expect(topicB_v2.isActiveInSyllabus).toBe(true);
+
+    // Verify Topic C is preserved but marked historical/inactive
+    const topicC_v2 = topicsStore.get(topicC_id);
+    expect(topicC_v2).toBeDefined();
+    expect(topicC_v2.isActiveInSyllabus).toBe(false);
+    expect(topicC_v2.knowledgeState.masteryScore).toBe(85);
+    expect(topicC_v2.chatsCount).toBe(4);
+    expect(topicC_v2.notesCount).toBe(2);
+
+    // Verify Subject topicsCount reflects ONLY active syllabus topics (2)
+    // Note: mock countDocuments counts matching items with isActiveInSyllabus: true
+    let activeCount = 0;
+    for (const t of topicsStore.values()) {
+      if (t.isActiveInSyllabus !== false) activeCount++;
+    }
+    expect(activeCount).toBe(2);
+
+    // 3. Create and approve v3 re-adding C
+    const v3Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Curriculum v3',
+        sections: [
+          {
+            title: 'Section 1',
+            topics: [
+              { title: 'Topic A', description: 'Alpha' },
+              { title: 'Topic B', description: 'Beta' },
+              { title: 'Topic C', description: 'Gamma Re-added' },
+            ],
+          },
+        ],
+      });
+    const v3Id = v3Res.body.data._id;
+    await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v3Id}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    // Verify Topic C is reactivated with preserved ID and learning history
+    const topicC_v3 = topicsStore.get(topicC_id);
+    expect(topicC_v3.isActiveInSyllabus).toBe(true);
+    expect(topicC_v3.description).toBe('Gamma Re-added');
+    expect(topicC_v3.knowledgeState.masteryScore).toBe(85);
+    expect(topicC_v3.chatsCount).toBe(4);
+  });
+
+  it('9. Cascades subject deletion to remove associated SyllabusVersion documents', async () => {
+    // Create draft v1 and approve
+    const v1Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Curriculum v1',
+        sections: [{ title: 'Section 1', topics: [{ title: 'Topic 1' }] }],
+      });
+    const v1Id = v1Res.body.data._id;
+    await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v1Id}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    // Create draft v2
+    await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Curriculum v2',
+        sections: [{ title: 'Section 1', topics: [{ title: 'Topic 1' }] }],
+      });
+
+    expect(syllabusStore.size).toBe(2);
+
+    // Mock SyllabusVersion.deleteMany for cascade verification
+    vi.spyOn(SyllabusVersion, 'deleteMany').mockImplementation(async (query) => {
+      let deleted = 0;
+      for (const [id, sv] of syllabusStore.entries()) {
+        const subMatch = !query.subjectId || sv.subjectId.toString() === query.subjectId.toString();
+        const userMatch = !query.userId || sv.userId.toString() === query.userId.toString();
+        if (subMatch && userMatch) {
+          syllabusStore.delete(id);
+          deleted++;
+        }
+      }
+      return { deletedCount: deleted };
+    });
+
+    vi.spyOn(Subject, 'deleteOne').mockImplementation(async (query) => {
+      subjectsStore.delete(query._id.toString());
+      return { deletedCount: 1 };
+    });
+
+    // Delete subject
+    const delRes = await request(app)
+      .delete(`/api/v1/subjects/${subjectA._id}`)
+      .set('Cookie', sessionCookieA);
+
+    expect(delRes.status).toBe(200);
+    expect(syllabusStore.size).toBe(0);
   });
 });

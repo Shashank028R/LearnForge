@@ -410,14 +410,16 @@ By persisting versions (`v1`, `v2`, `v3`) in the `SyllabusVersion` collection wi
 **Answer**:  
 Drafting is a sandbox activity. A user may experiment with adding, deleting, re-ordering, or restructuring dozens of topics during curriculum design. If every keystroke or draft proposal directly mutated canonical `Topic` documents in MongoDB, it would prematurely create empty topic nodes, orphan existing notes, disrupt mastery calculations, and trigger unwanted side effects across the database. Drafts remain isolated in `SyllabusVersion` until explicit approval.
 
-### Q55: How does an approved syllabus reconcile with canonical Topic records while preserving stable identity?
+### Q55: How does an approved syllabus reconcile with canonical Topic records while preserving stable identity and historical context?
 **Answer**:  
 When a syllabus version is approved:
-1. The server extracts the ordered list of topics across all sections.
+1. The server extracts the ordered list of topics across all sections in the newly approved version.
 2. It queries existing canonical `Topic` records for that subject.
-3. For topics that match by normalized title, the server updates their `orderIndex` and `description` while **preserving their existing `_id`**, `status`, `knowledgeState`, `notesCount`, and `chatsCount`.
-4. For new topics introduced in the syllabus, new canonical `Topic` documents are created with `status: 'not_started'`.
-5. This reconciliation ensures that previous note links, study sessions, and mastery evaluations attached to stable topic IDs are never lost when curriculum versions evolve.
+3. For topics that match by normalized title, the server updates their `orderIndex`, `description`, and ensures `isActiveInSyllabus: true` while **preserving their existing `_id`**, `status`, `knowledgeState`, `notesCount`, and `chatsCount`.
+4. For new topics introduced in the syllabus, new canonical `Topic` documents are created with `isActiveInSyllabus: true` and `status: 'not_started'`.
+5. For existing topics **omitted** from the newly approved version, they are **not deleted**; they are marked historical (`isActiveInSyllabus: false`). This preserves past study history, notes, and conversation evidence while ensuring that Study Mode and active curriculum metrics ignore retired topics.
+6. If a retired topic is re-introduced in a future syllabus version, it is reactivated (`isActiveInSyllabus: true`) with its previous learning history and mastery intact.
+7. `Subject.topicsCount` is strictly updated to reflect the count of **active syllabus topics** (`isActiveInSyllabus: true`).
 
 ### Q56: Why should off-topic questions still receive helpful responses rather than being rejected?
 **Answer**:  
@@ -438,4 +440,13 @@ Instead, Phase 04.1 defines the durable domain models, database schemas, API env
 **Answer**:  
 Annotations are auxiliary, user-controlled scratchpad notes attached directly to conversational evidence (`Annotation` model). A user might tag an off-topic explanation with `#wasm-threading` or add a personal reminder comment.  
 These annotations belong to the interaction layer as private user metadata. They do not undergo knowledge extraction or automatic note consolidation, preserving the purity of canonical topic knowledge while giving users complete autonomy over auxiliary notes.
+
+### Q60: How does LearnForge ensure complete cascade cleanup across Phase 04.1 entities?
+**Answer**:  
+When a user deletes a `Subject`, LearnForge's controller executes coordinated application-level deletion:
+- `SyllabusVersion` documents for that `{ subjectId, userId }` are purged.
+- Child `Chat` and `Message` IDs are resolved, and all associated `Annotation` documents for `{ chatId, userId }` and `{ messageId, userId }` are deleted.
+- All child `Message`, `Chat`, and `Topic` records are purged.
+- The parent `Subject` is deleted.
+Similarly, deleting a `Chat` purges its child `Message` and `Annotation` documents. Every deletion query is strictly scoped by `userId: req.user._id`, ensuring complete orphan prevention and bulletproof multi-tenant isolation.
 

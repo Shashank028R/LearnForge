@@ -81,6 +81,11 @@ const topicSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    isActiveInSyllabus: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -95,6 +100,9 @@ topicSchema.index({ userId: 1, subjectId: 1 });
 
 // Compound Unique Index: Prevent duplicate topic titles within the same subject
 topicSchema.index({ subjectId: 1, normalizedTitle: 1 }, { unique: true });
+
+// Compound Active Syllabus Index: Fast retrieval of active curriculum topics
+topicSchema.index({ subjectId: 1, isActiveInSyllabus: 1, orderIndex: 1 });
 
 export const Topic = mongoose.models.Topic || mongoose.model('Topic', topicSchema);
 export default Topic;

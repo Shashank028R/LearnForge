@@ -25,20 +25,37 @@ We needed a strict semantic separation between:
    - Approved versions are immutable. Requesting an edit creates a new draft version derived from the active approved version.
    - When a new draft is approved, the previous approved version transitions to `superseded` with audit timestamps (`approvedAt`, `supersededAt`).
 
-3. **Explicit Approval Requirement & Canonical Topic Reconciliation:**
+3. **Explicit Approval Requirement & Canonical Topic Lifecycle Reconciliation:**
    - Conversational affirmative text (e.g. "looks good", "continue") never triggers automatic approval.
    - Approval requires an explicit API call: `POST /api/v1/subjects/:subjectId/syllabus/versions/:versionId/approve`.
-   - On approval, canonical `Topic` documents are reconciled: existing topics matching by normalized title preserve their stable `_id`, mastery level, notes count, and chat references, preventing data loss.
+   - **Active vs. Historical Topic Reconciliation**:
+     - Topics present in the approved syllabus are marked active (`isActiveInSyllabus: true`).
+     - Existing topics matching by normalized title preserve their stable `_id`, `description`, `knowledgeState`, `notesCount`, and `chatsCount`.
+     - Topics omitted from a newly approved syllabus are **not deleted**; they are marked historical (`isActiveInSyllabus: false`) to preserve all learning history, notes, and conversation evidence.
+     - Topics re-introduced in subsequent revisions are reactivated (`isActiveInSyllabus: true`) with their preserved historical learning context intact.
+   - **Single Active Approved Version Invariant**:
+     - Exactly one approved syllabus version exists per subject at any given time.
+     - Approving a new version marks all prior approved versions for that subject as `superseded` (`supersededAt: now`).
+   - **Subject Topics Count Contract**:
+     - `Subject.topicsCount` strictly reflects the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`), preventing historical topics from skewing curriculum metrics.
 
 4. **Off-Topic Classification Contract:**
    - Assistant message metadata includes `knowledgeContext: { relevance: 'unclassified'|'on_topic'|'off_topic'|'uncertain', disposition: 'unclassified'|'candidate'|'excluded'|'promoted' }`.
    - The frontend never infers relevance via keywords; it only displays the off-topic warning banner when the backend explicitly returns `relevance === 'off_topic'`.
    - Users can save off-topic message insights as auxiliary `Annotation` records (comments or tags) without polluting canonical notes.
 
+5. **Application-Level Cascade Deletion Contract:**
+   - Deleting a `Subject` purges its `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` records.
+   - Deleting a `Topic` purges associated `Chat`, `Message`, and `Annotation` records.
+   - Deleting a `Chat` purges child `Message` and `Annotation` records.
+   - All cascades are strictly scoped by `userId: req.user._id` to prevent cross-tenant data corruption.
+
 ## Consequences
 - **Positive:**
   - Clear architectural boundary established before Phase 05 AI Gateway integration.
   - Complete historical auditability of syllabus changes without destructive overwrites.
-  - Users maintain full freedom to explore tangential topics without curriculum distortion.
+  - Active curriculum and active `Topic` set never contradict each other.
+  - Preserved learning progress and chat history even when topics are removed from syllabus revisions.
+  - Zero orphan records across all lifecycle deletions.
 - **Negative:**
   - Requires explicit derivation step when editing approved syllabi, increasing number of version records over time.

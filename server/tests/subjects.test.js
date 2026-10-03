@@ -8,6 +8,8 @@ import { Subject } from '../src/models/Subject.js';
 import { Topic } from '../src/models/Topic.js';
 import { Chat } from '../src/models/Chat.js';
 import { Message } from '../src/models/Message.js';
+import { SyllabusVersion } from '../src/models/SyllabusVersion.js';
+import { Annotation } from '../src/models/Annotation.js';
 import { hashSessionToken, generateSessionToken } from '../src/utils/authCrypto.js';
 
 describe('Subjects & Topics API (/api/v1/subjects, /api/v1/topics)', () => {
@@ -244,13 +246,14 @@ describe('Subjects & Topics API (/api/v1/subjects, /api/v1/topics)', () => {
       return { deletedCount: 1 };
     });
 
-    // Mock Chat & Message for cascade operations
-    vi.spyOn(Chat, 'find').mockImplementation(() => ({
-      select: () => Promise.resolve([]),
-    }));
+    // Mock Chat, Message, SyllabusVersion & Annotation for cascade operations
+    vi.spyOn(Chat, 'find').mockImplementation(async () => []);
     vi.spyOn(Chat, 'countDocuments').mockResolvedValue(0);
     vi.spyOn(Chat, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
+    vi.spyOn(Message, 'find').mockImplementation(async () => []);
     vi.spyOn(Message, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
+    vi.spyOn(SyllabusVersion, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
+    vi.spyOn(Annotation, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
 
     // Create User A and User B
     const idA = new mongoose.Types.ObjectId().toString();

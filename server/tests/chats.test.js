@@ -8,6 +8,8 @@ import { Subject } from '../src/models/Subject.js';
 import { Topic } from '../src/models/Topic.js';
 import { Chat } from '../src/models/Chat.js';
 import { Message } from '../src/models/Message.js';
+import { Annotation } from '../src/models/Annotation.js';
+import { SyllabusVersion } from '../src/models/SyllabusVersion.js';
 import { hashSessionToken, generateSessionToken } from '../src/utils/authCrypto.js';
 
 describe('Chat Infrastructure API (/api/v1/chats)', () => {
@@ -224,6 +226,9 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
           return chain;
         },
         lean: () => list,
+        then: (resolve) => resolve(list),
+        map: (fn) => list.map(fn),
+        [Symbol.iterator]: () => list[Symbol.iterator](),
       };
       return chain;
     });
@@ -418,6 +423,9 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
           return chain;
         },
         lean: () => list,
+        then: (resolve) => resolve(list),
+        map: (fn) => list.map(fn),
+        [Symbol.iterator]: () => list[Symbol.iterator](),
       };
       return chain;
     });
@@ -466,6 +474,9 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
       }
       return { deletedCount: count };
     });
+
+    vi.spyOn(Annotation, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
+    vi.spyOn(SyllabusVersion, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
 
     vi.spyOn(Message, 'insertMany').mockImplementation(async (docs) => {
       const inserted = [];

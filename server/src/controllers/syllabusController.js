@@ -320,36 +320,41 @@ export async function approveSyllabusVersion(req, res, next) {
 
     // Reconcile Canonical Topics
     // Flatten topics from all sections in order
+    const activeSyllabusNormalizedTitles = new Set();
     const flattenedTopics = [];
     let globalOrder = 0;
     for (const section of targetVersion.sections || []) {
       for (const topicItem of section.topics || []) {
+        const normTitle = topicItem.title.trim().toLowerCase();
+        activeSyllabusNormalizedTitles.add(normTitle);
         flattenedTopics.push({
           title: topicItem.title.trim(),
-          normalizedTitle: topicItem.title.trim().toLowerCase(),
+          normalizedTitle: normTitle,
           description: topicItem.description ? topicItem.description.trim() : '',
           orderIndex: globalOrder++,
         });
       }
     }
 
-    if (flattenedTopics.length > 0) {
-      // Find existing topics for this subject
-      const existingTopics = await Topic.find({ subjectId, userId: req.user._id });
-      const existingByNormalized = new Map();
-      existingTopics.forEach((t) => existingByNormalized.set(t.normalizedTitle, t));
+    // Find all existing topics for this subject
+    const existingTopics = await Topic.find({ subjectId, userId: req.user._id });
+    const existingByNormalized = new Map();
+    existingTopics.forEach((t) => existingByNormalized.set(t.normalizedTitle, t));
 
+    if (flattenedTopics.length > 0) {
       for (const item of flattenedTopics) {
         if (existingByNormalized.has(item.normalizedTitle)) {
-          // Stable identity preservation: update orderIndex and description without recreating
+          // Stable identity preservation: update title, orderIndex, isActiveInSyllabus without recreating
           const existing = existingByNormalized.get(item.normalizedTitle);
+          existing.title = item.title;
           existing.orderIndex = item.orderIndex;
+          existing.isActiveInSyllabus = true; // Reactivate if was previously historical
           if (item.description) {
             existing.description = item.description;
           }
           await existing.save();
         } else {
-          // Create new canonical topic
+          // Create new canonical topic as active
           await Topic.create({
             subjectId,
             userId: req.user._id,
@@ -358,6 +363,7 @@ export async function approveSyllabusVersion(req, res, next) {
             description: item.description,
             orderIndex: item.orderIndex,
             status: 'not_started',
+            isActiveInSyllabus: true,
             knowledgeState: {},
             notesCount: 0,
             chatsCount: 0,
@@ -366,9 +372,22 @@ export async function approveSyllabusVersion(req, res, next) {
       }
     }
 
-    // Reconcile subject topics count and syllabus status
-    const currentTopicsCount = await Topic.countDocuments({ subjectId, userId: req.user._id });
-    subject.topicsCount = currentTopicsCount;
+    // Mark existing topics NOT in the new syllabus as inactive/historical
+    // Retains stable _id, knowledgeState, notesCount, chatsCount, description
+    for (const existing of existingTopics) {
+      if (!activeSyllabusNormalizedTitles.has(existing.normalizedTitle) && existing.isActiveInSyllabus !== false) {
+        existing.isActiveInSyllabus = false;
+        await existing.save();
+      }
+    }
+
+    // Reconcile subject topicsCount strictly to active syllabus topics
+    const activeTopicsCount = await Topic.countDocuments({
+      subjectId,
+      userId: req.user._id,
+      isActiveInSyllabus: true,
+    });
+    subject.topicsCount = activeTopicsCount;
     subject.syllabusStatus = 'approved';
     subject.activeSyllabusVersionId = targetVersion._id;
     await subject.save();
@@ -379,6 +398,7 @@ export async function approveSyllabusVersion(req, res, next) {
       data: {
         subject,
         version: targetVersion,
+        activeTopicsCount,
       },
     });
   } catch (error) {

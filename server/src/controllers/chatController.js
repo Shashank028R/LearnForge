@@ -3,6 +3,7 @@ import { Chat } from '../models/Chat.js';
 import { Message } from '../models/Message.js';
 import { Subject } from '../models/Subject.js';
 import { Topic } from '../models/Topic.js';
+import { Annotation } from '../models/Annotation.js';
 
 /**
  * Formats a chat document for standard API response envelopes.
@@ -730,6 +731,19 @@ export async function deleteChat(req, res, next) {
         requestId: req.id || 'unknown',
       });
     }
+
+    // Find message IDs for annotation cleanup
+    const chatMessages = await Message.find({
+       chatId: chat._id,
+       userId: req.user._id,
+    });
+    const messageIds = (chatMessages || []).map((m) => m._id);
+
+    // Clean up annotations attached to this chat or its messages
+    await Annotation.deleteMany({
+      userId: req.user._id,
+      $or: [{ chatId: chat._id }, { messageId: { $in: messageIds } }],
+    });
 
     // Cascade delete child messages
     const deleteMessagesResult = await Message.deleteMany({

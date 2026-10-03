@@ -34,13 +34,25 @@ Phase 04.1 establishes the durable product, data model, and user experience foun
 - `POST /api/v1/subjects/:subjectId/syllabus/versions` — Creates a new syllabus draft (`v1`, `v2`, or derived revision).
 - `GET /api/v1/subjects/:subjectId/syllabus/versions/:versionId` — Retrieves a specific syllabus version.
 - `PUT /api/v1/subjects/:subjectId/syllabus/versions/:versionId` — Updates sections and metadata of a draft syllabus (rejects modifications to approved or superseded versions).
-- `POST /api/v1/subjects/:subjectId/syllabus/versions/:versionId/approve` — Explicitly activates version as authoritative curriculum, supersedes previous active version, and reconciles canonical `Topic` documents while preserving stable IDs.
+- `POST /api/v1/subjects/:subjectId/syllabus/versions/:versionId/approve` — Explicitly activates version as authoritative curriculum, supersedes previous active version, marks present topics active (`isActiveInSyllabus: true`), marks omitted topics historical (`isActiveInSyllabus: false`) while retaining stable `_id` and learning progress, reactivates previously retired topics if re-added, and updates `Subject.topicsCount` to strictly active topics.
 
 ### Message Annotations
 - `GET /api/v1/chats/:chatId/messages/:messageId/annotations` — Lists user comments and tags on a message.
 - `POST /api/v1/chats/:chatId/messages/:messageId/annotations` — Creates a comment or tag annotation.
 - `PATCH /api/v1/annotations/:annotationId` — Updates annotation content.
 - `DELETE /api/v1/annotations/:annotationId` — Deletes annotation.
+
+## Topic Lifecycle & History Governance
+- **Active Topics**: Topics explicitly declared in the latest approved syllabus version are flagged `isActiveInSyllabus: true` and are eligible for Study Mode and active assessment.
+- **Historical / Retired Topics**: Topics present in prior syllabus versions but omitted in the latest approved version are preserved with `isActiveInSyllabus: false`. Their stable `_id`, `description`, `knowledgeState` (mastery scores, key concepts, summaries), `notesCount`, and `chatsCount` remain permanently accessible.
+- **Topic Reactivation**: Re-adding a previously retired topic in a subsequent syllabus version restores its `isActiveInSyllabus: true` flag while maintaining its historical learning progress.
+- **Subject.topicsCount Contract**: Defined strictly as the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`), preventing historical records from inflating current curriculum size metrics.
+
+## Cascading Entity Cleanup
+- `Subject` deletion cascades removal of all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` documents.
+- `Topic` deletion cascades removal of all linked `Chat`, `Message`, and `Annotation` documents.
+- `Chat` deletion cascades removal of all child `Message` and `Annotation` documents.
+- All deletions are strictly scoped by `userId: req.user._id` preventing cross-tenant leakage or orphan records.
 
 ## Multi-Tenant Security & Role Boundaries
 - Strict multi-tenant authorization (`requireDatabase` + `authenticateUser` + `userId: req.user._id`). Cross-tenant requests return `404 Not Found`.

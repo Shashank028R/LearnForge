@@ -3,6 +3,7 @@ import { Topic } from '../models/Topic.js';
 import { Subject } from '../models/Subject.js';
 import { Chat } from '../models/Chat.js';
 import { Message } from '../models/Message.js';
+import { Annotation } from '../models/Annotation.js';
 
 function sanitizeTopic(topic) {
   return {
@@ -13,6 +14,7 @@ function sanitizeTopic(topic) {
     description: topic.description,
     orderIndex: topic.orderIndex,
     status: topic.status,
+    isActiveInSyllabus: topic.isActiveInSyllabus !== undefined ? topic.isActiveInSyllabus : true,
     knowledgeState: {
       masteryScore: topic.knowledgeState?.masteryScore || 0,
       keyConcepts: topic.knowledgeState?.keyConcepts || [],
@@ -550,25 +552,38 @@ export async function deleteTopic(req, res, next) {
 
     const subjectId = topic.subjectId;
 
-    // Cascade delete any chats and messages associated with this topic
+    // Cascade delete any chats, messages, and annotations associated with this topic
     const topicChats = await Chat.find({
       topicId: topic._id,
       userId: req.user._id,
-    }).select('_id');
+    });
 
-    if (topicChats.length > 0) {
+    if (topicChats && topicChats.length > 0) {
       const chatIds = topicChats.map((c) => c._id);
+      const topicMessages = await Message.find({
+        chatId: { $in: chatIds },
+        userId: req.user._id,
+      });
+      const messageIds = (topicMessages || []).map((m) => m._id);
+
+      await Annotation.deleteMany({
+        userId: req.user._id,
+        $or: [{ chatId: { $in: chatIds } }, { messageId: { $in: messageIds } }],
+      });
+
       await Message.deleteMany({ chatId: { $in: chatIds }, userId: req.user._id });
       await Chat.deleteMany({ _id: { $in: chatIds }, userId: req.user._id });
     }
 
     await Topic.deleteOne({ _id: topic._id });
 
-    // Decrement topic counter on parent subject
-    await Subject.updateOne(
-      { _id: subjectId, userId: req.user._id, topicsCount: { $gt: 0 } },
-      { $inc: { topicsCount: -1 } }
-    );
+    // Decrement topic counter on parent subject if topic was active in syllabus
+    if (topic.isActiveInSyllabus !== false) {
+      await Subject.updateOne(
+        { _id: subjectId, userId: req.user._id, topicsCount: { $gt: 0 } },
+        { $inc: { topicsCount: -1 } }
+      );
+    }
 
     return res.status(200).json({
       success: true,

@@ -13,23 +13,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Domain Persistence & Models**:
   - `SyllabusVersion.js`: Versioned syllabus model supporting `draft`, `approved`, and `superseded` states, structured hierarchical sections and topics, change summaries, and approval audit timestamps.
   - `Annotation.js`: Model for user-authored auxiliary comments and tags attached to chats and messages.
+  - `Topic.js`: Added `isActiveInSyllabus` (default: `true`, indexed) distinguishing active syllabus topics from retired/historical topics.
   - Added `syllabusStatus` and `activeSyllabusVersionId` to `Subject.js`.
   - Added `knowledgeContext` (`relevance`, `subjectId`, `topicId`, `disposition`) to `Message.js`.
-- **REST APIs**:
+- **REST APIs & Topic Governance**:
   - Full syllabus lifecycle management under `/api/v1/subjects/:subjectId/syllabus` (`GET /status`, `GET /versions`, `POST /drafts`, `GET /versions/:version`, `PUT /drafts/:version`, `POST /versions/:version/approve`).
   - Full CRUD for comments and tags under `/api/v1/annotations`.
-- **Stable Topic Reconciliation**:
+- **Topic Lifecycle & History Preservation**:
   - `approveSyllabusVersion` reconciles syllabus topics against active `Topic` records, maintaining existing topic IDs, descriptions, `notesCount`, `chatsCount`, and `knowledgeState` without data loss.
+  - Topics omitted in newly approved syllabus revisions are preserved as historical (`isActiveInSyllabus: false`) with all learning data intact.
+  - Topics re-added in subsequent revisions are reactivated (`isActiveInSyllabus: true`).
+  - `Subject.topicsCount` strictly reflects the count of **active syllabus topics**.
+- **Application Cascade Deletions**:
+  - Subject deletion cascades removal of all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` documents.
+  - Topic/Chat deletions cascade cleanup of associated annotations.
 - **Interactive UI & Accessibility**:
-  - `SubjectDetailPage.jsx`: Added syllabus governance panel, draft editor, version history modal, and explicit approval confirmation modal.
+  - `SubjectDetailPage.jsx`: Added syllabus governance panel, draft editor, version history modal, historical topic badge rendering, and explicit approval confirmation modal.
   - `ChatsPage.jsx`: Added off-topic detection banner display derived exclusively from backend response data (zero heuristic guessing) and added inline message comment/tag annotations.
   - `useFocusTrap.js`: Fixed modal focus theft on input typing by stabilizing `onClose` references in React refs.
 - **Testing & Verification**:
-  - 12 new backend tests in `server/tests/syllabus.test.js` and `server/tests/annotations.test.js` (total 107 server tests passing).
-  - 5 new frontend tests in `client/src/pages/SyllabusGovernance.test.jsx` (total 45 client tests passing).
-  - Total automated monorepo tests increased to 152 tests (100% passing).
-  - Live Atlas integration verification passed with `verify_phase04_1_live.js`.
-  - Browser subagent verified smooth typing in modal dialogs without focus loss.
+  - 14 backend tests in `server/tests/syllabus.test.js` and `server/tests/annotations.test.js` (total 109 server tests passing).
+  - 6 frontend tests in `client/src/pages/SyllabusGovernance.test.jsx` (total 46 client tests passing).
+  - Total automated monorepo tests increased to 155 tests (100% passing).
+  - Live Atlas API verification script (`verify_phase04_1_live.js`) exercising real Express HTTP APIs and Atlas database invariants.
+  - Browser verification of modal focus stability and syllabus governance flow.
 
 ---
 

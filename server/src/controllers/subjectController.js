@@ -3,6 +3,8 @@ import { Subject } from '../models/Subject.js';
 import { Topic } from '../models/Topic.js';
 import { Chat } from '../models/Chat.js';
 import { Message } from '../models/Message.js';
+import { SyllabusVersion } from '../models/SyllabusVersion.js';
+import { Annotation } from '../models/Annotation.js';
 
 export const VALID_MASTERY_LEVELS = ['beginner', 'intermediate', 'advanced', 'comprehensive'];
 
@@ -202,8 +204,12 @@ export async function getSubject(req, res, next) {
       });
     }
 
-    // Refresh actual topic count
-    const actualCount = await Topic.countDocuments({ subjectId: subject._id, userId: req.user._id });
+    // Refresh actual active topic count
+    const actualCount = await Topic.countDocuments({
+      subjectId: subject._id,
+      userId: req.user._id,
+      isActiveInSyllabus: true,
+    });
     if (subject.topicsCount !== actualCount) {
       subject.topicsCount = actualCount;
       await subject.save();
@@ -386,7 +392,7 @@ export async function updateSubject(req, res, next) {
 
 /**
  * DELETE /api/v1/subjects/:subjectId
- * Deletes an owned subject and cascades deletion to all child topics.
+ * Deletes an owned subject and cascades deletion to all child topics, chats, messages, syllabus versions, and annotations.
  */
 export async function deleteSubject(req, res, next) {
   try {
@@ -424,14 +430,32 @@ export async function deleteSubject(req, res, next) {
       userId: req.user._id,
     });
 
-    // Cascade deletion of all chats and messages linked to this subject
+    // Cascade deletion of all syllabus versions for this subject and user
+    await SyllabusVersion.deleteMany({
+      subjectId: subject._id,
+      userId: req.user._id,
+    });
+
+    // Cascade deletion of all chats, messages, and annotations linked to this subject
     const subjectChats = await Chat.find({
       subjectId: subject._id,
       userId: req.user._id,
-    }).select('_id');
+    });
 
-    if (subjectChats.length > 0) {
+    if (subjectChats && subjectChats.length > 0) {
       const chatIds = subjectChats.map((c) => c._id);
+      const subjectMessages = await Message.find({
+        chatId: { $in: chatIds },
+        userId: req.user._id,
+      });
+      const messageIds = (subjectMessages || []).map((m) => m._id);
+
+      // Clean up annotations attached to these chats or messages
+      await Annotation.deleteMany({
+        userId: req.user._id,
+        $or: [{ chatId: { $in: chatIds } }, { messageId: { $in: messageIds } }],
+      });
+
       await Message.deleteMany({ chatId: { $in: chatIds }, userId: req.user._id });
       await Chat.deleteMany({ _id: { $in: chatIds }, userId: req.user._id });
     }

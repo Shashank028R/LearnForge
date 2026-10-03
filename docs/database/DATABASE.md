@@ -128,7 +128,7 @@ Represents a user-owned learning discipline or course syllabus.
   color: String,             // Color hex code (default: '#3b82f6')
   status: String,            // 'active' | 'archived' (default: 'active')
   targetMasteryLevel: String,// 'beginner' | 'intermediate' | 'advanced' | 'comprehensive'
-  topicsCount: Number,       // Maintained count of canonical topics (default: 0)
+  topicsCount: Number,       // Maintained count of ACTIVE syllabus topics ({ isActiveInSyllabus: true }) (default: 0)
   syllabusStatus: String,    // 'no_syllabus' | 'draft' | 'approved' (default: 'no_syllabus')
   activeSyllabusVersionId: ObjectId, // Ref: 'SyllabusVersion', nullable
   createdAt: Date,
@@ -199,6 +199,7 @@ Represents a curriculum unit or module belonging to a Subject with an embedded k
   description: String,       // Optional, max 1000 chars
   orderIndex: Number,        // Explicit sequential ordering (0, 1, 2...)
   status: String,            // 'not_started' | 'in_progress' | 'mastered' (default: 'not_started')
+  isActiveInSyllabus: Boolean,// true = active curriculum topic; false = historical/retired topic (default: true)
   knowledgeState: {
     masteryScore: Number,    // 0 - 100 (default: 0)
     keyConcepts: [String],   // Canonical atomic concept tags
@@ -215,6 +216,7 @@ Represents a curriculum unit or module belonging to a Subject with an embedded k
 - Sequential Order Index: `{ subjectId: 1, orderIndex: 1 }` — optimizes sequential topic list retrieval.
 - Tenant & Relationship Index: `{ userId: 1, subjectId: 1 }` — supports fast user-scoped aggregation.
 - Unique Compound Index: `{ subjectId: 1, normalizedTitle: 1 }, { unique: true }` — prevents duplicate topic titles within a single subject.
+- Active Syllabus Index: `{ subjectId: 1, isActiveInSyllabus: 1, orderIndex: 1 }` — optimizes retrieval of active curriculum topics.
 
 ---
 

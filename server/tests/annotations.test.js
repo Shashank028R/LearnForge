@@ -88,6 +88,22 @@ describe('Message Annotations API (/api/v1/chats/:chatId/messages/:messageId/ann
       return null;
     });
 
+    vi.spyOn(Message, 'find').mockImplementation((query) => {
+      const matched = [];
+      for (const m of messagesStore.values()) {
+        const idMatch = !query.chatId || m.chatId.toString() === query.chatId.toString();
+        const userMatch = !query.userId || m.userId.toString() === query.userId.toString();
+        if (idMatch && userMatch) {
+          matched.push(m);
+        }
+      }
+      return {
+        then: (resolve) => resolve(matched),
+        map: (fn) => matched.map(fn),
+        [Symbol.iterator]: () => matched[Symbol.iterator](),
+      };
+    });
+
     // Mock Annotation
     vi.spyOn(Annotation, 'find').mockImplementation((query) => {
       const matched = [];
@@ -328,5 +344,54 @@ describe('Message Annotations API (/api/v1/chats/:chatId/messages/:messageId/ann
       .set('Cookie', sessionCookieB);
 
     expect(deleteRes.status).toBe(404);
+  });
+
+  it('6. Cascades chat deletion to remove child Annotations attached to the chat or its messages', async () => {
+    // Create annotation on message
+    await request(app)
+      .post(`/api/v1/chats/${chatA._id}/messages/${messageA._id}/annotations`)
+      .set('Cookie', sessionCookieA)
+      .send({ type: 'comment', content: 'Annotation to be cascaded' });
+
+    expect(annotationsStore.size).toBe(1);
+
+    // Mock Message.find and Annotation.deleteMany
+    vi.spyOn(Message, 'find').mockImplementation(async (query) => {
+      return Array.from(messagesStore.values()).filter((m) => m.chatId.toString() === query.chatId.toString());
+    });
+
+    vi.spyOn(Annotation, 'deleteMany').mockImplementation(async (query) => {
+      let deleted = 0;
+      for (const [id, a] of annotationsStore.entries()) {
+        const userMatch = !query.userId || a.userId.toString() === query.userId.toString();
+        const chatMatch = a.chatId.toString() === chatA._id.toString();
+        if (userMatch && chatMatch) {
+          annotationsStore.delete(id);
+          deleted++;
+        }
+      }
+      return { deletedCount: deleted };
+    });
+
+    vi.spyOn(Message, 'deleteMany').mockImplementation(async (query) => {
+      for (const [id, m] of messagesStore.entries()) {
+        if (m.chatId.toString() === query.chatId.toString()) {
+          messagesStore.delete(id);
+        }
+      }
+      return { deletedCount: 1 };
+    });
+
+    vi.spyOn(Chat, 'deleteOne').mockImplementation(async (query) => {
+      chatsStore.delete(query._id.toString());
+      return { deletedCount: 1 };
+    });
+
+    const delRes = await request(app)
+      .delete(`/api/v1/chats/${chatA._id}`)
+      .set('Cookie', sessionCookieA);
+
+    expect(delRes.status).toBe(200);
+    expect(annotationsStore.size).toBe(0);
   });
 });

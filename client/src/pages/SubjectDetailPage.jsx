@@ -571,7 +571,15 @@ export function SubjectDetailPage() {
               </span>
               <span className="font-medium bg-app-surface-muted px-2.5 py-1 rounded border border-app-border flex items-center gap-1.5">
                 <Icon name="layers" size={13} />
-                <span>{topics.length} {topics.length === 1 ? 'Topic' : 'Topics'}</span>
+                <span>
+                  {topics.filter((t) => t.isActiveInSyllabus !== false).length}{' '}
+                  {topics.filter((t) => t.isActiveInSyllabus !== false).length === 1 ? 'Active Topic' : 'Active Topics'}
+                  {topics.some((t) => t.isActiveInSyllabus === false) && (
+                    <span className="text-app-text-muted font-normal">
+                      {' '}(+{topics.filter((t) => t.isActiveInSyllabus === false).length} historical)
+                    </span>
+                  )}
+                </span>
               </span>
             </div>
           </div>
@@ -786,7 +794,11 @@ export function SubjectDetailPage() {
               <div
                 key={topic._id}
                 data-testid={`topic-item-${topic._id}`}
-                className="group p-4 rounded-lg border border-app-border bg-app-surface hover:border-brand-500/40 hover:shadow-subtle transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+                className={`group p-4 rounded-lg border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                  topic.isActiveInSyllabus === false
+                    ? 'border-app-border/60 bg-app-surface-muted/20 opacity-80'
+                    : 'border-app-border bg-app-surface hover:border-brand-500/40 hover:shadow-subtle'
+                }`}
               >
                 <div className="flex items-start gap-3.5">
                   <div className="w-7 h-7 rounded bg-app-surface-muted border border-app-border flex items-center justify-center shrink-0 text-xs font-semibold text-app-text-secondary">
@@ -798,22 +810,28 @@ export function SubjectDetailPage() {
                       <h3 className="text-sm font-semibold text-app-text-primary">
                         {topic.title}
                       </h3>
-                      <Badge
-                        variant={
-                          topic.status === 'mastered'
-                            ? 'success'
+                      {topic.isActiveInSyllabus === false ? (
+                        <Badge variant="neutral" size="sm">
+                          Historical / Retired
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant={
+                            topic.status === 'mastered'
+                              ? 'success'
+                              : topic.status === 'in_progress'
+                              ? 'brand'
+                              : 'neutral'
+                          }
+                          size="sm"
+                        >
+                          {topic.status === 'not_started'
+                            ? 'Not Started'
                             : topic.status === 'in_progress'
-                            ? 'brand'
-                            : 'neutral'
-                        }
-                        size="sm"
-                      >
-                        {topic.status === 'not_started'
-                          ? 'Not Started'
-                          : topic.status === 'in_progress'
-                          ? 'In Progress'
-                          : 'Mastered'}
-                      </Badge>
+                            ? 'In Progress'
+                            : 'Mastered'}
+                        </Badge>
+                      )}
                     </div>
 
                     {topic.description && (

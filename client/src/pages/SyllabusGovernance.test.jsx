@@ -456,4 +456,78 @@ describe('Syllabus & Knowledge Governance Frontend Workflows (Phase 04.1)', () =
     // The off-topic warning banner must NOT exist
     expect(screen.queryByTestId('off-topic-banner')).toBeNull();
   });
+
+  it('6. Renders "Historical / Retired" badge for topics no longer in the active syllabus', async () => {
+    const mockSubject = {
+      _id: 'sub_js',
+      id: 'sub_js',
+      name: 'JavaScript',
+      syllabusStatus: 'approved',
+      topicsCount: 1,
+    };
+
+    const mockTopics = [
+      {
+        _id: 'top_1',
+        title: 'Variables',
+        status: 'mastered',
+        isActiveInSyllabus: true,
+      },
+      {
+        _id: 'top_2',
+        title: 'Promises',
+        status: 'in_progress',
+        isActiveInSyllabus: false,
+      },
+    ];
+
+    global.fetch = vi.fn((url) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('/syllabus')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({
+            success: true,
+            data: {
+              syllabusStatus: 'approved',
+              activeVersion: { version: 2, sections: [] },
+              latestDraft: null,
+              totalVersions: 2,
+            },
+          }),
+        });
+      }
+      if (urlStr.includes('/topics')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ success: true, topics: mockTopics }),
+        });
+      }
+      if (urlStr.includes('/subjects/sub_js')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ success: true, subject: mockSubject }),
+        });
+      }
+      return Promise.reject(new Error(`Unhandled url: ${urlStr}`));
+    });
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/subjects/:subjectId" element={<SubjectDetailPage />} />
+      </Routes>,
+      '/subjects/sub_js'
+    );
+
+    expect(await screen.findByText('Variables')).toBeDefined();
+    expect(screen.getByText('Promises')).toBeDefined();
+    expect(screen.getByText('Historical / Retired')).toBeDefined();
+    expect(screen.getByText(/1 Active Topic/)).toBeDefined();
+  });
 });
