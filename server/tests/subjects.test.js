@@ -224,6 +224,7 @@ describe('Subjects & Topics API (/api/v1/subjects, /api/v1/topics)', () => {
       return Array.from(topicsStore.values()).filter((t) => {
         if (query.subjectId && t.subjectId.toString() !== query.subjectId.toString()) return false;
         if (query.userId && t.userId.toString() !== query.userId.toString()) return false;
+        if (query.isActiveInSyllabus !== undefined && t.isActiveInSyllabus !== query.isActiveInSyllabus) return false;
         return true;
       }).length;
     });
@@ -552,6 +553,7 @@ describe('Subjects & Topics API (/api/v1/subjects, /api/v1/topics)', () => {
       expect(topic1.status).toBe(201);
       expect(topic1.body.data.topic.title).toBe('OSI Model');
       expect(topic1.body.data.topic.orderIndex).toBe(0);
+      expect(topic1.body.data.topic.isActiveInSyllabus).toBe(false);
       expect(topic1.body.data.topic.knowledgeState.keyConcepts).toEqual(['physical', 'transport', 'application']);
 
       const topic2 = await request(app)
@@ -561,10 +563,11 @@ describe('Subjects & Topics API (/api/v1/subjects, /api/v1/topics)', () => {
 
       expect(topic2.status).toBe(201);
       expect(topic2.body.data.topic.orderIndex).toBe(1);
+      expect(topic2.body.data.topic.isActiveInSyllabus).toBe(false);
 
-      // Subject count updated
+      // Subject count strictly reflects active syllabus topics (0 before syllabus approval)
       const subj = subjectsStore.get(subjectId);
-      expect(subj.topicsCount).toBe(2);
+      expect(subj.topicsCount).toBe(0);
     });
 
     it('rejects duplicate topic title within same subject', async () => {
@@ -605,14 +608,14 @@ describe('Subjects & Topics API (/api/v1/subjects, /api/v1/topics)', () => {
       expect(updateRes.body.data.topic.knowledgeState.summary).toContain('Dijkstra');
     });
 
-    it('deletes topic and decrements parent subject topic count', async () => {
+    it('deletes topic and maintains parent subject active topic count', async () => {
       const res = await request(app)
         .post(`/api/v1/subjects/${subjectId}/topics`)
         .set('Cookie', sessionCookieA)
         .send({ title: 'BGP' });
       const topicId = res.body.data.topic.id;
 
-      expect(subjectsStore.get(subjectId).topicsCount).toBe(1);
+      expect(subjectsStore.get(subjectId).topicsCount).toBe(0);
 
       const delRes = await request(app)
         .delete(`/api/v1/topics/${topicId}`)

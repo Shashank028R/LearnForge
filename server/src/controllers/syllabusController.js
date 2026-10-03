@@ -295,91 +295,92 @@ export async function approveSyllabusVersion(req, res, next) {
       });
     }
 
-    const now = new Date();
+    // Concurrency Hardening: Transition target version to approved while superseding others.
+    // The schema-level Partial Unique Index `{ subjectId: 1, status: 1 }` (status: 'approved')
+    // guarantees at the database storage engine layer that at most ONE approved version can exist.
+    const maxRetries = 3;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        // Mark previous approved versions as superseded
+        await SyllabusVersion.updateMany(
+          {
+            subjectId,
+            userId: req.user._id,
+            status: 'approved',
+            _id: { $ne: targetVersion._id },
+          },
+          {
+            $set: {
+              status: 'superseded',
+              supersededAt: new Date(),
+            },
+          }
+        );
 
-    // Mark previous approved version as superseded
-    await SyllabusVersion.updateMany(
-      {
-        subjectId,
-        userId: req.user._id,
-        status: 'approved',
-        _id: { $ne: targetVersion._id },
-      },
-      {
-        $set: {
-          status: 'superseded',
-          supersededAt: now,
-        },
+        // Update target version to approved
+        targetVersion.status = 'approved';
+        targetVersion.approvedAt = new Date();
+        targetVersion.supersededAt = null;
+        await targetVersion.save();
+        break;
+      } catch (err) {
+        if (err.code === 11000 && attempt < maxRetries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 30 * (attempt + 1)));
+          continue;
+        }
+        throw err;
       }
-    );
+    }
 
-    // Update target version to approved
-    targetVersion.status = 'approved';
-    targetVersion.approvedAt = now;
-    await targetVersion.save();
-
-    // Reconcile Canonical Topics
+    // Reconcile Canonical Topics using atomic database operations
     // Flatten topics from all sections in order
-    const activeSyllabusNormalizedTitles = new Set();
-    const flattenedTopics = [];
+    const activeSyllabusNormalizedTitles = [];
     let globalOrder = 0;
     for (const section of targetVersion.sections || []) {
       for (const topicItem of section.topics || []) {
         const normTitle = topicItem.title.trim().toLowerCase();
-        activeSyllabusNormalizedTitles.add(normTitle);
-        flattenedTopics.push({
-          title: topicItem.title.trim(),
-          normalizedTitle: normTitle,
-          description: topicItem.description ? topicItem.description.trim() : '',
-          orderIndex: globalOrder++,
-        });
-      }
-    }
-
-    // Find all existing topics for this subject
-    const existingTopics = await Topic.find({ subjectId, userId: req.user._id });
-    const existingByNormalized = new Map();
-    existingTopics.forEach((t) => existingByNormalized.set(t.normalizedTitle, t));
-
-    if (flattenedTopics.length > 0) {
-      for (const item of flattenedTopics) {
-        if (existingByNormalized.has(item.normalizedTitle)) {
-          // Stable identity preservation: update title, orderIndex, isActiveInSyllabus without recreating
-          const existing = existingByNormalized.get(item.normalizedTitle);
-          existing.title = item.title;
-          existing.orderIndex = item.orderIndex;
-          existing.isActiveInSyllabus = true; // Reactivate if was previously historical
-          if (item.description) {
-            existing.description = item.description;
-          }
-          await existing.save();
-        } else {
-          // Create new canonical topic as active
-          await Topic.create({
+        activeSyllabusNormalizedTitles.push(normTitle);
+        
+        // Atomic upsert/update: activates topic, preserves existing _id, knowledgeState, notesCount, chatsCount
+        await Topic.updateOne(
+          {
             subjectId,
             userId: req.user._id,
-            title: item.title,
-            normalizedTitle: item.normalizedTitle,
-            description: item.description,
-            orderIndex: item.orderIndex,
-            status: 'not_started',
-            isActiveInSyllabus: true,
-            knowledgeState: {},
-            notesCount: 0,
-            chatsCount: 0,
-          });
-        }
+            normalizedTitle: normTitle,
+          },
+          {
+            $set: {
+              title: topicItem.title.trim(),
+              orderIndex: globalOrder++,
+              isActiveInSyllabus: true,
+              ...(topicItem.description ? { description: topicItem.description.trim() } : {}),
+            },
+            $setOnInsert: {
+              status: 'not_started',
+              knowledgeState: { masteryScore: 0, keyConcepts: [], summary: '' },
+              notesCount: 0,
+              chatsCount: 0,
+            },
+          },
+          { upsert: true }
+        );
       }
     }
 
     // Mark existing topics NOT in the new syllabus as inactive/historical
     // Retains stable _id, knowledgeState, notesCount, chatsCount, description
-    for (const existing of existingTopics) {
-      if (!activeSyllabusNormalizedTitles.has(existing.normalizedTitle) && existing.isActiveInSyllabus !== false) {
-        existing.isActiveInSyllabus = false;
-        await existing.save();
+    await Topic.updateMany(
+      {
+        subjectId,
+        userId: req.user._id,
+        normalizedTitle: { $nin: activeSyllabusNormalizedTitles },
+      },
+      {
+        $set: {
+          isActiveInSyllabus: false,
+        },
       }
-    }
+    );
 
     // Reconcile subject topicsCount strictly to active syllabus topics
     const activeTopicsCount = await Topic.countDocuments({

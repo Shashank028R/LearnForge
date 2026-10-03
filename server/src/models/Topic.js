@@ -83,7 +83,7 @@ const topicSchema = new mongoose.Schema(
     },
     isActiveInSyllabus: {
       type: Boolean,
-      default: true,
+      default: false,
       index: true,
     },
   },

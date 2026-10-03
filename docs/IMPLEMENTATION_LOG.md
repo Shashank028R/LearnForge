@@ -13,19 +13,19 @@ This log is the permanent chronological engineering journal for the LearnForge p
 ### Work Performed
 1. **Architectural Foundations & ADR-013**:
    - Codified distinct semantic boundaries across 7 layers: raw conversation evidence, draft syllabus, approved canonical syllabus, topic-related knowledge candidates, canonical topic knowledge, off-topic conversations, and user annotations.
-   - Enforced non-blocking subject creation: subjects begin in `no_syllabus` state without requiring an approved syllabus.
+   - Enforced non-blocking subject creation: subjects begin in `no_syllabus` state with `topicsCount = 0` without requiring an approved syllabus.
    - Adopted multi-version immutable syllabus history (`SyllabusVersion`) with drafts, explicit approval, and superseded state tracking.
-   - Established single active approved version invariant: approving a syllabus version marks prior approved versions as `superseded`.
+   - **Single Active Approved Invariant**: Structurally guaranteed at the MongoDB storage engine level via a Partial Unique Index `{ subjectId: 1, status: 1 }` (`unique: true, partialFilterExpression: { status: 'approved' }`). Approving a syllabus version transitions prior approved versions to `superseded` and resolves race collisions via a collision retry loop.
 2. **Domain Persistence & Models**:
-   - `server/src/models/SyllabusVersion.js`: `subjectId`, `userId`, `version`, `status` (`draft` | `approved` | `superseded`), `sections` (with nested `topics`), `source`, `changeSummary`, `approvedAt`, `supersededAt`. Compound unique index `{ subjectId: 1, version: 1 }`.
+   - `server/src/models/SyllabusVersion.js`: `subjectId`, `userId`, `version`, `status` (`draft` | `approved` | `superseded`), `sections` (with nested `topics`), `source`, `changeSummary`, `approvedAt`, `supersededAt`. Partial unique index `{ subjectId: 1, status: 1 }` (`status: 'approved'`) and compound unique index `{ subjectId: 1, version: 1 }`.
    - `server/src/models/Annotation.js`: `userId`, `chatId`, `messageId`, `type` (`comment` | `tag`), `content`. Indexed on `{ userId: 1, chatId: 1, messageId: 1 }`.
-   - `server/src/models/Topic.js`: Added `isActiveInSyllabus` (default: `true`, indexed) for active vs historical curriculum membership.
+   - `server/src/models/Topic.js`: Added `isActiveInSyllabus` (default: `false`, indexed) for active vs historical curriculum membership.
    - Updated `Subject.js`: Added `syllabusStatus` (`no_syllabus` | `draft` | `approved`) and `activeSyllabusVersionId`.
    - Updated `Message.js`: Added `knowledgeContext` schema fields (`relevance`, `subjectId`, `topicId`, `disposition`).
 3. **REST APIs, Topic Lifecycle & Cascade Cleanup**:
    - `server/src/controllers/syllabusController.js`: `getSyllabusStatus`, `listSyllabusVersions`, `createSyllabusDraft`, `getSyllabusVersion`, `updateSyllabusDraft`, `approveSyllabusVersion`.
    - **Active vs. Historical Topic Reconciliation**: `approveSyllabusVersion` reconciles canonical topics by normalized title, marking active syllabus topics with `isActiveInSyllabus: true`, preserving stable `_id`s, descriptions, `notesCount`, `chatsCount`, and `knowledgeState`. Topics omitted in the newly approved version are preserved as historical (`isActiveInSyllabus: false`) rather than deleted. Topics re-added in future versions are reactivated (`isActiveInSyllabus: true`).
-   - **Subject Topics Count Contract**: `Subject.topicsCount` strictly maintains the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`).
+   - **Subject Topics Count Contract**: `Subject.topicsCount` strictly maintains the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`). Manually created topics before syllabus approval default to `isActiveInSyllabus: false` and `Subject.topicsCount` remains `0` until an approved syllabus governs them.
    - **Full Cascading Deletions**: Subject deletion purges all linked `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` documents. Chat and Topic deletions cascade removal of linked annotations.
    - `server/src/controllers/annotationController.js`: Full CRUD for user-authored comments and tags.
    - `server/src/routes/syllabus.js` & `server/src/routes/annotations.js`: Protected with `requireDatabase` and `authenticateUser`.
@@ -35,12 +35,11 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - `client/src/pages/ChatsPage.jsx`: Rendered off-topic warning alerts strictly from backend `knowledgeContext.relevance === 'off_topic'` (zero client heuristics) and integrated inline comment/tag annotations.
    - `client/src/api/syllabusApi.js` & `client/src/api/annotationsApi.js`: Frontend API clients.
 5. **Testing & Live Verification**:
-   - 14 automated backend tests across `syllabus.test.js` and `annotations.test.js` (server total: 109 tests passing 100%).
+   - 17 automated backend tests across `syllabus.test.js` and `annotations.test.js` including genuine concurrent approval tests (server total: 112 tests passing 100%).
    - 6 automated frontend tests in `SyllabusGovernance.test.jsx` (client total: 46 tests passing 100%).
-   - Total Monorepo Tests: 155 automated tests passing.
+   - Total Monorepo Tests: 158 automated tests passing.
    - Clean Vite production build.
-   - Live integration script `verify_phase04_1_live.js` fully exercising real Express HTTP APIs (`http://localhost:5000`) and verifying all Atlas database invariants across 10 stages.
-   - Browser verification confirming smooth modal typing and complete syllabus governance flow.
+   - Live integration script `verify_phase04_1_live.js` fully exercising real Express HTTP APIs (`http://localhost:5000`) and verifying all Atlas database invariants across pre-syllabus topics, drafts, approvals, revisions, topic retirement/reactivation, concurrent approvals, and cascading deletions.
 
 ---
 

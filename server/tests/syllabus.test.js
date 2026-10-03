@@ -103,9 +103,14 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
       const id = new mongoose.Types.ObjectId();
       const newTopic = {
         _id: id,
+        isActiveInSyllabus: doc.isActiveInSyllabus !== undefined ? doc.isActiveInSyllabus : false,
         ...doc,
         createdAt: new Date(),
         updatedAt: new Date(),
+        save: async function () {
+          topicsStore.set(id.toString(), { ...newTopic, ...this });
+          return this;
+        },
       };
       topicsStore.set(id.toString(), newTopic);
       return newTopic;
@@ -116,9 +121,59 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
       for (const t of topicsStore.values()) {
         const subMatch = !query.subjectId || t.subjectId.toString() === query.subjectId.toString();
         const userMatch = !query.userId || t.userId.toString() === query.userId.toString();
-        if (subMatch && userMatch) count++;
+        const activeMatch = query.isActiveInSyllabus === undefined || t.isActiveInSyllabus === query.isActiveInSyllabus;
+        if (subMatch && userMatch && activeMatch) count++;
       }
       return count;
+    });
+
+    vi.spyOn(Topic, 'updateOne').mockImplementation(async (filter, update, options) => {
+      let found = null;
+      for (const t of topicsStore.values()) {
+        const subMatch = !filter.subjectId || t.subjectId.toString() === filter.subjectId.toString();
+        const userMatch = !filter.userId || t.userId.toString() === filter.userId.toString();
+        const normMatch = !filter.normalizedTitle || t.normalizedTitle === filter.normalizedTitle;
+        if (subMatch && userMatch && normMatch) {
+          found = t;
+          break;
+        }
+      }
+      if (found) {
+        if (update.$set) Object.assign(found, update.$set);
+        topicsStore.set(found._id.toString(), found);
+        return { matchedCount: 1, modifiedCount: 1, upsertedCount: 0 };
+      }
+      if (options?.upsert) {
+        const id = new mongoose.Types.ObjectId();
+        const newTopic = {
+          _id: id,
+          subjectId: filter.subjectId,
+          userId: filter.userId,
+          normalizedTitle: filter.normalizedTitle,
+          ...(update.$setOnInsert || {}),
+          ...(update.$set || {}),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        topicsStore.set(id.toString(), newTopic);
+        return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1, upsertedId: id };
+      }
+      return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
+    });
+
+    vi.spyOn(Topic, 'updateMany').mockImplementation(async (filter, update) => {
+      let modified = 0;
+      for (const t of topicsStore.values()) {
+        const subMatch = !filter.subjectId || t.subjectId.toString() === filter.subjectId.toString();
+        const userMatch = !filter.userId || t.userId.toString() === filter.userId.toString();
+        const ninMatch = !filter.normalizedTitle?.$nin || !filter.normalizedTitle.$nin.includes(t.normalizedTitle);
+        if (subMatch && userMatch && ninMatch) {
+          if (update.$set) Object.assign(t, update.$set);
+          topicsStore.set(t._id.toString(), t);
+          modified++;
+        }
+      }
+      return { modifiedCount: modified };
     });
 
     // Mock SyllabusVersion
@@ -761,5 +816,145 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
 
     expect(delRes.status).toBe(200);
     expect(syllabusStore.size).toBe(0);
+  });
+
+  it('10. Handles concurrent approval attempts and guarantees exactly ONE approved version with all others superseded', async () => {
+    // 1. Create 3 distinct draft versions for Subject A
+    const v1Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Draft Version 1',
+        sections: [{ title: 'Section 1', topics: [{ title: 'Topic 1' }] }],
+      });
+    const v1Id = v1Res.body.data._id;
+
+    const v2Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Draft Version 2',
+        sections: [{ title: 'Section 2', topics: [{ title: 'Topic 2' }] }],
+      });
+    const v2Id = v2Res.body.data._id;
+
+    const v3Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Draft Version 3',
+        sections: [{ title: 'Section 3', topics: [{ title: 'Topic 3' }] }],
+      });
+    const v3Id = v3Res.body.data._id;
+
+    expect(syllabusStore.size).toBe(3);
+
+    // 2. Issue concurrent approval requests
+    const [res1, res2, res3] = await Promise.all([
+      request(app).post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v1Id}/approve`).set('Cookie', sessionCookieA),
+      request(app).post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v2Id}/approve`).set('Cookie', sessionCookieA),
+      request(app).post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v3Id}/approve`).set('Cookie', sessionCookieA),
+    ]);
+
+    // All approval requests must return 200
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(res3.status).toBe(200);
+
+    // 3. Invariant: Exactly ONE version is status="approved", all other versions are "superseded"
+    const allVersions = Array.from(syllabusStore.values()).filter(
+      (sv) => sv.subjectId.toString() === subjectA._id.toString()
+    );
+    const approvedVersions = allVersions.filter((sv) => sv.status === 'approved');
+    const supersededVersions = allVersions.filter((sv) => sv.status === 'superseded');
+
+    expect(approvedVersions.length).toBe(1);
+    expect(supersededVersions.length).toBe(2);
+
+    // 4. Invariant: Subject activeSyllabusVersionId matches the single approved version ID
+    const subjectDoc = subjectsStore.get(subjectA._id.toString());
+    expect(subjectDoc.activeSyllabusVersionId.toString()).toBe(approvedVersions[0]._id.toString());
+    expect(subjectDoc.syllabusStatus).toBe('approved');
+  });
+
+  it('11. Enforces Subject.topicsCount contract: manual topic before approval has isActiveInSyllabus=false and topicsCount=0 until syllabus approval', async () => {
+    // 1. Fresh subject starts with no syllabus and topicsCount = 0
+    const subjectDoc = subjectsStore.get(subjectA._id.toString());
+    expect(subjectDoc.topicsCount).toBe(0);
+
+    // 2. Manually create a Topic via API
+    vi.spyOn(Topic, 'findOne').mockImplementation((query) => {
+      const findMatching = () => {
+        for (const t of topicsStore.values()) {
+          const subMatch = !query.subjectId || t.subjectId.toString() === query.subjectId.toString();
+          const normMatch = !query.normalizedTitle || t.normalizedTitle === query.normalizedTitle;
+          if (subMatch && normMatch) {
+            return {
+              ...t,
+              save: async function () {
+                topicsStore.set(t._id.toString(), { ...t, ...this });
+                return this;
+              },
+            };
+          }
+        }
+        return null;
+      };
+
+      return {
+        sort: (sortObj) => {
+          if (sortObj?.orderIndex === -1) {
+            const list = Array.from(topicsStore.values())
+              .filter((t) => !query.subjectId || t.subjectId.toString() === query.subjectId.toString())
+              .sort((a, b) => b.orderIndex - a.orderIndex);
+            return Promise.resolve(list[0] || null);
+          }
+          return Promise.resolve(findMatching());
+        },
+        then: (resolve) => resolve(findMatching()),
+      };
+    });
+
+    const topicRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/topics`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Manual Topic Alpha',
+        description: 'Created before syllabus exists',
+      });
+
+    expect(topicRes.status).toBe(201);
+    expect(topicRes.body.data.topic.isActiveInSyllabus).toBe(false);
+
+    // Verify Subject.topicsCount remains 0 (because there is no approved syllabus activating it)
+    expect(subjectDoc.topicsCount).toBe(0);
+
+    // 3. Create draft syllabus (draft does NOT activate topics)
+    const draftRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Curriculum Draft',
+        sections: [{ title: 'Section 1', topics: [{ title: 'Manual Topic Alpha', description: 'Governed' }] }],
+      });
+    const draftId = draftRes.body.data._id;
+
+    const topicBeforeApprove = Array.from(topicsStore.values()).find((t) => t.title === 'Manual Topic Alpha');
+    expect(topicBeforeApprove.isActiveInSyllabus).toBe(false);
+    expect(subjectDoc.topicsCount).toBe(0);
+
+    // 4. Approve syllabus -> Topic becomes isActiveInSyllabus=true, and topicsCount becomes 1
+    const approveRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${draftId}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    expect(approveRes.status).toBe(200);
+
+    const topicAfterApprove = topicsStore.get(topicBeforeApprove._id.toString());
+    expect(topicAfterApprove.isActiveInSyllabus).toBe(true);
+    expect(topicAfterApprove.description).toBe('Governed');
+
+    const subjectAfterApprove = subjectsStore.get(subjectA._id.toString());
+    expect(subjectAfterApprove.topicsCount).toBe(1);
   });
 });

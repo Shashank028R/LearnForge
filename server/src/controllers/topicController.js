@@ -245,6 +245,7 @@ export async function createTopic(req, res, next) {
       description: description.trim(),
       orderIndex: targetOrderIndex,
       status,
+      isActiveInSyllabus: false,
       knowledgeState: {
         masteryScore: 0,
         keyConcepts: sanitizedConcepts,
@@ -253,9 +254,16 @@ export async function createTopic(req, res, next) {
       },
     });
 
-    // Increment subject topic count
-    subject.topicsCount = (subject.topicsCount || 0) + 1;
-    await subject.save();
+    // Reconcile Subject.topicsCount to strictly reflect active syllabus topics count
+    const activeCount = await Topic.countDocuments({
+      subjectId: subject._id,
+      userId: req.user._id,
+      isActiveInSyllabus: true,
+    });
+    if (subject.topicsCount !== activeCount) {
+      subject.topicsCount = activeCount;
+      await subject.save();
+    }
 
     return res.status(201).json({
       success: true,
@@ -577,13 +585,16 @@ export async function deleteTopic(req, res, next) {
 
     await Topic.deleteOne({ _id: topic._id });
 
-    // Decrement topic counter on parent subject if topic was active in syllabus
-    if (topic.isActiveInSyllabus !== false) {
-      await Subject.updateOne(
-        { _id: subjectId, userId: req.user._id, topicsCount: { $gt: 0 } },
-        { $inc: { topicsCount: -1 } }
-      );
-    }
+    // Reconcile topicsCount on parent subject to strictly reflect active syllabus topics count
+    const activeCount = await Topic.countDocuments({
+      subjectId: subjectId,
+      userId: req.user._id,
+      isActiveInSyllabus: true,
+    });
+    await Subject.updateOne(
+      { _id: subjectId, userId: req.user._id },
+      { $set: { topicsCount: activeCount } }
+    );
 
     return res.status(200).json({
       success: true,

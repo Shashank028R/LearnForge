@@ -76,10 +76,10 @@
 
 ---
 
-## 5. Upcoming Work (Phase 03 — Subjects, Topics & Knowledge Structure)
-- Design and implement Subjects & Topics schema and knowledge hierarchies.
-- Curriculum modules and topic taxonomy modeling.
-- CRUD operations and subject workspace interaction.
+## 5. Upcoming Work (Phase 05 — AI Gateway, Model Routing & Pedagogical Engine)
+- AI Gateway architecture with provider adapters (Gemini, OpenAI, Anthropic).
+- Task-based model routing and latency/cost optimization.
+- Socratic dialog prompts and off-topic guardrails.
 
 ---
 
@@ -95,6 +95,9 @@
 - **ADR-008**: Documentation as an immutable build requirement.
 - **ADR-009**: Self-Managed Native MongoDB Session Architecture for authentication.
 - **ADR-010**: Deterministic Account Linking Policy for Google OAuth and Email OTP.
+- **ADR-011**: Subject-Topic Knowledge Structure and Mastery Level Contract.
+- **ADR-012**: Chat and Message Infrastructure with Sequential Ordering.
+- **ADR-013**: Syllabus and Knowledge Governance Foundation.
 
 ---
 

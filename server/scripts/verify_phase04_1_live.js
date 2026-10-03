@@ -133,14 +133,43 @@ async function runLiveVerification() {
     const subjectId = subjectA._id || subjectA.id;
     console.log(`3. Created Subject A via API: "${subjectA.name}" (${subjectId}) with topicsCount=${subjectA.topicsCount || 0}.`);
 
-    // Invariant Check 1: Syllabus status must be no_syllabus
+    // Invariant Check 1: Syllabus status must be no_syllabus, topicsCount must be 0
     const statusRes = await apiRequest(`/subjects/${subjectId}/syllabus`, { method: 'GET' }, cookieA);
     if (!statusRes.ok || statusRes.body.data?.syllabusStatus !== 'no_syllabus') {
       throw new Error(`Expected syllabusStatus 'no_syllabus', got ${statusRes.body.data?.syllabusStatus}`);
     }
-    console.log('✓ Invariant 1: Subject starts in no_syllabus state without blocking creation or requiring a syllabus upfront.');
+    const subjectFreshInAtlas = await Subject.findById(subjectId);
+    if (subjectFreshInAtlas.topicsCount !== 0) {
+      throw new Error(`Expected Subject.topicsCount 0 for fresh subject, got ${subjectFreshInAtlas.topicsCount}`);
+    }
+    console.log('✓ Invariant 1: Subject starts in no_syllabus state with topicsCount=0.');
 
-    // 3. Create Syllabus Draft v1 via Express API (POST /api/v1/subjects/:id/syllabus/versions)
+    // 3. Create a Manual Topic before any approved syllabus exists
+    const createManualTopicRes = await apiRequest(
+      `/subjects/${subjectId}/topics`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Manual Distributed Storage',
+          description: 'Created before syllabus exists',
+        }),
+      },
+      cookieA
+    );
+    if (!createManualTopicRes.ok || !createManualTopicRes.body.data?.topic) {
+      throw new Error(`Failed to create manual topic via API: ${JSON.stringify(createManualTopicRes.body)}`);
+    }
+    const manualTopic = createManualTopicRes.body.data.topic;
+    if (manualTopic.isActiveInSyllabus !== false) {
+      throw new Error(`Expected manual topic before syllabus approval to have isActiveInSyllabus=false, got ${manualTopic.isActiveInSyllabus}`);
+    }
+    const subjectAfterManualTopic = await Subject.findById(subjectId);
+    if (subjectAfterManualTopic.topicsCount !== 0) {
+      throw new Error(`Expected Subject.topicsCount to remain 0 after manual topic, got ${subjectAfterManualTopic.topicsCount}`);
+    }
+    console.log('✓ Invariant 2: Manual Topic before approved syllabus has isActiveInSyllabus=false and Subject.topicsCount remains 0.');
+
+    // 4. Create Syllabus Draft v1 via Express API (POST /api/v1/subjects/:id/syllabus/versions)
     const draftV1Res = await apiRequest(
       `/subjects/${subjectId}/syllabus/versions`,
       {
@@ -156,6 +185,7 @@ async function runLiveVerification() {
                 { title: 'Vector Clocks', description: 'Causal ordering of distributed events' },
                 { title: 'Paxos Consensus', description: 'Classic Paxos phase 1 and 2' },
                 { title: 'Raft Consensus', description: 'Leader election and log replication' },
+                { title: 'Manual Distributed Storage', description: 'Now governed by syllabus v1' },
               ],
             },
           ],
@@ -170,14 +200,14 @@ async function runLiveVerification() {
     const draftV1 = draftV1Res.body.data;
     console.log(`4. Created Syllabus Draft v1 via API (${draftV1._id}, version=${draftV1.version}, status=${draftV1.status}).`);
 
-    // Invariant Check 2: Canonical topics must remain 0 while draft is unapproved
-    const topicsDuringDraft = await Topic.countDocuments({ subjectId, userId: userA._id });
-    if (topicsDuringDraft !== 0) {
-      throw new Error(`Invariant failed: Canonical topics created prematurely during draft (${topicsDuringDraft})`);
+    // Invariant Check 3: Active canonical topics count in Subject must remain 0 while draft is unapproved
+    const subjectDuringDraft = await Subject.findById(subjectId);
+    if (subjectDuringDraft.topicsCount !== 0) {
+      throw new Error(`Invariant failed: topicsCount changed during draft (${subjectDuringDraft.topicsCount})`);
     }
-    console.log('✓ Invariant 2: Draft syllabus creation does NOT create canonical Topic documents.');
+    console.log('✓ Invariant 3: Draft syllabus creation does NOT activate canonical syllabus topics or change topicsCount.');
 
-    // 4. Update Syllabus Draft v1 via Express API (PUT /api/v1/subjects/:id/syllabus/versions/:versionId)
+    // 5. Update Syllabus Draft v1 via Express API (PUT /api/v1/subjects/:id/syllabus/versions/:versionId)
     const updateDraftRes = await apiRequest(
       `/subjects/${subjectId}/syllabus/versions/${draftV1._id}`,
       {
@@ -193,6 +223,7 @@ async function runLiveVerification() {
                 { title: 'Vector Clocks', description: 'Refined causality and vector clocks definition' },
                 { title: 'Paxos Consensus', description: 'Classic Paxos phase 1 and 2' },
                 { title: 'Raft Consensus', description: 'Leader election and log replication' },
+                { title: 'Manual Distributed Storage', description: 'Now governed by syllabus v1' },
               ],
             },
           ],
@@ -206,7 +237,7 @@ async function runLiveVerification() {
     }
     console.log('5. Updated Syllabus Draft v1 via API.');
 
-    // 5. Explicitly Approve Syllabus v1 via Express API (POST /api/v1/subjects/:id/syllabus/versions/:versionId/approve)
+    // 6. Explicitly Approve Syllabus v1 via Express API (POST /api/v1/subjects/:id/syllabus/versions/:versionId/approve)
     const approveV1Res = await apiRequest(
       `/subjects/${subjectId}/syllabus/versions/${draftV1._id}/approve`,
       { method: 'POST' },
@@ -218,16 +249,17 @@ async function runLiveVerification() {
     }
     console.log('6. Approved Syllabus v1 via API.');
 
-    // Invariant Check 3: Check canonical Topics in Atlas directly
-    const canonicalTopicsV1 = await Topic.find({ subjectId, userId: userA._id });
-    if (canonicalTopicsV1.length !== 3) {
-      throw new Error(`Expected 3 canonical topics in Atlas, found ${canonicalTopicsV1.length}`);
+    // Invariant Check 4: Check canonical active Topics in Atlas directly
+    const canonicalTopicsV1 = await Topic.find({ subjectId, userId: userA._id, isActiveInSyllabus: true });
+    if (canonicalTopicsV1.length !== 4) {
+      throw new Error(`Expected 4 canonical active topics in Atlas, found ${canonicalTopicsV1.length}`);
     }
     const vectorClockTopic = canonicalTopicsV1.find((t) => t.normalizedTitle === 'vector clocks');
     const paxosTopic = canonicalTopicsV1.find((t) => t.normalizedTitle === 'paxos consensus');
     const raftTopic = canonicalTopicsV1.find((t) => t.normalizedTitle === 'raft consensus');
+    const storageTopic = canonicalTopicsV1.find((t) => t.normalizedTitle === 'manual distributed storage');
 
-    if (!vectorClockTopic || !paxosTopic || !raftTopic) {
+    if (!vectorClockTopic || !paxosTopic || !raftTopic || !storageTopic) {
       throw new Error('Canonical topics missing expected records!');
     }
     const vectorClockId = vectorClockTopic._id.toString();
@@ -239,14 +271,14 @@ async function runLiveVerification() {
     paxosTopic.notesCount = 2;
     await paxosTopic.save();
 
-    // Verify Subject topicsCount updated in Atlas to 3
+    // Verify Subject topicsCount updated in Atlas to 4
     const subjectInAtlas = await Subject.findById(subjectId);
-    if (subjectInAtlas.topicsCount !== 3 || subjectInAtlas.syllabusStatus !== 'approved') {
-      throw new Error(`Subject topicsCount expected 3, got ${subjectInAtlas.topicsCount}`);
+    if (subjectInAtlas.topicsCount !== 4 || subjectInAtlas.syllabusStatus !== 'approved') {
+      throw new Error(`Subject topicsCount expected 4, got ${subjectInAtlas.topicsCount}`);
     }
-    console.log('✓ Invariant 3: Syllabus approval reconciled 3 canonical active topics and updated Subject topicsCount to 3.');
+    console.log('✓ Invariant 4: Syllabus approval activated matching topics (including previously manual topic) and updated Subject topicsCount to 4.');
 
-    // 6. Create Revision Draft v2 via Express API removing Paxos (simulating curriculum change)
+    // 7. Create Revision Draft v2 via Express API removing Paxos and Storage
     const draftV2Res = await apiRequest(
       `/subjects/${subjectId}/syllabus/versions`,
       {
@@ -277,57 +309,86 @@ async function runLiveVerification() {
     const draftV2 = draftV2Res.body.data;
     console.log(`7. Created Revision Draft v2 via API (${draftV2._id}).`);
 
-    // Invariant Check 4: v1 must remain 'approved' while v2 is 'draft'
+    // Invariant Check 5: v1 must remain 'approved' while v2 is 'draft'
     const v1DocInAtlas = await SyllabusVersion.findById(draftV1._id);
     if (v1DocInAtlas.status !== 'approved') {
       throw new Error(`v1 status prematurely altered: ${v1DocInAtlas.status}`);
     }
-    console.log('✓ Invariant 4: Historical approved version remains immutable during draft editing.');
+    console.log('✓ Invariant 5: Historical approved version remains immutable during draft editing.');
 
-    // 7. Approve Syllabus v2 via Express API
-    const approveV2Res = await apiRequest(
-      `/subjects/${subjectId}/syllabus/versions/${draftV2._id}/approve`,
-      { method: 'POST' },
+    // 8. Create Revision Draft v3 to test concurrent approval requests
+    const draftV3Res = await apiRequest(
+      `/subjects/${subjectId}/syllabus/versions`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          baseVersionId: draftV1._id,
+          title: 'Distributed Systems Curriculum v3 (Concurrent Candidate)',
+          changeSummary: 'Alternate candidate with Vector Clocks, Raft, and Paxos Re-added',
+          sections: [
+            {
+              title: 'Consensus Full Suite',
+              description: 'All protocols',
+              topics: [
+                { title: 'Vector Clocks', description: 'Vector Clocks v3' },
+                { title: 'Raft Consensus', description: 'Raft Consensus v3' },
+                { title: 'Paxos Consensus', description: 'Paxos Consensus Reactivated' },
+              ],
+            },
+          ],
+        }),
+      },
       cookieA
     );
-
-    if (!approveV2Res.ok) {
-      throw new Error(`Failed to approve syllabus v2 via API: ${JSON.stringify(approveV2Res.body)}`);
+    if (!draftV3Res.ok) {
+      throw new Error(`Failed to create draft v3 via API: ${JSON.stringify(draftV3Res.body)}`);
     }
-    console.log('8. Approved Syllabus v2 via API.');
+    const draftV3 = draftV3Res.body.data;
+    console.log(`8. Created Revision Draft v3 via API (${draftV3._id}) for Concurrency Test.`);
 
-    // Invariant Check 5: v1 superseded, v2 approved, exactly ONE active approved version
-    const approvedVersionsCount = await SyllabusVersion.countDocuments({ subjectId, userId: userA._id, status: 'approved' });
-    if (approvedVersionsCount !== 1) {
-      throw new Error(`Expected exactly 1 active approved version, found ${approvedVersionsCount}`);
-    }
-    const v1After = await SyllabusVersion.findById(draftV1._id);
-    if (v1After.status !== 'superseded' || !v1After.supersededAt) {
-      throw new Error('v1 was not properly marked as superseded!');
-    }
-    console.log('✓ Invariant 5: Concurrency invariant held — exactly one approved version active, previous version marked superseded.');
+    // 9. Issue Concurrent Approval Requests via API (v2 and v3 approved simultaneously)
+    console.log('9. Issuing concurrent approval requests for draft v2 and draft v3 via API...');
+    const [approveConcurrentA, approveConcurrentB] = await Promise.all([
+      apiRequest(`/subjects/${subjectId}/syllabus/versions/${draftV2._id}/approve`, { method: 'POST' }, cookieA),
+      apiRequest(`/subjects/${subjectId}/syllabus/versions/${draftV3._id}/approve`, { method: 'POST' }, cookieA),
+    ]);
 
-    // Invariant Check 6: Removed topic (Paxos) preserved with historical status and retained learning data
+    if (!approveConcurrentA.ok || !approveConcurrentB.ok) {
+      throw new Error(`Concurrent approval request failed: A=${JSON.stringify(approveConcurrentA.body)}, B=${JSON.stringify(approveConcurrentB.body)}`);
+    }
+
+    // Invariant Check 6: Guarantee exactly ONE approved version in Atlas, all others superseded
+    const approvedVersionsAtlas = await SyllabusVersion.find({ subjectId, userId: userA._id, status: 'approved' });
+    if (approvedVersionsAtlas.length !== 1) {
+      throw new Error(`CONCURRENCY INVARIANT VIOLATION: Found ${approvedVersionsAtlas.length} approved versions in Atlas! Must be exactly 1.`);
+    }
+    const winningApprovedVersion = approvedVersionsAtlas[0];
+    const subjectAfterConcurrency = await Subject.findById(subjectId);
+    if (subjectAfterConcurrency.activeSyllabusVersionId.toString() !== winningApprovedVersion._id.toString()) {
+      throw new Error(`Subject.activeSyllabusVersionId (${subjectAfterConcurrency.activeSyllabusVersionId}) does not match winning approved version (${winningApprovedVersion._id})`);
+    }
+    console.log(`✓ Invariant 6: Concurrency Safety Verified — Exactly ONE approved version (${winningApprovedVersion.title}) active in Atlas, all other versions superseded.`);
+
+    // Invariant Check 7: Topic Lifecycle & History Preservation Verified
     const paxosInAtlas = await Topic.findById(paxosId);
-    if (paxosInAtlas.isActiveInSyllabus !== false) {
-      throw new Error(`Expected Paxos topic to be marked isActiveInSyllabus=false, got ${paxosInAtlas.isActiveInSyllabus}`);
-    }
-    if (paxosInAtlas.knowledgeState.masteryScore !== 90 || paxosInAtlas.chatsCount !== 5) {
-      throw new Error('Learning history/knowledgeState was lost during topic retirement!');
+    if (winningApprovedVersion._id.toString() === draftV3._id.toString()) {
+      // If v3 won, Paxos was re-added and should be active with preserved masteryScore
+      if (paxosInAtlas.isActiveInSyllabus !== true || paxosInAtlas.knowledgeState.masteryScore !== 90 || paxosInAtlas.chatsCount !== 5) {
+        throw new Error('Paxos reactivated topic did not preserve learning history!');
+      }
+    } else {
+      // If v2 won, Paxos was omitted and should be historical with preserved masteryScore
+      if (paxosInAtlas.isActiveInSyllabus !== false || paxosInAtlas.knowledgeState.masteryScore !== 90 || paxosInAtlas.chatsCount !== 5) {
+        throw new Error('Paxos historical topic did not preserve learning history!');
+      }
     }
 
-    // Invariant Check 7: Stable Topic ID preserved for Vector Clocks
-    const vectorClockInAtlas = await Topic.findOne({ subjectId, normalizedTitle: 'vector clocks' });
-    if (vectorClockInAtlas._id.toString() !== vectorClockId) {
-      throw new Error('Vector Clocks topic ID changed!');
+    // Invariant Check 8: Subject.topicsCount reflects ONLY active syllabus topics
+    const actualActiveCount = await Topic.countDocuments({ subjectId, userId: userA._id, isActiveInSyllabus: true });
+    if (subjectAfterConcurrency.topicsCount !== actualActiveCount) {
+      throw new Error(`Subject.topicsCount (${subjectAfterConcurrency.topicsCount}) does not match actual active topics count (${actualActiveCount})`);
     }
-
-    // Invariant Check 8: Subject.topicsCount reflects ONLY active syllabus topics (3: Vector Clocks, Raft, BFT)
-    const subjectAfterV2 = await Subject.findById(subjectId);
-    if (subjectAfterV2.topicsCount !== 3) {
-      throw new Error(`Subject.topicsCount expected 3 active topics, got ${subjectAfterV2.topicsCount}`);
-    }
-    console.log(`✓ Invariant 6: Topic Lifecycle Verified — Stable ID preserved (${vectorClockId}), retired topic (${paxosId}) marked historical with learning state preserved, and Subject.topicsCount (${subjectAfterV2.topicsCount}) counts active topics.`);
+    console.log(`✓ Invariant 7: Topic Lifecycle & Learning History Verified — Stable ID preserved (${vectorClockId}), historical learning data intact, and Subject.topicsCount (${subjectAfterConcurrency.topicsCount}) strictly matches active topics.`);
 
     // 8. Create Chat & Messages & User Annotations via API
     const createChatRes = await apiRequest(

@@ -32,12 +32,13 @@ We needed a strict semantic separation between:
      - Topics present in the approved syllabus are marked active (`isActiveInSyllabus: true`).
      - Existing topics matching by normalized title preserve their stable `_id`, `description`, `knowledgeState`, `notesCount`, and `chatsCount`.
      - Topics omitted from a newly approved syllabus are **not deleted**; they are marked historical (`isActiveInSyllabus: false`) to preserve all learning history, notes, and conversation evidence.
-     - Topics re-introduced in subsequent revisions are reactivated (`isActiveInSyllabus: true`) with their preserved historical learning context intact.
-   - **Single Active Approved Version Invariant**:
+   - **Single Active Approved Version Invariant & Structural Concurrency Safety**:
      - Exactly one approved syllabus version exists per subject at any given time.
-     - Approving a new version marks all prior approved versions for that subject as `superseded` (`supersededAt: now`).
+     - Structurally enforced at the storage engine level by a MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` (`unique: true, partialFilterExpression: { status: 'approved' }`).
+     - Approving a new version marks all prior approved versions for that subject as `superseded` (`supersededAt: now`). Concurrent approval attempts race against the unique index constraint and are safely retried and reconciled.
    - **Subject Topics Count Contract**:
      - `Subject.topicsCount` strictly reflects the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`), preventing historical topics from skewing curriculum metrics.
+     - Newly manually created topics before syllabus approval default to `isActiveInSyllabus: false` and `Subject.topicsCount` remains 0 until governed by an approved syllabus.
 
 4. **Off-Topic Classification Contract:**
    - Assistant message metadata includes `knowledgeContext: { relevance: 'unclassified'|'on_topic'|'off_topic'|'uncertain', disposition: 'unclassified'|'candidate'|'excluded'|'promoted' }`.

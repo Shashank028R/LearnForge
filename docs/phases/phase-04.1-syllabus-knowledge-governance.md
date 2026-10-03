@@ -43,10 +43,12 @@ Phase 04.1 establishes the durable product, data model, and user experience foun
 - `DELETE /api/v1/annotations/:annotationId` — Deletes annotation.
 
 ## Topic Lifecycle & History Governance
+- **Pre-Syllabus Manual Topics**: Newly created manual topics before an approved syllabus exists default to `isActiveInSyllabus: false`. They allow free-form chat and notes attachment, but `Subject.topicsCount` strictly reflects `0` active syllabus topics until governed by an approved syllabus.
 - **Active Topics**: Topics explicitly declared in the latest approved syllabus version are flagged `isActiveInSyllabus: true` and are eligible for Study Mode and active assessment.
 - **Historical / Retired Topics**: Topics present in prior syllabus versions but omitted in the latest approved version are preserved with `isActiveInSyllabus: false`. Their stable `_id`, `description`, `knowledgeState` (mastery scores, key concepts, summaries), `notesCount`, and `chatsCount` remain permanently accessible.
 - **Topic Reactivation**: Re-adding a previously retired topic in a subsequent syllabus version restores its `isActiveInSyllabus: true` flag while maintaining its historical learning progress.
-- **Subject.topicsCount Contract**: Defined strictly as the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`), preventing historical records from inflating current curriculum size metrics.
+- **Subject.topicsCount Contract**: Defined strictly as the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`), preventing historical or pre-governance records from inflating current curriculum metrics.
+- **Single Approved Version Invariant**: Structurally guaranteed at the MongoDB storage engine level via a Partial Unique Index `{ subjectId: 1, status: 1 }` (`unique: true, partialFilterExpression: { status: 'approved' }`). Concurrent approval attempts race safely against the unique constraint and are reconciled via an atomic transition retry loop.
 
 ## Cascading Entity Cleanup
 - `Subject` deletion cascades removal of all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` documents.

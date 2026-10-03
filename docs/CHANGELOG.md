@@ -9,21 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Phase 04.1 — Syllabus & Knowledge Governance Foundation
 
-#### Added
+#### Added & Hardened
+- **Structural Single Approved Version Invariant**:
+  - Defined MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` with `partialFilterExpression: { status: 'approved' }` on `SyllabusVersion.js` to physically prevent more than one approved syllabus version per subject at the database storage engine layer.
+  - Implemented automatic retry loop in `approveSyllabusVersion` controller catching partial unique index E11000 duplicate key collisions during concurrent approval attempts and cleanly re-resolving approval state.
+- **Subject `topicsCount` & Topic Lifecycle Semantic Contract**:
+  - `Subject.topicsCount` is strictly defined as the count of active syllabus topics (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`).
+  - Pre-syllabus user-created topics default to `isActiveInSyllabus: false`, enabling free-form study without violating the active syllabus count contract (`topicsCount = 0`).
+  - Draft syllabus edits do NOT activate canonical syllabus topics.
+  - Syllabus approval reconciles matching topics (`isActiveInSyllabus: true`), marks omitted topics historical (`isActiveInSyllabus: false`) with stable `_id` and learning history preserved, and reactivates re-added topics with cumulative learning history intact.
 - **Domain Persistence & Models**:
   - `SyllabusVersion.js`: Versioned syllabus model supporting `draft`, `approved`, and `superseded` states, structured hierarchical sections and topics, change summaries, and approval audit timestamps.
   - `Annotation.js`: Model for user-authored auxiliary comments and tags attached to chats and messages.
-  - `Topic.js`: Added `isActiveInSyllabus` (default: `true`, indexed) distinguishing active syllabus topics from retired/historical topics.
+  - `Topic.js`: Added `isActiveInSyllabus` (default: `false`, indexed) distinguishing active syllabus topics from retired/historical topics.
   - Added `syllabusStatus` and `activeSyllabusVersionId` to `Subject.js`.
   - Added `knowledgeContext` (`relevance`, `subjectId`, `topicId`, `disposition`) to `Message.js`.
 - **REST APIs & Topic Governance**:
   - Full syllabus lifecycle management under `/api/v1/subjects/:subjectId/syllabus` (`GET /status`, `GET /versions`, `POST /drafts`, `GET /versions/:version`, `PUT /drafts/:version`, `POST /versions/:version/approve`).
   - Full CRUD for comments and tags under `/api/v1/annotations`.
-- **Topic Lifecycle & History Preservation**:
-  - `approveSyllabusVersion` reconciles syllabus topics against active `Topic` records, maintaining existing topic IDs, descriptions, `notesCount`, `chatsCount`, and `knowledgeState` without data loss.
-  - Topics omitted in newly approved syllabus revisions are preserved as historical (`isActiveInSyllabus: false`) with all learning data intact.
-  - Topics re-added in subsequent revisions are reactivated (`isActiveInSyllabus: true`).
-  - `Subject.topicsCount` strictly reflects the count of **active syllabus topics**.
 - **Application Cascade Deletions**:
   - Subject deletion cascades removal of all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` documents.
   - Topic/Chat deletions cascade cleanup of associated annotations.
@@ -32,11 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ChatsPage.jsx`: Added off-topic detection banner display derived exclusively from backend response data (zero heuristic guessing) and added inline message comment/tag annotations.
   - `useFocusTrap.js`: Fixed modal focus theft on input typing by stabilizing `onClose` references in React refs.
 - **Testing & Verification**:
-  - 14 backend tests in `server/tests/syllabus.test.js` and `server/tests/annotations.test.js` (total 109 server tests passing).
+  - 17 backend tests in `server/tests/syllabus.test.js` and `server/tests/annotations.test.js` including genuine concurrent approval tests and manual topic pre-syllabus lifecycle tests (total 112 server tests passing).
   - 6 frontend tests in `client/src/pages/SyllabusGovernance.test.jsx` (total 46 client tests passing).
-  - Total automated monorepo tests increased to 155 tests (100% passing).
-  - Live Atlas API verification script (`verify_phase04_1_live.js`) exercising real Express HTTP APIs and Atlas database invariants.
-  - Browser verification of modal focus stability and syllabus governance flow.
+  - Total automated monorepo tests increased to 158 tests (100% passing).
+  - Live Atlas API verification script (`verify_phase04_1_live.js`) exercising real Express HTTP APIs and Atlas database invariants across 8 rigorous stages including genuine concurrent approval tests.
+  - End-to-end browser verification of modal focus stability and syllabus governance flow.
 
 ---
 

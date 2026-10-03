@@ -450,3 +450,16 @@ When a user deletes a `Subject`, LearnForge's controller executes coordinated ap
 - The parent `Subject` is deleted.
 Similarly, deleting a `Chat` purges its child `Message` and `Annotation` documents. Every deletion query is strictly scoped by `userId: req.user._id`, ensuring complete orphan prevention and bulletproof multi-tenant isolation.
 
+### Q61: How is the "single active approved syllabus version per subject" invariant structurally guaranteed against race conditions?
+**Answer**:  
+Rather than relying purely on sequential application logic (which could race under concurrent approvals), LearnForge enforces this at the database storage engine layer via a MongoDB **Partial Unique Index**:
+`syllabusVersionSchema.index({ subjectId: 1, status: 1 }, { unique: true, partialFilterExpression: { status: 'approved' } });`
+This structurally prevents MongoDB from ever storing more than one document with `{ subjectId, status: 'approved' }`. In `approveSyllabusVersion()`, previous approved versions are transitioned to `superseded` before setting the target to `approved`. In the event of an interleaved race condition, MongoDB rejects the competing attempt with `E11000 duplicate key error`, which is intercepted and resolved by an automatic retry loop that supersedes the competing version, guaranteeing atomicity and exactly one active approved syllabus.
+
+### Q62: What happens to manually created Topics before an approved syllabus exists?
+**Answer**:  
+LearnForge enforces that `Subject.topicsCount` strictly reflects the count of **active syllabus topics** (`isActiveInSyllabus: true`).
+1. When a Subject is created, it begins in the `no_syllabus` state with `topicsCount: 0`.
+2. If a user manually creates topics before a syllabus is approved, those topics are persisted with `isActiveInSyllabus: false` so that free-form conversation and notes can reference them, but `Subject.topicsCount` remains `0`.
+3. When a syllabus is later drafted and approved containing those topics, matching topics transition to `isActiveInSyllabus: true` with their stable `_id` and learning history preserved, and `Subject.topicsCount` updates to match the count of active syllabus topics.
+

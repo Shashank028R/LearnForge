@@ -183,6 +183,7 @@ Represents an immutable or draft curriculum proposal / authoritative learning co
 **Indexes**:
 - Compound Unique Version Index: `{ subjectId: 1, version: 1 }, { unique: true }`
 - Compound Version Listing Index: `{ userId: 1, subjectId: 1, version: -1 }`
+- Partial Unique Approved Index: `{ subjectId: 1, status: 1 }, { unique: true, partialFilterExpression: { status: 'approved' } }` — structurally guarantees at the database storage engine layer that at most ONE approved syllabus version can exist per subject.
 
 ---
 
@@ -199,7 +200,7 @@ Represents a curriculum unit or module belonging to a Subject with an embedded k
   description: String,       // Optional, max 1000 chars
   orderIndex: Number,        // Explicit sequential ordering (0, 1, 2...)
   status: String,            // 'not_started' | 'in_progress' | 'mastered' (default: 'not_started')
-  isActiveInSyllabus: Boolean,// true = active curriculum topic; false = historical/retired topic (default: true)
+  isActiveInSyllabus: Boolean,// true = active curriculum topic; false = historical/retired topic (default: false)
   knowledgeState: {
     masteryScore: Number,    // 0 - 100 (default: 0)
     keyConcepts: [String],   // Canonical atomic concept tags
@@ -317,7 +318,11 @@ Represents user-created auxiliary metadata (comments and tags) attached to a cha
    Subject `topicsCount` and Topic `chatsCount` are maintained through coordinated application-level updates without multi-document transactions when entities are created, reassigned, or deleted. Counts can also be reconciled from persisted child records upon single-entity retrieval. Cascading deletions are orchestrated at the application level (`Message.deleteMany` $\rightarrow$ `Chat.deleteMany` $\rightarrow$ `Topic.deleteMany` $\rightarrow$ `Subject.deleteOne`), avoiding multi-document transaction dependencies while preserving cross-tenant data safety.
 7. **Atomic Sequence Allocation & Unique Constraints**:
    Message ordering relies on `Chat.sequenceCounter` incremented atomically on the Chat document via `$inc`. Individual message documents enforce the unique compound constraint `{ chatId: 1, sequenceIndex: 1 }`. If a sequence index collision occurs due to legacy drift, an application retry loop reconciles the counter and safely retries without duplicating user message records.
-8. **Syllabus Immutability & Reconciled Topic Identity**:
-   Approved syllabus versions in `SyllabusVersion` are immutable historical records. Creating or editing draft syllabi never mutates canonical `Topic` records. When a version is explicitly approved (`POST /api/v1/subjects/:subjectId/syllabus/versions/:versionId/approve`), canonical topics are reconciled according to the approved version, preserving stable `Topic._id` for matching topics to maintain learning states, notes counts, and chat links without destructive recreation.
+8. **Syllabus Immutability, Single Active Approved Invariant & Reconciled Topic Identity**:
+   Approved syllabus versions in `SyllabusVersion` are immutable historical records. Creating or editing draft syllabi never mutates canonical `Topic` records. A schema-level Partial Unique Index (`{ subjectId: 1, status: 1 }` with `partialFilterExpression: { status: 'approved' }`) structurally guarantees that at most ONE approved syllabus version can exist per Subject at any time. When a version is explicitly approved (`POST /api/v1/subjects/:subjectId/syllabus/versions/:versionId/approve`), prior approved versions are transitioned to `superseded`, competing concurrent approvals are safely serialized/retried on unique constraint collision, and canonical topics are reconciled:
+   - Topics present in the approved syllabus become `isActiveInSyllabus: true` with stable `Topic._id`, preserved descriptions, and preserved learning data (`knowledgeState`, `notesCount`, `chatsCount`).
+   - Topics omitted from the newly approved syllabus become `isActiveInSyllabus: false` (historical/retired) without deleting records or losing past learning evidence.
+   - Topics re-added in later versions reactivate with `isActiveInSyllabus: true` and retain their historical data.
+   - `Subject.topicsCount` strictly equals the count of active syllabus topics (`isActiveInSyllabus: true`). Before syllabus approval, manually created topics have `isActiveInSyllabus: false` and `Subject.topicsCount` is 0.
 9. **Auxiliary Annotations vs Canonical Knowledge**:
    User comments and tags stored in `Annotation` are auxiliary metadata attached to raw conversational evidence. They are strictly segregated from `Topic.knowledgeState` and future canonical notes.

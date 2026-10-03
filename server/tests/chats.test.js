@@ -160,6 +160,8 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
       return { deletedCount: 0 };
     });
 
+    vi.spyOn(Topic, 'countDocuments').mockResolvedValue(0);
+
     // 5. Mock Chat model
     vi.spyOn(Chat, 'create').mockImplementation(async (doc) => {
       const _id = new mongoose.Types.ObjectId();

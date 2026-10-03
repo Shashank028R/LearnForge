@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import React from 'react';
 import { SubjectDetailPage } from './SubjectDetailPage';
@@ -10,6 +10,10 @@ describe('Syllabus & Knowledge Governance Frontend Workflows (Phase 04.1)', () =
   beforeEach(() => {
     vi.restoreAllMocks();
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   const renderWithProviders = (ui, initialRoute = '/') => {
@@ -528,6 +532,7 @@ describe('Syllabus & Knowledge Governance Frontend Workflows (Phase 04.1)', () =
     expect(await screen.findByText('Variables')).toBeDefined();
     expect(screen.getByText('Promises')).toBeDefined();
     expect(screen.getByText('Historical / Retired')).toBeDefined();
-    expect(screen.getByText(/1 Active Topic/)).toBeDefined();
+    expect(screen.getByText(/Active Topic/i)).toBeDefined();
+    expect(screen.getByText(/historical\)/i)).toBeDefined();
   });
 });

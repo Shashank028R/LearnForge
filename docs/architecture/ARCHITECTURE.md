@@ -186,18 +186,25 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - When a `Subject` is deleted, all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` records are purged.
 - When a `Topic` is deleted, all associated `Chat`, `Message`, and `Annotation` records are purged.
 - When a `Chat` is deleted, all child `Message` and `Annotation` records are purged.
-- **Subject `topicsCount` Contract**: Strictly defined as the count of active syllabus topics (`isActiveInSyllabus: true`). Inactive/historical topics remain persisted for history/evidence preservation but are excluded from `topicsCount`. Counts are maintained through coordinated application-level updates and reconciled on read lookups (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`).
+- **Subject `topicsCount` Semantic Contract**: Strictly defined as the count of active syllabus topics (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`).
+  - Fresh subjects start in `no_syllabus` state with `topicsCount: 0`.
+  - Topics created manually before a syllabus is approved default to `isActiveInSyllabus: false` and do NOT increment `Subject.topicsCount`.
+  - Draft syllabus revisions do not activate canonical syllabus topics.
+  - Upon syllabus approval, matching topics become `isActiveInSyllabus: true`, omitted topics become `isActiveInSyllabus: false`, and `Subject.topicsCount` equals `{ isActiveInSyllabus: true }`.
 
 ### 6.3 Syllabus Lifecycle & Topic History Governance (Phase 04.1)
-- Subjects start in `no_syllabus` state and do NOT require an approved syllabus for creation or topic management.
+- Subjects start in `no_syllabus` state and do NOT require an approved syllabus for creation, chat exploration, or manual note management.
 - Draft syllabi are created with hierarchical sections and topics (`SyllabusVersion`, status: `draft`).
-- Multiple drafts can be edited safely; explicit user approval (`POST /api/v1/subjects/:id/syllabus/versions/:version/approve`) commits canonical topics into the `Topic` collection.
+- Multiple drafts can be edited safely without affecting canonical syllabus membership.
+- **Structural Single Approved Version Invariant (Partial Unique Index)**:
+  - The persistence layer structurally enforces *exactly ONE* approved syllabus version per `Subject` via a MongoDB Partial Unique Index:
+    `{ subjectId: 1, status: 1 }` with `partialFilterExpression: { status: 'approved' }`.
+  - In `approveSyllabusVersion()`, prior approved versions are transitioned to `superseded` before saving the target version as `approved`. If concurrent approval requests race, the partial unique index immediately triggers an `E11000 duplicate key error` on whichever transaction lost the race, entering an automatic atomic retry loop that supersedes the winning version and approves the target version safely.
 - **Topic Reconciliation & History Preservation**:
   1. Matching topics remain active (`isActiveInSyllabus: true`) with stable `_id` and preserved learning history (`knowledgeState`, `chatsCount`, `notesCount`).
   2. Newly introduced topics are created with `isActiveInSyllabus: true`.
-  3. Topics removed in the new syllabus version are preserved with `isActiveInSyllabus: false` (historical/retired) — no data or chat history is destroyed.
+  3. Topics removed in the new syllabus version are preserved with `isActiveInSyllabus: false` (historical/retired) — no data, notes, or chat history is destroyed.
   4. Topics re-added in subsequent versions are reactivated (`isActiveInSyllabus: true`) with their existing `_id` and cumulative learning state preserved.
-- Prior approved versions transition to `superseded` status, maintaining exactly one active approved version per subject.
 
 ### 6.4 Knowledge Semantic Layers & Annotation Subsystem (Phase 04.1)
 - LearnForge enforces strict distinction across 7 semantic layers:

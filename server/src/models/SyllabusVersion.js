@@ -124,6 +124,12 @@ syllabusVersionSchema.index({ subjectId: 1, version: 1 }, { unique: true });
 // Compound Query Index: fast listing of versions by subject and user
 syllabusVersionSchema.index({ userId: 1, subjectId: 1, version: -1 });
 
+// Partial Unique Index: Structurally guarantees at most ONE version can have status='approved' per subject
+syllabusVersionSchema.index(
+  { subjectId: 1, status: 1 },
+  { unique: true, partialFilterExpression: { status: 'approved' } }
+);
+
 export const SyllabusVersion =
   mongoose.models.SyllabusVersion || mongoose.model('SyllabusVersion', syllabusVersionSchema);
 export default SyllabusVersion;
