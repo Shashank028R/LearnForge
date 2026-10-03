@@ -75,6 +75,15 @@ During Phase 02 (Professional UI Shell & Design System), a deliberate architectu
 | `lucide-react` / `@heroicons/react` | **Rejected** | Introducing a 1,000+ icon package increases dependency surface area, bundle bloat, and version churn. Instead, LearnForge implemented a native, high-performance SVG vector icon primitive (`client/src/components/ui/Icon.jsx`) utilizing a unified 1.5-stroke aesthetic with exactly 24 tailored icons and zero runtime dependencies. | External icon packages |
 | `@radix-ui/*` / `headlessui` | **Rejected** | LearnForge requirements prioritized custom design system control, calm low-distraction styling, keyboard trap control, and zero glassmorphism. Hand-crafted primitives (`Dialog`, `Dropdown`, `Tabs`, `Button`, `Input`) in Tailwind CSS fulfilled all accessibility requirements (WCAG AA, ARIA roles, Escape dismiss, focus trap) with zero third-party packages. | Radix Primitives, Headless UI |
 
+## Phase 03 — Subjects, Topics & Knowledge Structure Evaluation
+
+During Phase 03, a strict dependency discipline was maintained:
+- **Zero new external packages added**.
+- Both domain models (`Subject` and `Topic`) and all cascading logic utilize existing Mongoose (`^8.12.1`) capabilities.
+- All HTTP routing, validation, error handling, and authorization utilize native Express (`^4.21.2`) and Node.js built-ins (`crypto.randomUUID`).
+- Frontend views (`SubjectsPage`, `SubjectDetailPage`, and modals) leverage existing React (`^19.0.0`) and the Phase 02 UI primitives suite.
+- Both test suites utilize existing Vitest (`^3.0.7`) and React Testing Library (`^16.2.0`).
+
 ---
 
 ## Dependency Management Rules

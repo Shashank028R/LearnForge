@@ -5,6 +5,7 @@ import { ProtectedRoute } from './ProtectedRoute';
 
 import { HomePage } from '../pages/HomePage';
 import { SubjectsPage } from '../pages/SubjectsPage';
+import { SubjectDetailPage } from '../pages/SubjectDetailPage';
 import { ChatsPage } from '../pages/ChatsPage';
 import { NotesPage } from '../pages/NotesPage';
 import { StudyPage } from '../pages/StudyPage';
@@ -47,10 +48,7 @@ export function AppRoutes({ onOpenAuth }) {
         {/* Protected Workspace Routes Hierarchy */}
         <Route element={<ProtectedRoute onOpenAuth={onOpenAuth} />}>
           <Route path="subjects" element={<SubjectsPage />} />
-          <Route
-            path="subjects/:subjectId"
-            element={<PlaceholderDetailPage resourceType="Subject" />}
-          />
+          <Route path="subjects/:subjectId" element={<SubjectDetailPage />} />
           <Route path="chats" element={<ChatsPage />} />
           <Route
             path="chats/:chatId"

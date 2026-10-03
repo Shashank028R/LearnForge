@@ -319,3 +319,52 @@ Modal dialogs (`Dialog.jsx` and `AuthModal.jsx`) utilize a custom accessibility 
 When a modal opens, `useFocusTrap` saves a reference to `document.activeElement` (`previousActiveElement.current`), capturing the exact trigger element (such as the "Sign In" button or "Open Dialog" button) that initiated the modal.
 Upon closing (when the modal unmounts or `isOpen` becomes false), the `useEffect` cleanup hook verifies that `previousActiveElement.current` still exists in the DOM and calls `.focus()`. This restores keyboard focus seamlessly to the trigger element, satisfying WCAG 2.1 Success Criterion 2.4.3 (Focus Order) and preventing focus loss to `<body>`.
 
+---
+
+## Phase 03 — Subjects, Topics & Knowledge Structure
+
+### Q40: What is the core architectural principle of LearnForge, and how does Phase 03 implement it?
+**Answer**:  
+The core architectural principle of LearnForge is:
+> **"Knowledge is the product. Conversations are evidence."**
+
+In most AI learning wrappers, conversations are the primary entity and knowledge is ephemeral client-side state. In LearnForge, this hierarchy is inverted:
+1. `Subject` and `Topic` are first-class, authenticated, persisted domain models in MongoDB.
+2. Every `Topic` has an embedded `knowledgeState` subdocument holding canonical concepts (`keyConcepts`), synthesized summaries (`summary`), and mastery evaluation (`masteryScore: 0-100`).
+3. Future phases (Phase 04 Socratic Chat, Phase 05/06 AI Gateway & Extraction Engine, Phase 07 Block Notes) act as evidence-gathering and synthesis pipelines that feed into this canonical knowledge structure.
+
+### Q41: Why use normalized collections for Subjects and Topics instead of embedding topics inside subjects?
+**Answer**:  
+We evaluated embedding topics as subdocuments inside `Subject.topics` (ADR-011) and rejected it for three critical architectural reasons:
+1. **BSON Document Size Limitations**: In comprehensive academic disciplines with dozens of topics, study histories, and note links, embedding risks approaching MongoDB's 16MB document size ceiling.
+2. **Relational Referencing**: In future phases, Chats (`chat.topicId`), Notes (`note.topicId`), and Quiz Attempts (`quiz.topicId`) must establish foreign key references to individual topics. Having top-level ObjectId identifiers in a dedicated collection allows fast indexed lookups (`{ topicId: 1 }`).
+3. **Concurrency and Array Contention**: Updating topic mastery or adding concepts within an embedded array requires positional array operators (`$[]`, `$[<identifier>]`) which create write contention and indexing overhead compared to discrete single-document updates.
+
+### Q42: Why denormalize `userId` onto the Topic model if it already has a `subjectId`?
+**Answer**:  
+Denormalizing `userId` onto `Topic` provides two major benefits:
+1. **O(1) Indexed Authorization**: Any item-level topic query (`GET /api/v1/topics/:id`, `PUT /api/v1/topics/:id`, `DELETE /api/v1/topics/:id`) can enforce strict user ownership in a single database operation (`Topic.findOne({ _id: topicId, userId: req.user._id })`). This avoids executing a join or a two-step query against the parent `Subject` collection.
+2. **Defense-in-Depth Tenant Isolation**: Even if a malicious request manages to guess a valid topic ID, the query engine automatically excludes records where `userId !== req.user._id`.
+
+### Q43: Why return 404 instead of 403 on cross-tenant access attempts?
+**Answer**:  
+Returning `403 Forbidden` confirms that a resource exists with that identifier, which allows attackers to enumerate valid IDs across the system. Returning `404 Not Found` completely obscures the existence of the resource, guaranteeing privacy and thwarting enumeration attacks.
+
+### Q44: How does cascading deletion work without requiring distributed transactions?
+**Answer**:  
+LearnForge avoids hard dependencies on MongoDB multi-document transactions so that it can run reliably across standalone local development environments, containers, and production replica sets.
+When a subject is deleted:
+1. The server executes an application-level cascade delete: `await Topic.deleteMany({ subjectId: subject._id, userId: req.user._id });`
+2. It then removes the subject document: `await Subject.deleteOne({ _id: subject._id, userId: req.user._id });`
+Because both deletions are strictly scoped to `req.user._id`, there is zero blast radius to other users. Furthermore, if a failure occurs between the steps, orphaned topics remain inaccessible because topic listing endpoints require an existing, owned parent subject.
+
+### Q45: How is the knowledge structure designed to remain compatible with future AI phases?
+**Answer**:  
+`Topic.knowledgeState` defines the schema interface for canonical knowledge without introducing premature AI dependencies in Phase 03:
+- `masteryScore`: Numeric score (0 to 100) updated by the Phase 10 Adaptive Quiz engine.
+- `keyConcepts`: Array of atomic concept strings extracted by the Phase 06 Knowledge Extraction engine.
+- `summary`: Markdown text synthesizing canonical topic understanding generated by Phase 07 Notes.
+- `lastStudiedAt`: Date timestamp updated during Phase 08 Socratic study sessions.
+By standardizing this persistence contract in Phase 03, future phases can mutate and query canonical knowledge states without requiring database migrations.
+
+

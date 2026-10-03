@@ -113,23 +113,76 @@ Stores pending 6-digit passwordless verification codes. Plaintext codes are neve
 
 ---
 
-## 3. Core Domain Entities (Scheduled for Subsequent Phases)
+## 3. Knowledge Hierarchy Entities (Phase 03 Implemented)
 
-- **UI Shell Components** (`Phase 02`): Layout schemas, theme configurations, navigation metadata.
-- **Subject** (`Phase 03`): User study domains with slugs and color tokens.
-- **Topic** (`Phase 03`): Hierarchical sub-domains within a Subject.
-- **Concept** (`Phase 03`): Canonical atomic learning concepts.
+### 3.1 Subject
+Represents a user-owned learning discipline or course syllabus.
+
+```javascript
+{
+  _id: ObjectId,
+  userId: ObjectId,          // Ref: 'User', indexed, required
+  name: String,              // Trimmed, 1-120 chars, required
+  normalizedName: String,    // Lowercase for unique compound index per user
+  description: String,       // Optional, max 500 chars
+  color: String,             // Color hex code (default: '#3b82f6')
+  status: String,            // 'active' | 'archived' (default: 'active')
+  targetMasteryLevel: String,// 'beginner' | 'intermediate' | 'advanced' | 'comprehensive'
+  topicsCount: Number,       // Cached counter of child topics (default: 0)
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Unique Compound Index: `{ userId: 1, normalizedName: 1 }, { unique: true }` — prevents duplicate subject names within a user's workspace.
+- Dashboard Query Index: `{ userId: 1, status: 1, updatedAt: -1 }` — optimizes workspace filtering and chronological display.
+
+---
+
+### 3.2 Topic
+Represents a curriculum unit or module belonging to a Subject with an embedded knowledge state.
+
+```javascript
+{
+  _id: ObjectId,
+  subjectId: ObjectId,       // Ref: 'Subject', indexed, required
+  userId: ObjectId,          // Ref: 'User', indexed, required (denormalized ownership)
+  title: String,             // Trimmed, 1-160 chars, required
+  normalizedTitle: String,   // Lowercase for unique index within subject
+  description: String,       // Optional, max 1000 chars
+  orderIndex: Number,        // Explicit sequential ordering (0, 1, 2...)
+  status: String,            // 'not_started' | 'in_progress' | 'mastered' (default: 'not_started')
+  knowledgeState: {
+    masteryScore: Number,    // 0 - 100 (default: 0)
+    keyConcepts: [String],   // Canonical atomic concept tags
+    summary: String,         // Canonical synthesized summary
+    lastStudiedAt: Date      // Timestamp of last interaction
+  },
+  notesCount: Number,        // Future Phase 07 counter (default: 0)
+  chatsCount: Number,        // Future Phase 04 counter (default: 0)
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Sequential Order Index: `{ subjectId: 1, orderIndex: 1 }` — optimizes sequential topic list retrieval.
+- Tenant & Relationship Index: `{ userId: 1, subjectId: 1 }` — supports fast user-scoped aggregation.
+- Unique Compound Index: `{ subjectId: 1, normalizedTitle: 1 }, { unique: true }` — prevents duplicate topic titles within a single subject.
+
+---
+
+## 4. Core Domain Entities (Scheduled for Subsequent Phases)
+
 - **Chat** (`Phase 04`): Subject-scoped and general conversation sessions.
 - **Message** (`Phase 04`): Ordered messages with sequence indexing.
 - **LearningEvent** (`Phase 06`): Learning observations and concept interactions.
-- **KnowledgeState** (`Phase 06`): Per-user concept mastery states and confidence.
 - **NoteDocument & NoteVersion** (`Phase 07`): Typed block notes and immutable snapshots.
 - **Quiz & QuizAttempt** (`Phase 10`): Dynamic assessments and scored student responses.
 - **ImportJob** (`Phase 11`): External conversation ingest tracking.
 
 ---
 
-## 4. Invariants & Data Integrity Rules
+## 5. Invariants & Data Integrity Rules
 
 1. **User Identity Invariant**: Every `AuthIdentity` and `UserSession` must resolve to an active, valid `User`.
 2. **Deterministic Linking**: The compound unique index on `AuthIdentity(provider, providerSubject)` guarantees an external identity cannot be attached to multiple accounts.

@@ -7,6 +7,8 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import { notFoundHandler, globalErrorHandler } from './middleware/errorHandler.js';
 import healthRouter from './routes/health.js';
 import authRouter from './routes/auth.js';
+import subjectsRouter from './routes/subjects.js';
+import topicsRouter from './routes/topics.js';
 
 export function createApp() {
   const app = express();
@@ -30,6 +32,8 @@ export function createApp() {
   const apiRouter = express.Router();
   apiRouter.use(healthRouter);
   apiRouter.use(authRouter);
+  apiRouter.use(subjectsRouter);
+  apiRouter.use(topicsRouter);
 
   app.use(config.apiPrefix, apiRouter);
 

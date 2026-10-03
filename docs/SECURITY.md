@@ -20,7 +20,7 @@ This document is the authoritative security architecture specification for **Lea
 | **Mobile Auth Support** | `Authorization: Bearer <token>` dual-header support for mobile clients | **Implemented in Phase 01** | `auth.test.js` header resolution test |
 | **Deterministic Linking**| Auto-links verified Google identity with existing email-OTP user (ADR-010) | **Implemented in Phase 01** | `auth.test.js` account linking test |
 | **Rate Limiting** | Tiered IP rate limiting for OTP request (5/15m), OTP verify (10/15m), Google auth (15/15m) | **Implemented in Phase 01** | `express-rate-limit` middleware |
-| **User Data Ownership** | Server-side user ownership validation on all entity queries | **Required in Phase 03** | Cross-tenant authorization tests |
+| **User Data Ownership** | Server-side user ownership validation on all entity queries | **Implemented in Phase 03** | Cross-tenant authorization tests in `subjects.test.js` & `verify_phase03_live.js` |
 | **AI Untrusted Input** | Schema validation on LLM output before state mutation; prompt isolation | **Required in Phase 05/06** | AI Gateway output schema tests |
 | **Import & File Security**| MIME type verification, size quotas, treating imports as inert data | **Required in Phase 11** | Import payload parser tests |
 | **HTML Sanitization** | Structured block rendering and DOMPurify for rich text/notes | **Required in Phase 07/12**| XSS injection fuzzing |
@@ -115,19 +115,24 @@ This document is the authoritative security architecture specification for **Lea
 - **Authoritative Security Principle**: Frontend route guards are strictly for user experience guidance. The browser environment is inherently client-controlled; therefore, the backend API (`server/src/middleware/auth.js`) remains the sole, authoritative boundary for data access. Every protected API endpoint independently authenticates the session and validates user ownership.
 - **Zero Browser Storage Leakage**: The client never caches raw session tokens or user credentials in `localStorage` or `sessionStorage`. Authentication state is continuously backed by secure `HttpOnly`, `SameSite: 'lax'` cookies.
 
+## 5. Implemented in Phase 03 (Strict Multitenant Isolation & Domain Authorization)
+
+### 5.1 Defense-in-Depth Ownership Model
+- **Client Identifiers Completely Untrusted**: The client never supplies `userId`. The authenticated user context is derived exclusively from `req.user._id` populated by the session cookie or verified Bearer token.
+- **Denormalized Ownership on Child Entities**: The `Topic` model stores `userId` alongside `subjectId`. All topic reads and mutations query `{ _id: topicId, userId: req.user._id }` directly. This eliminates reliance on multihop joins or vulnerable client assertions.
+- **Cross-Tenant Resource Obscuration**: When an authenticated user queries, updates, or deletes a resource belonging to another tenant, the API responds with `404 Not Found` (rather than `403 Forbidden`). This conceals the existence of the resource ID and defeats resource enumeration attacks.
+- **Parent Hierarchy Authorization**: Prior to inserting a topic into a subject (`POST /api/v1/subjects/:subjectId/topics` or `POST /api/v1/topics`), the controller verifies that the target parent subject is owned by `req.user._id`. Attackers cannot inject topics into another user's subject.
+- **Cascading Deletion Isolation**: Deleting a subject triggers a scoped cascade delete:
+  ```javascript
+  await Topic.deleteMany({ subjectId: subject._id, userId: req.user._id });
+  ```
+  The deletion is strictly scoped to the authenticated user's ID, preventing any cross-tenant blast radius.
+
 ---
 
-## 5. Required in Later Phases
+## 6. Required in Later Phases
 
-### 4.1 Strict User Data Ownership Enforcement (Phase 03+)
-- **Never Trust Client Identifiers**: Client requests containing `:subjectId`, `:chatId`, `:noteId`, or `:importId` must be authorized against the authenticated user:
-  ```javascript
-  const subject = await Subject.findOne({ _id: subjectId, userId: req.user._id });
-  if (!subject) throw new NotFoundError('Subject not found');
-  ```
-- No user can access or mutate another user's learning data, chats, notes, or quiz attempts.
-
-### 4.2 AI Untrusted Output & Prompt Injection Defense (Phase 05+)
+### 6.1 AI Untrusted Output & Prompt Injection Defense (Phase 05+)
 - **AI Output is Untrusted**: Large language model responses are treated as untrusted input. Model outputs must be validated against strict runtime schemas (Zod) before modifying database state.
 - **Prompt Injection Isolation**: Imported conversation transcripts and user notes are classified strictly as **inert data** within prompts (`<user_data>` delimiters) and never interpolated directly into system instructions.
 - **No Direct Execution**: Model outputs can never execute arbitrary database queries, shell commands, or unparsed HTML.

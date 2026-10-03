@@ -5,6 +5,34 @@ All notable changes to the LearnForge project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-03
+
+### Phase 03 — Subjects, Topics & Knowledge Structure
+
+#### Added
+- **Domain Models & Persistence**:
+  - `Subject.js`: User-owned learning subjects with unique normalized names, target mastery levels, color themes, and cached topic counters.
+  - `Topic.js`: User-owned topics referencing parent subjects with sequential `orderIndex` and embedded `knowledgeState` subdocument (`masteryScore`, `keyConcepts`, `summary`, `lastStudiedAt`).
+- **REST APIs**:
+  - Full CRUD endpoints under `/api/v1/subjects` (`GET /`, `POST /`, `GET /:id`, `PUT /:id`, `DELETE /:id`).
+  - Full CRUD endpoints under `/api/v1/topics` and nested `/api/v1/subjects/:id/topics`.
+- **Application Cascade Deletions**: Deleting a subject cascades deletion to all child topics and cleans up workspace state.
+- **Strict Multi-Tenant Isolation**: Server-side user ownership validation (`userId: req.user._id`) on all subject and topic operations, returning 404 for cross-user attempts to prevent enumeration.
+- **Interactive UI**:
+  - `SubjectsPage.jsx`: Live API-backed subjects listing, 6-card loading skeleton, empty state, "New Subject" dialog, "Edit Subject" dialog, and accessible delete confirmation dialog.
+  - `SubjectDetailPage.jsx`: Subject header with metadata badges, topic list with sequential order badges, concept tags preview, "New Topic" dialog, "Edit Topic" dialog, and delete confirmations.
+  - `subjectsApi.js`: Centralized service for subjects and topics API calls.
+  - Native SVG paths for `edit`, `trash`, and `layers` in `Icon.jsx`.
+- **Architectural Documentation**:
+  - Authored `docs/decisions/ADR-011-subject-topic-knowledge-structure.md`.
+  - Authored `docs/phases/phase-03-subjects-topics-knowledge-structure.md`.
+- **Automated Tests**:
+  - 21 backend tests in `server/tests/subjects.test.js` (server total 59 tests).
+  - 5 frontend tests in `client/src/pages/Subjects.test.jsx` (client total 35 tests).
+  - Total automated monorepo tests increased from 68 to 94 tests (100% passing).
+- **Live Integration Verification**:
+  - Live verification script `server/scripts/verify_phase03_live.js` passing against running local backend and live MongoDB Atlas.
+
 ---
 
 ## [0.3.2] - 2026-10-03

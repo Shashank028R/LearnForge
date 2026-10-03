@@ -10,8 +10,8 @@
 
 ## 2. Current Phase Status
 
-- **Current Phase**: **Pre-Phase-03 API, Integration & Credential Audit (GATE BLOCKED)**
-- **Next Phase**: **Phase 03 — Subjects, Topics & Knowledge Structure (BLOCKED pending live credentials)**
+- **Current Phase**: **Phase 03 — Subjects, Topics & Knowledge Structure (COMPLETED)**
+- **Next Phase**: **Phase 04 — Socratic Chat Engine (Awaiting authorization)**
 - **Repository Remote**: `https://github.com/Shashank028R/LearnForge.git`
 - **Default Branch**: `main`
 
@@ -44,17 +44,23 @@
 - **Modal Focus Trap & Accessibility**: WCAG AA focus trap, Tab/Shift+Tab cycle, Escape dismiss, backdrop click isolation, and focus restoration to opener element.
 
 ### Pre-Phase-03 (API, Integration, Credential & Live-Verification Audit)
-- **API Surface Inventory**: Complete mapping of all 7 implemented backend endpoints.
-- **SMTP Transport Implementation**: Replaced unfulfilled SMTP stub with `nodemailer` (v10.0.14) for real email delivery while preserving console/memory fallbacks for offline development.
-- **Credential Gate Established**: Enforced strict policy separating automated test verification from live third-party verification.
-- **Secret Hygiene**: Purged unused `GOOGLE_CLIENT_SECRET`, validated placeholder safety in `.env.example`, and corrected HttpOnly security documentation.
-- **Automated Tests**: 68 tests passing (38 server + 30 client).
+- **Live Verification**: Google GIS, Email OTP via real SMTP, and MongoDB Atlas live verified by project owner.
+- **Credential Gate Cleared**: Documented in `docs/verification/INTEGRATION_CREDENTIAL_AUDIT.md`.
+
+### Phase 03 (Subjects, Topics & Knowledge Structure)
+- **Architectural Principle**: *"Knowledge is the product. Conversations are evidence."*
+- **Domain Persistence**: Normalized `Subject` and `Topic` models in MongoDB with denormalized `userId` ownership (ADR-011).
+- **Knowledge Structure Foundation**: Embedded `knowledgeState` subdocument with `masteryScore`, `keyConcepts`, `summary`, and `lastStudiedAt`.
+- **Strict Multi-Tenant Isolation**: Verified server-side tenant scoping returning 404 for cross-user resource access.
+- **Application Cascade Deletion**: Deleting an owned subject cascades deletion to all child topics and cleans up workspace state.
+- **REST APIs**: Complete CRUD for subjects and topics mounted under `/api/v1/subjects` and `/api/v1/topics` with input validation, duplicate detection, and sequential ordering.
+- **Interactive UI**: API-backed `SubjectsPage` and `SubjectDetailPage` featuring real lists, create/edit modals, accessible delete confirmations, and loading/empty/error states.
+- **Automated & Live Verification**: 94 automated tests (59 server + 35 client), clean Vite production build, and live API regression verification against local server and Atlas MongoDB.
 
 ---
 
 ## 4. Current Work
-- Pre-Phase-03 Credential Gate audit completed.
-- Phase 03 is blocked pending configuration of live Google OAuth and SMTP credentials.
+- Phase 03 complete. Awaiting explicit project-owner authorization before beginning Phase 04.
 
 ---
 

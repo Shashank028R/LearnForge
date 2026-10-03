@@ -2,6 +2,42 @@
 
 This log is the permanent chronological engineering journal for the LearnForge project. Every phase records its objective, work performed, architectural decisions, testing, problems, and solutions.
 
+## [Phase 03] Subjects, Topics & Knowledge Structure
+
+- **Date**: October 3, 2026
+- **Status**: Completed
+- **Phase**: Phase 03 — Subjects, Topics & Knowledge Structure
+- **Core Principle**: *"Knowledge is the product. Conversations are evidence."*
+- **Objective**: Design and implement the primary LearnForge knowledge hierarchy as first-class persisted domain entities in MongoDB, enforce strict multi-tenant authorization boundaries, provide complete CRUD REST APIs, create an accessible, responsive UI with loading/empty/error states, and lay the persistence foundation for downstream AI extraction and study features.
+
+### Work Performed
+1. **Architectural Foundations & ADR-011**:
+   - Evaluated normalized vs. embedded domain models for `Subject` and `Topic`.
+   - Adopted normalized collections with denormalized `userId` ownership on both models (ADR-011).
+   - Designed embedded `knowledgeState` subdocument (`masteryScore`, `keyConcepts`, `summary`, `lastStudiedAt`) within `Topic` to provide schema readiness for future AI extraction (Phase 06) and adaptive quizzes (Phase 10).
+2. **Domain Persistence & Models**:
+   - Created `server/src/models/Subject.js` with fields: `userId`, `name`, `normalizedName`, `description`, `color`, `status`, `targetMasteryLevel`, `topicsCount`. Indexes: unique `{ userId: 1, normalizedName: 1 }`, `{ userId: 1, status: 1, updatedAt: -1 }`.
+   - Created `server/src/models/Topic.js` with fields: `subjectId`, `userId`, `title`, `normalizedTitle`, `description`, `orderIndex`, `status`, `knowledgeState`, `notesCount`, `chatsCount`. Indexes: `{ subjectId: 1, orderIndex: 1 }`, `{ userId: 1, subjectId: 1 }`, unique `{ subjectId: 1, normalizedTitle: 1 }`.
+3. **API Implementation & REST Controllers**:
+   - `server/src/controllers/subjectController.js`: Handlers for `listSubjects`, `createSubject`, `getSubject`, `updateSubject`, `deleteSubject` (with application-level cascade delete of child topics).
+   - `server/src/controllers/topicController.js`: Handlers for `listTopicsForSubject`, `createTopic`, `getTopic`, `updateTopic`, `deleteTopic` (with automatic parent `topicsCount` maintenance).
+   - `server/src/routes/subjects.js` & `server/src/routes/topics.js`: Protected via `requireDatabase` and `authenticateUser`. Supported both nested `/subjects/:subjectId/topics` and collection `/topics?subjectId=:id` endpoints.
+4. **Strict Security & Multi-Tenant Isolation**:
+   - Every read, update, and delete query strictly filters by `userId: req.user._id`.
+   - Cross-tenant requests return `404 Not Found` to prevent ID enumeration attacks.
+   - Verified that User B cannot read, modify, or delete User A's subjects or topics, nor inject topics into User A's subjects.
+5. **Interactive Frontend UI**:
+   - `client/src/api/subjectsApi.js`: Centralized service for subjects and topics API calls.
+   - `client/src/pages/SubjectsPage.jsx`: Real API-backed subjects listing, 6-card loading skeleton, empty state, "New Subject" dialog with color presets, "Edit Subject" dialog, and accessible delete confirmation dialog.
+   - `client/src/pages/SubjectDetailPage.jsx`: Subject header with metadata badges, topic list with sequential order badges, concept tags preview, "New Topic" dialog, "Edit Topic" dialog, and delete confirmations.
+   - `client/src/routes/AppRoutes.jsx`: Connected `SubjectDetailPage` to protected route `/subjects/:subjectId`.
+   - `client/src/components/ui/Icon.jsx`: Added native SVG paths for `edit`, `trash`, and `layers`.
+6. **Testing & Verification**:
+   - Added 21 automated backend tests in `server/tests/subjects.test.js` (total 59 server tests passing).
+   - Added 5 automated frontend tests in `client/src/pages/Subjects.test.jsx` (total 35 client tests passing).
+   - Validated Vite production build (`dist/` generated in 7.66s with zero errors).
+   - Executed live integration script `server/scripts/verify_phase03_live.js` against running backend and Atlas MongoDB, confirming all CRUD, cross-tenant 404 security checks, and cascading deletions.
+
 ---
 
 ## [Pre-Phase-03] API, External Integration, Credential & Live-Verification Audit

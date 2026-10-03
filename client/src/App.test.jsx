@@ -126,13 +126,27 @@ describe('LearnForge Application Shell & Protected Routes (Phase 02.1)', () => {
             }),
         });
       }
+      if (url.includes('/api/v1/subjects')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: () =>
+            Promise.resolve({
+              success: true,
+              data: {
+                subjects: [],
+              },
+            }),
+        });
+      }
       return Promise.reject(new Error(`Unhandled fetch: ${url}`));
     });
 
     renderWithRouter(['/subjects']);
 
     expect(await screen.findByRole('heading', { name: 'Subjects' })).toBeDefined();
-    expect(screen.getByText('No subjects yet.')).toBeDefined();
+    expect(await screen.findByText('No subjects yet.')).toBeDefined();
   });
 
   it('renders auth loading state while session resolution is in progress', async () => {
