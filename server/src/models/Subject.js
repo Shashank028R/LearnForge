@@ -40,7 +40,7 @@ const subjectSchema = new mongoose.Schema(
     },
     targetMasteryLevel: {
       type: String,
-      enum: ['beginner', 'intermediate', 'advanced'],
+      enum: ['beginner', 'intermediate', 'advanced', 'comprehensive'],
       default: 'intermediate',
     },
     topicsCount: {

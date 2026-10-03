@@ -37,6 +37,12 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - Added 5 automated frontend tests in `client/src/pages/Subjects.test.jsx` (total 35 client tests passing).
    - Validated Vite production build (`dist/` generated in 7.66s with zero errors).
    - Executed live integration script `server/scripts/verify_phase03_live.js` against running backend and Atlas MongoDB, confirming all CRUD, cross-tenant 404 security checks, and cascading deletions.
+7. **Mastery Level Contract Alignment**:
+   - Resolved client/server contract mismatch where `targetMasteryLevel` in `Subject.js` schema and `subjectController.js` permitted only `beginner`, `intermediate`, `advanced`, rejecting `comprehensive` selected in the UI.
+   - Updated `Subject.js` schema enum and `subjectController.js` validation to accept `['beginner', 'intermediate', 'advanced', 'comprehensive']`.
+   - Added automated server tests in `server/tests/subjects.test.js` for all 4 mastery levels, `comprehensive` update, and 400 validation failures (server total: 66 tests passing).
+   - Added automated client test in `client/src/pages/Subjects.test.jsx` for `comprehensive` selection and submission (client total: 36 tests passing).
+   - Live verified against running backend and Atlas MongoDB: creation, persistence, bidirectional updates, and invalid rejection.
 
 ---
 

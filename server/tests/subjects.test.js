@@ -356,6 +356,70 @@ describe('Subjects & Topics API (/api/v1/subjects, /api/v1/topics)', () => {
       expect(res.body.error.code).toBe('VALIDATION_ERROR');
     });
 
+    it.each(['beginner', 'intermediate', 'advanced', 'comprehensive'])(
+      'accepts subject creation with valid targetMasteryLevel: %s',
+      async (level) => {
+        const res = await request(app)
+          .post('/api/v1/subjects')
+          .set('Cookie', sessionCookieA)
+          .send({
+            name: `Subject with ${level}`,
+            targetMasteryLevel: level,
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.success).toBe(true);
+        expect(res.body.data.subject.targetMasteryLevel).toBe(level);
+      }
+    );
+
+    it('rejects subject creation with invalid targetMasteryLevel', async () => {
+      const res = await request(app)
+        .post('/api/v1/subjects')
+        .set('Cookie', sessionCookieA)
+        .send({
+          name: 'Invalid Mastery Subject',
+          targetMasteryLevel: 'expert_ninja',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      expect(res.body.error.details[0].field).toBe('targetMasteryLevel');
+    });
+
+    it('updates subject targetMasteryLevel to comprehensive', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/subjects')
+        .set('Cookie', sessionCookieA)
+        .send({ name: 'Subject to Update Mastery', targetMasteryLevel: 'beginner' });
+      const subjectId = createRes.body.data.subject.id;
+
+      const updateRes = await request(app)
+        .put(`/api/v1/subjects/${subjectId}`)
+        .set('Cookie', sessionCookieA)
+        .send({ targetMasteryLevel: 'comprehensive' });
+
+      expect(updateRes.status).toBe(200);
+      expect(updateRes.body.data.subject.targetMasteryLevel).toBe('comprehensive');
+    });
+
+    it('rejects subject update with invalid targetMasteryLevel', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/subjects')
+        .set('Cookie', sessionCookieA)
+        .send({ name: 'Subject to Fail Mastery Update', targetMasteryLevel: 'beginner' });
+      const subjectId = createRes.body.data.subject.id;
+
+      const updateRes = await request(app)
+        .put(`/api/v1/subjects/${subjectId}`)
+        .set('Cookie', sessionCookieA)
+        .send({ targetMasteryLevel: 'unsupported_level' });
+
+      expect(updateRes.status).toBe(400);
+      expect(updateRes.body.error.code).toBe('VALIDATION_ERROR');
+      expect(updateRes.body.error.details[0].field).toBe('targetMasteryLevel');
+    });
+
     it('prevents creating duplicate subject names for the same user (case-insensitive)', async () => {
       await request(app)
         .post('/api/v1/subjects')

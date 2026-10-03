@@ -26,12 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Architectural Documentation**:
   - Authored `docs/decisions/ADR-011-subject-topic-knowledge-structure.md`.
   - Authored `docs/phases/phase-03-subjects-topics-knowledge-structure.md`.
+- **Target Mastery Level Contract Alignment**:
+  - Aligned backend `Subject.js` schema enum and `subjectController.js` validation to include `comprehensive`, matching documented specifications and frontend selectable options (`beginner`, `intermediate`, `advanced`, `comprehensive`).
 - **Automated Tests**:
-  - 21 backend tests in `server/tests/subjects.test.js` (server total 59 tests).
-  - 5 frontend tests in `client/src/pages/Subjects.test.jsx` (client total 35 tests).
-  - Total automated monorepo tests increased from 68 to 94 tests (100% passing).
+  - 28 backend tests in `server/tests/subjects.test.js` (server total 66 tests).
+  - 6 frontend tests in `client/src/pages/Subjects.test.jsx` (client total 36 tests).
+  - Total automated monorepo tests increased to 102 tests (100% passing).
 - **Live Integration Verification**:
-  - Live verification script `server/scripts/verify_phase03_live.js` passing against running local backend and live MongoDB Atlas.
+  - Live verification script `server/scripts/verify_phase03_live.js` passing against running local backend and live MongoDB Atlas (including `comprehensive` mastery creation, persistence, bidirectional updates, invalid rejection, and cross-tenant checks).
 
 ---
 

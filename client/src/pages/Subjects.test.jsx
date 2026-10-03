@@ -308,4 +308,69 @@ describe('Subjects and Topics Frontend Workflows (Phase 03)', () => {
     // New topic appears
     expect(await screen.findByText('Spectral Theorem')).toBeDefined();
   });
+
+  it('renders Comprehensive target mastery option and submits it correctly during subject creation', async () => {
+    let capturedBody = null;
+
+    global.fetch = vi.fn().mockImplementation((url, opts) => {
+      if (url.includes('/api/v1/subjects')) {
+        if (!opts || opts.method === 'GET') {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            json: () => Promise.resolve({ success: true, data: { subjects: [] } }),
+          });
+        }
+        if (opts.method === 'POST') {
+          capturedBody = JSON.parse(opts.body);
+          const newSubj = {
+            _id: 'sub_comp_1',
+            name: capturedBody.name,
+            description: capturedBody.description || '',
+            color: capturedBody.color || '#3b82f6',
+            targetMasteryLevel: capturedBody.targetMasteryLevel,
+            status: 'active',
+            topicsCount: 0,
+          };
+          return Promise.resolve({
+            ok: true,
+            status: 201,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            json: () => Promise.resolve({ success: true, data: { subject: newSubj } }),
+          });
+        }
+      }
+      return Promise.reject(new Error(`Unhandled: ${url}`));
+    });
+
+    renderWithProviders(<SubjectsPage />);
+
+    expect(await screen.findByText('No subjects yet.')).toBeDefined();
+
+    // Open create dialog
+    fireEvent.click(screen.getByRole('button', { name: /new subject/i }));
+
+    const dialog = screen.getByRole('dialog');
+    const nameInput = screen.getByLabelText(/subject name/i);
+    const masterySelect = screen.getByLabelText(/target mastery level/i);
+
+    // Verify all four options are present
+    const options = Array.from(masterySelect.querySelectorAll('option')).map((opt) => opt.value);
+    expect(options).toEqual(['beginner', 'intermediate', 'advanced', 'comprehensive']);
+
+    // Select Comprehensive
+    fireEvent.change(nameInput, { target: { value: 'Deep Learning Systems' } });
+    fireEvent.change(masterySelect, { target: { value: 'comprehensive' } });
+    expect(masterySelect.value).toBe('comprehensive');
+
+    // Submit form
+    const submitBtn = within(dialog).getByRole('button', { name: /^create subject$/i });
+    fireEvent.click(submitBtn);
+
+    expect(await screen.findByText('Deep Learning Systems')).toBeDefined();
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody.targetMasteryLevel).toBe('comprehensive');
+  });
 });
+

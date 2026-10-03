@@ -62,8 +62,8 @@ async function runLiveVerification() {
   };
 
   try {
-    // 1. User A creates Subject
-    console.log('\n[1] User A creates Subject...');
+    // 1. User A creates Subject with targetMasteryLevel: 'comprehensive'
+    console.log('\n[1] User A creates Subject with targetMasteryLevel: "comprehensive"...');
     const createSubjRes = await fetch(`${API_BASE}/subjects`, {
       method: 'POST',
       headers: headersA,
@@ -71,23 +71,78 @@ async function runLiveVerification() {
         name: 'Computational Complexity',
         description: 'P vs NP, Turing machines, and reductions',
         color: '#3b82f6',
-        targetMasteryLevel: 'advanced',
+        targetMasteryLevel: 'comprehensive',
       }),
     });
     const createSubjData = await createSubjRes.json();
     if (createSubjRes.status !== 201) throw new Error(`Subject creation failed: ${JSON.stringify(createSubjData)}`);
-    const subjectId = createSubjData.data.subject._id;
-    console.log(`✓ Subject created: ${subjectId} - "${createSubjData.data.subject.name}"`);
+    const subjectId = createSubjData.data.subject._id || createSubjData.data.subject.id;
+    if (createSubjData.data.subject.targetMasteryLevel !== 'comprehensive') {
+      throw new Error(`Expected comprehensive targetMasteryLevel, got: ${createSubjData.data.subject.targetMasteryLevel}`);
+    }
+    console.log(`✓ Subject created: ${subjectId} - "${createSubjData.data.subject.name}" with targetMasteryLevel: "${createSubjData.data.subject.targetMasteryLevel}"`);
 
-    // 2. User A gets owned subject
-    console.log('\n[2] User A gets owned Subject...');
+    // 2. User A gets owned subject (re-fetch/persistence check)
+    console.log('\n[2] User A re-fetches Subject to confirm "comprehensive" persistence...');
     const getSubjRes = await fetch(`${API_BASE}/subjects/${subjectId}`, { headers: headersA });
     const getSubjData = await getSubjRes.json();
     if (getSubjRes.status !== 200) throw new Error(`Subject fetch failed: ${JSON.stringify(getSubjData)}`);
-    console.log(`✓ Fetched subject: "${getSubjData.data.subject.name}"`);
+    if (getSubjData.data.subject.targetMasteryLevel !== 'comprehensive') {
+      throw new Error(`Expected persisted comprehensive mastery, got: ${getSubjData.data.subject.targetMasteryLevel}`);
+    }
+    console.log(`✓ Confirmed persisted subject: "${getSubjData.data.subject.name}" (mastery: "${getSubjData.data.subject.targetMasteryLevel}")`);
 
-    // 3. User A creates Topic inside Subject
-    console.log('\n[3] User A creates Topic...');
+    // 3. User A edits subject: changes mastery level from comprehensive to advanced and back
+    console.log('\n[3] User A edits subject mastery: comprehensive -> advanced -> comprehensive...');
+    const updateToAdvRes = await fetch(`${API_BASE}/subjects/${subjectId}`, {
+      method: 'PUT',
+      headers: headersA,
+      body: JSON.stringify({ targetMasteryLevel: 'advanced' }),
+    });
+    const updateToAdvData = await updateToAdvRes.json();
+    if (updateToAdvRes.status !== 200 || updateToAdvData.data.subject.targetMasteryLevel !== 'advanced') {
+      throw new Error(`Failed to update mastery to advanced: ${JSON.stringify(updateToAdvData)}`);
+    }
+    console.log('✓ Successfully updated mastery to "advanced"');
+
+    const updateBackRes = await fetch(`${API_BASE}/subjects/${subjectId}`, {
+      method: 'PUT',
+      headers: headersA,
+      body: JSON.stringify({ targetMasteryLevel: 'comprehensive' }),
+    });
+    const updateBackData = await updateBackRes.json();
+    if (updateBackRes.status !== 200 || updateBackData.data.subject.targetMasteryLevel !== 'comprehensive') {
+      throw new Error(`Failed to update mastery back to comprehensive: ${JSON.stringify(updateBackData)}`);
+    }
+    console.log('✓ Successfully updated mastery back to "comprehensive"');
+
+    // 4. Validate all other mastery levels (beginner, intermediate) and invalid value rejection
+    console.log('\n[4] Validating other mastery levels and invalid rejection...');
+    for (const level of ['beginner', 'intermediate']) {
+      const res = await fetch(`${API_BASE}/subjects`, {
+        method: 'POST',
+        headers: headersA,
+        body: JSON.stringify({ name: `Subject ${level}`, targetMasteryLevel: level }),
+      });
+      const data = await res.json();
+      if (res.status !== 201 || data.data.subject.targetMasteryLevel !== level) {
+        throw new Error(`Failed for mastery level: ${level}`);
+      }
+      console.log(`✓ Creation succeeded for targetMasteryLevel: "${level}"`);
+    }
+
+    const invalidRes = await fetch(`${API_BASE}/subjects`, {
+      method: 'POST',
+      headers: headersA,
+      body: JSON.stringify({ name: 'Subject Invalid Mastery', targetMasteryLevel: 'super_master' }),
+    });
+    if (invalidRes.status !== 400) {
+      throw new Error(`Expected 400 for invalid mastery, got: ${invalidRes.status}`);
+    }
+    console.log('✓ Invalid targetMasteryLevel rejected with 400 (Passed)');
+
+    // 5. User A creates Topic inside Subject
+    console.log('\n[5] User A creates Topic...');
     const createTopRes = await fetch(`${API_BASE}/topics`, {
       method: 'POST',
       headers: headersA,
@@ -101,18 +156,18 @@ async function runLiveVerification() {
     });
     const createTopData = await createTopRes.json();
     if (createTopRes.status !== 201) throw new Error(`Topic creation failed: ${JSON.stringify(createTopData)}`);
-    const topicId = createTopData.data.topic._id;
+    const topicId = createTopData.data.topic._id || createTopData.data.topic.id;
     console.log(`✓ Topic created: ${topicId} - "${createTopData.data.topic.title}"`);
 
-    // 4. User A lists topics for Subject
-    console.log('\n[4] User A lists topics for Subject...');
+    // 6. User A lists topics for Subject
+    console.log('\n[6] User A lists topics for Subject...');
     const listTopRes = await fetch(`${API_BASE}/topics?subjectId=${subjectId}`, { headers: headersA });
     const listTopData = await listTopRes.json();
     if (listTopData.data.topics.length !== 1) throw new Error('Expected 1 topic');
     console.log(`✓ Listed ${listTopData.data.topics.length} topic(s)`);
 
-    // 5. User A updates Topic
-    console.log('\n[5] User A updates Topic status...');
+    // 7. User A updates Topic status
+    console.log('\n[7] User A updates Topic status...');
     const updateTopRes = await fetch(`${API_BASE}/topics/${topicId}`, {
       method: 'PUT',
       headers: headersA,
@@ -124,8 +179,8 @@ async function runLiveVerification() {
     if (updateTopData.data.topic.status !== 'mastered') throw new Error('Expected status to be mastered');
     console.log(`✓ Updated topic status to "${updateTopData.data.topic.status}"`);
 
-    // 6. Cross-Tenant Security Verification (User B attacks User A's resources)
-    console.log('\n[6] Cross-tenant Isolation Verification (User B accessing User A)...');
+    // 8. Cross-Tenant Security Verification (User B attacks User A's resources)
+    console.log('\n[8] Cross-tenant Isolation Verification (User B accessing User A)...');
 
     const bGetSubj = await fetch(`${API_BASE}/subjects/${subjectId}`, { headers: headersB });
     if (bGetSubj.status !== 404) throw new Error(`Expected 404 for User B reading Subject A, got ${bGetSubj.status}`);
@@ -180,9 +235,8 @@ async function runLiveVerification() {
     if (bDelTop.status !== 404) throw new Error(`Expected 404 for User B deleting Topic A, got ${bDelTop.status}`);
     console.log('✓ User B DELETE Topic A -> 404 Not Found (Passed)');
 
-    // 7. Cascading Deletion Verification
-    console.log('\n[7] Cascading Deletion Verification...');
-    // Create a second topic to test cascade
+    // 9. Cascading Deletion Verification
+    console.log('\n[9] Cascading Deletion Verification...');
     await fetch(`${API_BASE}/topics`, {
       method: 'POST',
       headers: headersA,
@@ -200,7 +254,6 @@ async function runLiveVerification() {
     if (delSubjRes.status !== 200) throw new Error('Failed to delete subject');
     console.log('✓ User A deleted Subject A');
 
-    // Confirm topics were cascaded in DB
     const remainingTopics = await Topic.find({ subjectId });
     if (remainingTopics.length !== 0) throw new Error(`Expected 0 topics after cascade, found ${remainingTopics.length}`);
     console.log(`✓ Confirmed 0 remaining topics in DB (Cascade succeeded)`);

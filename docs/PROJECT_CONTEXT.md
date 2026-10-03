@@ -55,7 +55,7 @@
 - **Application Cascade Deletion**: Deleting an owned subject cascades deletion to all child topics and cleans up workspace state.
 - **REST APIs**: Complete CRUD for subjects and topics mounted under `/api/v1/subjects` and `/api/v1/topics` with input validation, duplicate detection, and sequential ordering.
 - **Interactive UI**: API-backed `SubjectsPage` and `SubjectDetailPage` featuring real lists, create/edit modals, accessible delete confirmations, and loading/empty/error states.
-- **Automated & Live Verification**: 94 automated tests (59 server + 35 client), clean Vite production build, and live API regression verification against local server and Atlas MongoDB.
+- **Automated & Live Verification**: 102 automated tests (66 server + 36 client), clean Vite production build, and live API regression verification against local server and Atlas MongoDB (including comprehensive mastery contract validation).
 
 ---
 

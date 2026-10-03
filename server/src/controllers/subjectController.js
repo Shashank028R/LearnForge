@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 import { Subject } from '../models/Subject.js';
 import { Topic } from '../models/Topic.js';
 
+export const VALID_MASTERY_LEVELS = ['beginner', 'intermediate', 'advanced', 'comprehensive'];
+
 function sanitizeSubject(subject) {
   return {
     id: subject._id,
@@ -100,13 +102,12 @@ export async function createSubject(req, res, next) {
       });
     }
 
-    const validMastery = ['beginner', 'intermediate', 'advanced'];
-    if (!validMastery.includes(targetMasteryLevel)) {
+    if (!VALID_MASTERY_LEVELS.includes(targetMasteryLevel)) {
       return res.status(400).json({
         success: false,
         error: {
           code: 'VALIDATION_ERROR',
-          message: 'Invalid target mastery level.',
+          message: `Invalid target mastery level. Must be one of: ${VALID_MASTERY_LEVELS.join(', ')}.`,
           details: [{ field: 'targetMasteryLevel', issue: 'invalid_enum' }],
         },
         requestId: req.id || 'unknown',
@@ -340,12 +341,12 @@ export async function updateSubject(req, res, next) {
     }
 
     if (targetMasteryLevel !== undefined) {
-      if (!['beginner', 'intermediate', 'advanced'].includes(targetMasteryLevel)) {
+      if (!VALID_MASTERY_LEVELS.includes(targetMasteryLevel)) {
         return res.status(400).json({
           success: false,
           error: {
             code: 'VALIDATION_ERROR',
-            message: 'Invalid target mastery level.',
+            message: `Invalid target mastery level. Must be one of: ${VALID_MASTERY_LEVELS.join(', ')}.`,
             details: [{ field: 'targetMasteryLevel', issue: 'invalid_enum' }],
           },
           requestId: req.id || 'unknown',

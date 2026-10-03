@@ -183,23 +183,25 @@ All endpoints are mounted under `/api/v1` and protected by `requireDatabase` and
 ## 7. Verification & Testing
 
 ### 7.1 Automated Backend Tests (`server/tests/subjects.test.js`)
-21 automated tests covering:
+28 automated tests covering:
 - Authentication requirement on subjects and topics endpoints.
 - CRUD operations for subjects.
+- Target mastery contract validation (`beginner`, `intermediate`, `advanced`, `comprehensive`, and invalid 400 rejection on create and update).
 - Duplicate subject name prevention per user.
 - Status and search query filtering.
 - Sequential topic ordering and topic count maintenance.
 - Cross-tenant authorization isolation (User B attempting GET, PUT, DELETE on User A's subjects and topics).
 - Cascading deletion of topics when a subject is deleted.
-- Total server test suite: **59 tests passing across 6 test files**.
+- Total server test suite: **66 tests passing across 6 test files**.
 
 ### 7.2 Automated Frontend Tests (`client/src/pages/Subjects.test.jsx`, `client/src/App.test.jsx`)
 - Loading skeleton state verification.
 - Empty state rendering and dialog trigger.
 - Subject creation form submission and immediate UI update.
+- Target mastery selection including `comprehensive` rendering and submission.
 - Subject deletion with accessible confirmation modal.
 - Subject detail view with topic listing, concept tags, and topic creation modal.
-- Total client test suite: **35 tests passing across 3 test files**.
+- Total client test suite: **36 tests passing across 3 test files**.
 
 ### 7.3 Production Build Verification
 - Vite production build completed with 0 errors: `built in 7.66s`, generating 260kB gzipped JavaScript bundle.

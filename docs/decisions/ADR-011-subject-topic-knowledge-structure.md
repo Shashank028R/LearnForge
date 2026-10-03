@@ -67,7 +67,7 @@ Separate `Subject` and `Topic` collections in MongoDB with denormalized `userId`
   description: String,       // Optional, max 500 chars
   color: String,             // Visual theme token (default: '#3b82f6')
   status: String,            // 'active' | 'archived' (default: 'active')
-  targetMasteryLevel: String,// 'beginner' | 'intermediate' | 'advanced'
+  targetMasteryLevel: String,// 'beginner' | 'intermediate' | 'advanced' | 'comprehensive'
   topicsCount: Number,       // Cached count of child topics
   createdAt: Date,
   updatedAt: Date
