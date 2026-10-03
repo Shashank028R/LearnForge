@@ -8,12 +8,24 @@ import { Topic } from '../models/Topic.js';
  * Formats a chat document for standard API response envelopes.
  */
 function formatChatResponse(chat, subjectDoc = null, topicDoc = null) {
+  const rawSubjectId = chat.subjectId && typeof chat.subjectId === 'object' && chat.subjectId._id
+    ? chat.subjectId._id.toString()
+    : chat.subjectId
+    ? chat.subjectId.toString()
+    : null;
+
+  const rawTopicId = chat.topicId && typeof chat.topicId === 'object' && chat.topicId._id
+    ? chat.topicId._id.toString()
+    : chat.topicId
+    ? chat.topicId.toString()
+    : null;
+
   const formatted = {
     id: chat._id.toString(),
     _id: chat._id.toString(),
     userId: chat.userId.toString(),
-    subjectId: chat.subjectId ? chat.subjectId.toString() : null,
-    topicId: chat.topicId ? chat.topicId.toString() : null,
+    subjectId: rawSubjectId,
+    topicId: rawTopicId,
     title: chat.title,
     status: chat.status,
     messagesCount: chat.messagesCount || 0,
@@ -398,13 +410,13 @@ export async function getChat(req, res, next) {
 }
 
 /**
- * PUT /api/v1/chats/:chatId
- * Updates chat metadata (title, status).
+ * PUT / PATCH /api/v1/chats/:chatId
+ * Updates chat metadata (title, status, metadata) and safely reassigns subjectId/topicId.
  */
 export async function updateChat(req, res, next) {
   try {
     const { chatId } = req.params;
-    const { title, status, metadata } = req.body || {};
+    const { title, status, subjectId, topicId, metadata } = req.body || {};
 
     if (!mongoose.Types.ObjectId.isValid(chatId)) {
       return res.status(400).json({
@@ -462,22 +474,212 @@ export async function updateChat(req, res, next) {
       chat.status = status;
     }
 
+    // Handle subjectId / topicId Reassignment
+    let newSubjectId = chat.subjectId;
+    let newTopicId = chat.topicId;
+    let subjectChanged = false;
+
+    if (subjectId !== undefined || topicId !== undefined) {
+      let targetSubjectDoc = null;
+      let targetTopicDoc = null;
+
+      if (topicId !== undefined && topicId !== null && topicId !== '') {
+        if (!mongoose.Types.ObjectId.isValid(topicId)) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Invalid topic identifier.',
+              details: [{ field: 'topicId', issue: 'invalid_object_id' }],
+            },
+            requestId: req.id || 'unknown',
+          });
+        }
+
+        targetTopicDoc = await Topic.findOne({ _id: topicId, userId: req.user._id });
+        if (!targetTopicDoc) {
+          return res.status(404).json({
+            success: false,
+            error: {
+              code: 'NOT_FOUND',
+              message: 'Referenced topic not found or does not belong to your account.',
+              details: [{ field: 'topicId', issue: 'topic_not_found' }],
+            },
+            requestId: req.id || 'unknown',
+          });
+        }
+
+        const topicSubjectIdStr = targetTopicDoc.subjectId ? targetTopicDoc.subjectId.toString() : null;
+
+        if (subjectId !== undefined && subjectId !== null && subjectId !== '') {
+          if (!mongoose.Types.ObjectId.isValid(subjectId)) {
+            return res.status(400).json({
+              success: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Invalid subject identifier.',
+                details: [{ field: 'subjectId', issue: 'invalid_object_id' }],
+              },
+              requestId: req.id || 'unknown',
+            });
+          }
+
+          if (topicSubjectIdStr !== subjectId.toString()) {
+            return res.status(400).json({
+              success: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Topic does not belong to the specified subject.',
+                details: [{ field: 'topicId', issue: 'topic_subject_mismatch' }],
+              },
+              requestId: req.id || 'unknown',
+            });
+          }
+
+          targetSubjectDoc = await Subject.findOne({ _id: subjectId, userId: req.user._id });
+          if (!targetSubjectDoc) {
+            return res.status(404).json({
+              success: false,
+              error: {
+                code: 'NOT_FOUND',
+                message: 'Referenced subject not found or does not belong to your account.',
+                details: [{ field: 'subjectId', issue: 'subject_not_found' }],
+              },
+              requestId: req.id || 'unknown',
+            });
+          }
+        } else {
+          // Auto-resolve parent subject from topic
+          targetSubjectDoc = await Subject.findOne({ _id: targetTopicDoc.subjectId, userId: req.user._id });
+        }
+
+        newTopicId = targetTopicDoc._id;
+        newSubjectId = targetSubjectDoc ? targetSubjectDoc._id : null;
+        subjectChanged = true;
+      } else if (topicId === null || topicId === '') {
+        // Explicitly clearing topic
+        newTopicId = null;
+
+        if (subjectId !== undefined) {
+          if (subjectId !== null && subjectId !== '') {
+            if (!mongoose.Types.ObjectId.isValid(subjectId)) {
+              return res.status(400).json({
+                success: false,
+                error: {
+                  code: 'VALIDATION_ERROR',
+                  message: 'Invalid subject identifier.',
+                  details: [{ field: 'subjectId', issue: 'invalid_object_id' }],
+                },
+                requestId: req.id || 'unknown',
+              });
+            }
+
+            targetSubjectDoc = await Subject.findOne({ _id: subjectId, userId: req.user._id });
+            if (!targetSubjectDoc) {
+              return res.status(404).json({
+                success: false,
+                error: {
+                  code: 'NOT_FOUND',
+                  message: 'Referenced subject not found or does not belong to your account.',
+                  details: [{ field: 'subjectId', issue: 'subject_not_found' }],
+                },
+                requestId: req.id || 'unknown',
+              });
+            }
+            newSubjectId = targetSubjectDoc._id;
+          } else {
+            newSubjectId = null;
+          }
+          subjectChanged = true;
+        }
+      } else if (subjectId !== undefined) {
+        // topicId was not provided, but subjectId was provided
+        if (subjectId !== null && subjectId !== '') {
+          if (!mongoose.Types.ObjectId.isValid(subjectId)) {
+            return res.status(400).json({
+              success: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Invalid subject identifier.',
+                details: [{ field: 'subjectId', issue: 'invalid_object_id' }],
+              },
+              requestId: req.id || 'unknown',
+            });
+          }
+
+          targetSubjectDoc = await Subject.findOne({ _id: subjectId, userId: req.user._id });
+          if (!targetSubjectDoc) {
+            return res.status(404).json({
+              success: false,
+              error: {
+                code: 'NOT_FOUND',
+                message: 'Referenced subject not found or does not belong to your account.',
+                details: [{ field: 'subjectId', issue: 'subject_not_found' }],
+              },
+              requestId: req.id || 'unknown',
+            });
+          }
+
+          newSubjectId = targetSubjectDoc._id;
+          subjectChanged = true;
+
+          // If existing topic does not belong to new subject, detach topic
+          if (chat.topicId) {
+            const existingTopic = await Topic.findOne({ _id: chat.topicId, userId: req.user._id });
+            if (existingTopic && existingTopic.subjectId.toString() !== subjectId.toString()) {
+              newTopicId = null;
+            }
+          }
+        } else {
+          // Setting subject to null also clears topic
+          newSubjectId = null;
+          newTopicId = null;
+          subjectChanged = true;
+        }
+      }
+
+      // Reconcile Topic.chatsCount
+      const oldTopicIdStr = chat.topicId ? chat.topicId.toString() : null;
+      const newTopicIdStr = newTopicId ? newTopicId.toString() : null;
+
+      if (oldTopicIdStr !== newTopicIdStr) {
+        if (oldTopicIdStr) {
+          await Topic.updateOne(
+            { _id: oldTopicIdStr, userId: req.user._id, chatsCount: { $gt: 0 } },
+            { $inc: { chatsCount: -1 } }
+          );
+        }
+        if (newTopicIdStr) {
+          await Topic.updateOne(
+            { _id: newTopicIdStr, userId: req.user._id },
+            { $inc: { chatsCount: 1 } }
+          );
+        }
+        chat.topicId = newTopicId;
+      }
+
+      if (subjectChanged) {
+        chat.subjectId = newSubjectId;
+      }
+    }
+
     if (metadata && typeof metadata === 'object') {
       chat.metadata = { ...chat.metadata, ...metadata };
     }
 
     await chat.save();
 
-    await chat.populate('subjectId', 'name color');
-    await chat.populate('topicId', 'title status orderIndex');
+    const populatedChat = await Chat.findOne({ _id: chat._id, userId: req.user._id })
+      .populate('subjectId', 'name color')
+      .populate('topicId', 'title status orderIndex');
 
-    const subjectDoc = chat.subjectId && typeof chat.subjectId === 'object' ? chat.subjectId : null;
-    const topicDoc = chat.topicId && typeof chat.topicId === 'object' ? chat.topicId : null;
+    const subjectDoc = populatedChat.subjectId && typeof populatedChat.subjectId === 'object' ? populatedChat.subjectId : null;
+    const topicDoc = populatedChat.topicId && typeof populatedChat.topicId === 'object' ? populatedChat.topicId : null;
 
     return res.status(200).json({
       success: true,
       data: {
-        chat: formatChatResponse(chat, subjectDoc, topicDoc),
+        chat: formatChatResponse(populatedChat, subjectDoc, topicDoc),
       },
       meta: {
         requestId: req.id || 'unknown',
@@ -621,11 +823,14 @@ export async function listMessages(req, res, next) {
 /**
  * POST /api/v1/chats/:chatId/messages
  * Appends a message to the chat and generates an assistant exchange.
+ * Security Trust Boundary:
+ * - Client messages MUST have role "user" (or omit role).
+ * - "assistant" and "system" roles cannot be supplied by clients (returns 400).
  */
 export async function sendMessage(req, res, next) {
   try {
     const { chatId } = req.params;
-    const { content, role = 'user', metadata } = req.body || {};
+    const { content, role, metadata } = req.body || {};
 
     if (!mongoose.Types.ObjectId.isValid(chatId)) {
       return res.status(400).json({
@@ -634,6 +839,19 @@ export async function sendMessage(req, res, next) {
           code: 'VALIDATION_ERROR',
           message: 'Invalid chat identifier.',
           details: [{ field: 'chatId', issue: 'invalid_object_id' }],
+        },
+        requestId: req.id || 'unknown',
+      });
+    }
+
+    // Role Trust Boundary: Client messages must only be 'user'
+    if (role !== undefined && role !== 'user') {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Client messages must use role "user". Roles "assistant" and "system" cannot be created by clients.',
+          details: [{ field: 'role', issue: 'invalid_client_role' }],
         },
         requestId: req.id || 'unknown',
       });
@@ -679,55 +897,75 @@ export async function sendMessage(req, res, next) {
       });
     }
 
-    // Determine current highest sequenceIndex
-    const lastMessage = await Message.findOne({ chatId: chat._id })
-      .sort({ sequenceIndex: -1 })
-      .lean();
+    const subjectName = chat.subjectId && typeof chat.subjectId === 'object' ? chat.subjectId.name : null;
+    const topicTitle = chat.topicId && typeof chat.topicId === 'object' ? chat.topicId.title : null;
 
-    const nextSequenceIndex = lastMessage ? lastMessage.sequenceIndex + 1 : 0;
+    // Phase 04 Deterministic Socratic Preview (NOT an external AI model integration)
+    const assistantContent = generateAssistantPrompt(content.trim(), subjectName, topicTitle);
 
-    const userMessage = await Message.create({
-      chatId: chat._id,
-      userId: req.user._id,
-      role: role === 'system' ? 'system' : 'user',
-      content: content.trim(),
-      sequenceIndex: nextSequenceIndex,
-      status: 'sent',
-      metadata: metadata && typeof metadata === 'object' ? metadata : {},
-    });
-
-    const messages = [formatMessageResponse(userMessage)];
-
-    // Generate assistant response if user message
-    let addedCount = 1;
-    if (userMessage.role === 'user') {
-      const subjectName = chat.subjectId && typeof chat.subjectId === 'object' ? chat.subjectId.name : null;
-      const topicTitle = chat.topicId && typeof chat.topicId === 'object' ? chat.topicId.title : null;
-
-      const assistantContent = generateAssistantPrompt(userMessage.content, subjectName, topicTitle);
-
-      const assistantMessage = await Message.create({
-        chatId: chat._id,
-        userId: req.user._id,
+    const messageBatch = [
+      {
+        role: 'user',
+        content: content.trim(),
+        status: 'sent',
+        metadata: metadata && typeof metadata === 'object' ? metadata : {},
+      },
+      {
         role: 'assistant',
         content: assistantContent,
-        sequenceIndex: nextSequenceIndex + 1,
         status: 'sent',
         metadata: { engine: 'phase-04-socratic-preview' },
-      });
+      },
+    ];
 
-      messages.push(formatMessageResponse(assistantMessage));
-      addedCount = 2;
+    // Concurrency-safe sequence allocation with duplicate-key collision recovery
+    let insertedDocs = null;
+    const maxRetries = 5;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const lastMessage = await Message.findOne({ chatId: chat._id })
+          .sort({ sequenceIndex: -1 })
+          .lean();
+
+        const baseSequenceIndex = lastMessage ? lastMessage.sequenceIndex + 1 : 0;
+
+        const docsToInsert = messageBatch.map((msg, idx) => ({
+          chatId: chat._id,
+          userId: req.user._id,
+          role: msg.role,
+          content: msg.content,
+          sequenceIndex: baseSequenceIndex + idx,
+          status: msg.status,
+          metadata: msg.metadata,
+        }));
+
+        insertedDocs = await Message.insertMany(docsToInsert, { ordered: true });
+        break;
+      } catch (err) {
+        const isDuplicateKey =
+          err.code === 11000 ||
+          (err.writeErrors && err.writeErrors.some((e) => e.code === 11000));
+
+        if (isDuplicateKey && attempt < maxRetries - 1) {
+          // Collision occurred on sequenceIndex; back off briefly and retry with fresh sequence
+          await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+          continue;
+        }
+        throw err;
+      }
     }
+
+    const formattedMessages = insertedDocs.map(formatMessageResponse);
 
     // Auto-update title if initial generic title
     const updates = {
       lastMessageAt: new Date(),
-      $inc: { messagesCount: addedCount },
+      $inc: { messagesCount: formattedMessages.length },
     };
 
-    if (chat.title === 'New Conversation' && userMessage.content.length > 0) {
-      updates.title = userMessage.content.slice(0, 60);
+    if (chat.title === 'New Conversation' && content.trim().length > 0) {
+      updates.title = content.trim().slice(0, 60);
     }
 
     await Chat.updateOne({ _id: chat._id }, updates);
@@ -735,9 +973,9 @@ export async function sendMessage(req, res, next) {
     return res.status(201).json({
       success: true,
       data: {
-        messages,
-        userMessage: messages[0],
-        assistantMessage: messages[1] || null,
+        messages: formattedMessages,
+        userMessage: formattedMessages[0],
+        assistantMessage: formattedMessages[1] || null,
       },
       meta: {
         requestId: req.id || 'unknown',

@@ -5,10 +5,10 @@ This log is the permanent chronological engineering journal for the LearnForge p
 ## [Phase 04] Chat Infrastructure
 
 - **Date**: October 4, 2026
-- **Status**: Completed
+- **Status**: Completed — Hardened
 - **Phase**: Phase 04 — Chat Infrastructure
 - **Core Principle**: *"Knowledge is the product. Conversations are evidence."*
-- **Objective**: Build durable Chat and Message infrastructure in MongoDB, enforce deterministic chronological sequence indexing, strict multi-tenant authorization boundaries, full CRUD REST APIs, topic/subject syllabus linkage, and an accessible, responsive two-pane UI workspace, while establishing clean forward-compatibility for downstream AI Gateway routing (Phase 05), knowledge extraction (Phase 06), and note synthesis (Phase 07).
+- **Objective**: Build durable Chat and Message infrastructure in MongoDB, enforce deterministic chronological sequence indexing with duplicate-key collision recovery, strict message role trust boundaries, full CRUD and safe topic/subject reassignment REST APIs, and an accessible, responsive two-pane UI workspace, while establishing clean forward-compatibility for downstream AI Gateway routing (Phase 05), knowledge extraction (Phase 06), and note synthesis (Phase 07).
 
 ### Work Performed
 1. **Architectural Foundations & ADR-012**:
@@ -16,22 +16,24 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - Adopted normalized collections with denormalized `userId` on both models and compound unique indexing `{ chatId: 1, sequenceIndex: 1 }` (ADR-012).
    - Designed schema readiness with `metadata: {}` for downstream tokens, model parameters, sources, and citations.
 2. **Domain Persistence & Models**:
-   - Created `server/src/models/Chat.js`: `userId`, `subjectId` (optional), `topicId` (optional), `title`, `status`, `messagesCount`, `lastMessageAt`, `metadata`. Indexes: `{ userId: 1, status: 1, lastMessageAt: -1 }`, `{ userId: 1, topicId: 1, lastMessageAt: -1 }`, `{ userId: 1, subjectId: 1, lastMessageAt: -1 }`.
-   - Created `server/src/models/Message.js`: `chatId`, `userId`, `role`, `content`, `sequenceIndex`, `status`, `metadata`. Indexes: unique `{ chatId: 1, sequenceIndex: 1 }`, `{ userId: 1, chatId: 1 }`.
-3. **REST APIs & Controllers**:
-   - `server/src/controllers/chatController.js`: Handlers for `listChats`, `createChat` (with optional `initialMessage` and initial Socratic assistant exchange), `getChat` (with count reconciliation), `updateChat`, `deleteChat`, `listMessages`, `sendMessage`.
+   - Created `server/src/models/Chat.js`: `userId`, `subjectId` (optional), `topicId` (optional), `title` (max 200), `status` (`active` | `archived`), `messagesCount`, `lastMessageAt`, `metadata`. Indexes: `{ userId: 1, status: 1, lastMessageAt: -1 }`, `{ userId: 1, topicId: 1, lastMessageAt: -1 }`, `{ userId: 1, subjectId: 1, lastMessageAt: -1 }`.
+   - Created `server/src/models/Message.js`: `chatId`, `userId`, `role` (`user` | `assistant` | `system`), `content` (max 20,000), `sequenceIndex`, `status` (`sent` | `delivered` | `error`), `metadata`. Indexes: unique `{ chatId: 1, sequenceIndex: 1 }`, `{ userId: 1, chatId: 1 }`.
+3. **REST APIs, Reassignment & Role Trust Boundary**:
+   - `server/src/controllers/chatController.js`: Handlers for `listChats`, `createChat` (with optional `initialMessage` and deterministic Socratic preview), `getChat` (with count reconciliation), `updateChat` (`PUT` / `PATCH` supporting safe `subjectId` and `topicId` reassignment, ownership checks, consistency validation, and `Topic.chatsCount` maintenance), `deleteChat`, `listMessages`, `sendMessage`.
+   - Hardened `sendMessage`: Enforced Message Role Trust Boundary (client messages must use `role: "user"`, rejecting `assistant` and `system` roles with 400 `VALIDATION_ERROR`). Implemented concurrency-safe sequence allocation retry loop on duplicate key collisions (code 11000).
    - `server/src/routes/chats.js`: Protected via `requireDatabase` and `authenticateUser`.
    - Updated `subjectController.js` and `topicController.js` for cascading deletions of associated chats/messages and reconciliation of `Topic.chatsCount`.
 4. **Interactive Frontend UI**:
    - `client/src/api/chatsApi.js`: Centralized service for chats and messages API calls.
-   - `client/src/pages/ChatsPage.jsx`: Responsive two-pane workspace with search filter, status tabs (Active, Archived, All), New Chat modal with topic/subject selector, active message thread, avatars, markdown-ready styling, timestamps, copy to clipboard, and auto-expanding message composer.
+   - `client/src/pages/ChatsPage.jsx`: Responsive two-pane workspace with search filter, status tabs (Active, Archived, All), New Chat modal with topic/subject selector, active message thread, avatars, markdown bubble styling, timestamps, copy to clipboard, and auto-expanding message composer.
    - `client/src/components/ui/Icon.jsx`: Added native SVG paths for `send`, `sparkles`, `copy`, and `archive`.
    - `client/src/routes/AppRoutes.jsx`: Connected `ChatsPage` to protected routes `/chats` and `/chats/:chatId`.
 5. **Testing & Verification**:
-   - Added 17 automated backend tests in `server/tests/chats.test.js` (server total: 83 tests passing).
+   - Added 28 automated backend tests in `server/tests/chats.test.js` (server total: 94 tests passing).
    - Added 4 automated frontend tests in `client/src/pages/Chats.test.jsx` (client total: 40 tests passing).
-   - Verified Vite production build (`dist/` generated in 13.46s with 0 errors).
-   - Executed live verification script `server/scripts/verify_phase04_live.js` against running backend and Atlas MongoDB (CRUD, message flows, sequence indexing, cross-tenant 404 security checks, and full cascading deletions).
+   - Total Monorepo Tests: 134 tests passing (100%).
+   - Verified Vite production build (`dist/` generated in 7.13s with 0 errors).
+   - Executed live verification script `server/scripts/verify_phase04_live.js` against running backend and Atlas MongoDB (CRUD, safe reassignment, topic count maintenance, role trust boundary, concurrency sequence indexing, cross-tenant 404 security checks, and full cascading deletions).
 
 ---
 

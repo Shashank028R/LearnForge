@@ -81,12 +81,17 @@ We adopt **Option B**: Normalized `Chat` and `Message` collections in MongoDB wi
 
 ---
 
-## 4. Multi-Tenant Authorization & Cascade Policy
+## 4. Multi-Tenant Authorization, Role Trust Boundary & Cascade Policy
 
-1. **Client `userId` Ignored**: All operations derive tenant identity from `req.user._id` set by authentication middleware.
-2. **Cross-Tenant Privacy**: Queries targeting non-owned chats return `404 Not Found` to prevent resource ID enumeration attacks.
-3. **Parent Ownership Validation**: Creating a topic-linked chat validates that both `subjectId` and `topicId` belong to `req.user._id`.
-4. **Application-Level Cascading Lifecycle**:
+1. **Client `userId` Ignored**: All operations derive tenant identity strictly from `req.user._id` set by authentication middleware.
+2. **Message Role Trust Boundary**:
+   - Client endpoint `POST /api/v1/chats/:chatId/messages` only accepts `role: "user"`.
+   - Attempts by client to supply `role: "system"` or `role: "assistant"` are rejected with `400 VALIDATION_ERROR`.
+   - This ensures prompt injection and history forgery cannot occur when Phase 05 constructs LLM prompts.
+3. **Cross-Tenant Privacy**: Queries targeting non-owned chats return `404 Not Found` to prevent resource ID enumeration attacks.
+4. **Parent Ownership Validation & Safe Reassignment**: Creating or reassigning a chat validates that both `subjectId` and `topicId` belong to `req.user._id`, rejects inconsistent subject/topic pairs with 400, and updates old/new Topic `chatsCount` via coordinated application updates.
+5. **Concurrency-Safe Sequence Allocation**: Appending messages uses an integer sequence generator wrapped in a retry loop on MongoDB duplicate key errors (code 11000 on `{ chatId: 1, sequenceIndex: 1 }`), ensuring deterministic monotonic ordering under high concurrent write loads without requiring multi-document transactions.
+6. **Application-Level Cascading Lifecycle**:
    - `DELETE /api/v1/chats/:id`: Purges child messages (`Message.deleteMany({ chatId, userId })`) and decrements `Topic.chatsCount`.
    - `DELETE /api/v1/topics/:id`: Purges child chats and messages, then decrements `Subject.topicsCount`.
    - `DELETE /api/v1/subjects/:id`: Purges child topics, chats, and messages.

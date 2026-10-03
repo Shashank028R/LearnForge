@@ -379,5 +379,10 @@ Storing messages in an embedded array inside the `Chat` document quickly runs in
 **Answer**:  
 The synchronous HTTP response cycle for `POST /api/v1/chats/:id/messages` only performs fast message validation, persistence, and assistant message delivery (sub-50ms). Post-interaction cognitive workloads—such as extracting conceptual understanding into `Topic.knowledgeState` or proposing note block diffs—are decoupled as background domain events, preventing user-perceived chat latency.
 
+### Q49: What is the Message Role Trust Boundary and why is it critical for LLM security?
+**Answer**:  
+In LearnForge, `POST /api/v1/chats/:chatId/messages` strictly rejects client requests attempting to specify `role: "system"` or `role: "assistant"` with `400 VALIDATION_ERROR`. Only `role: "user"` (or omitted) is accepted from clients. This trust boundary prevents untrusted clients from inserting falsified system instructions or spoofing previous assistant answers in persisted chat history. When Phase 05 (AI Gateway) reconstructs conversational history into prompts for LLMs (Gemini, Anthropic, OpenAI), authoritative system instructions remain strictly under server control, mitigating indirect prompt injection.
 
-
+### Q50: How are sequence collisions handled during concurrent message appends without distributed transactions?
+**Answer**:  
+Each `Message` document enforces a compound unique index on `{ chatId: 1, sequenceIndex: 1 }`. When appending messages, the server inspects the highest current sequence index in the chat and inserts the new batch. If two concurrent requests attempt to allocate the same sequence index, MongoDB enforces the unique constraint and rejects the second with error code `11000`. The server intercepts this collision in a short backoff retry loop (up to 5 attempts), refetches the newly advanced sequence index, and inserts successfully. This achieves 100% deterministic ordering without requiring multi-document replica set transactions.

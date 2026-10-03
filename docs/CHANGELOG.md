@@ -13,26 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Domain Models & Persistence**:
   - `Chat.js`: User-owned chat sessions optionally linked to `Subject` and `Topic` with status, message counter, and compound activity indexes.
   - `Message.js`: User-owned message turns with compound unique sequential indexing `{ chatId: 1, sequenceIndex: 1 }` and metadata readiness for downstream AI features.
-- **REST APIs**:
-  - Full CRUD endpoints under `/api/v1/chats` (`GET /`, `POST /`, `GET /:id`, `PUT /:id`, `DELETE /:id`).
+- **REST APIs & Reassignment**:
+  - Full CRUD and safe topic/subject reassignment endpoints under `/api/v1/chats` (`GET /`, `POST /`, `GET /:id`, `PUT /:id`, `PATCH /:id`, `DELETE /:id`).
   - Message exchange endpoints under `/api/v1/chats/:id/messages` (`GET /`, `POST /`).
+- **Security & Concurrency Hardening**:
+  - Enforced Message Role Trust Boundary (`POST /api/v1/chats/:id/messages` only allows `role: "user"`, rejecting `assistant` and `system` client injections with 400).
+  - Implemented concurrency-safe sequence allocation retry loop on duplicate key collisions (code 11000).
+  - Automated cascade deletion from Subject → Topic → Chat → Messages.
+  - Topic `chatsCount` increment/decrement lifecycle and read reconciliation.
+  - Strict tenant isolation returning 404 on cross-user queries and cross-tenant reassignments.
 - **Interactive Two-Pane UI**:
   - `ChatsPage.jsx`: Full responsive conversation history sidebar, search filter, status tabs, New Chat modal with topic/subject selector, message thread with student & assistant avatars, copy utility, and auto-expanding composer.
   - `chatsApi.js`: Centralized client API service for chats and messages.
   - Added native SVG icons in `Icon.jsx`: `send`, `sparkles`, `copy`, `archive`.
   - Connected `/chats` and `/chats/:chatId` in `AppRoutes.jsx`.
-- **Cascading Lifecycle & Security**:
-  - Automated cascade deletion from Subject → Topic → Chat → Messages.
-  - Topic `chatsCount` increment/decrement lifecycle and read reconciliation.
-  - Strict tenant isolation returning 404 on cross-user queries.
 - **Architectural Documentation**:
   - Authored `docs/decisions/ADR-012-chat-and-message-infrastructure.md`.
   - Authored `docs/phases/phase-04-chat-infrastructure.md`.
+  - Added technical interview questions Q46–Q50 in `docs/interview/INTERVIEW_GUIDE.md`.
 - **Automated & Live Tests**:
-  - 17 backend tests in `server/tests/chats.test.js` (total server tests: 83).
+  - 28 backend tests in `server/tests/chats.test.js` (total server tests: 94).
   - 4 frontend tests in `client/src/pages/Chats.test.jsx` (total client tests: 40).
-  - Total automated monorepo tests increased to 123 tests (100% passing).
-  - Live verification script `server/scripts/verify_phase04_live.js` passing against live MongoDB Atlas.
+  - Total automated monorepo tests increased to 134 tests (100% passing).
+  - Extended live verification script `server/scripts/verify_phase04_live.js` passing against live MongoDB Atlas and local backend across 11 stages and 17 verification points.
 
 ---
 

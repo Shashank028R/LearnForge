@@ -21,6 +21,7 @@ router.get('/chats', listChats);
 router.post('/chats', createChat);
 router.get('/chats/:chatId', getChat);
 router.put('/chats/:chatId', updateChat);
+router.patch('/chats/:chatId', updateChat);
 router.delete('/chats/:chatId', deleteChat);
 
 // Chat Messages Endpoints
