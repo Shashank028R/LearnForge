@@ -113,7 +113,7 @@ Stores pending 6-digit passwordless verification codes. Plaintext codes are neve
 
 ---
 
-## 3. Knowledge Hierarchy Entities (Phase 03 Implemented)
+## 3. Knowledge Hierarchy & Governance Entities (Phase 03 & 04.1 Implemented)
 
 ### 3.1 Subject
 Represents a user-owned learning discipline or course syllabus.
@@ -128,7 +128,9 @@ Represents a user-owned learning discipline or course syllabus.
   color: String,             // Color hex code (default: '#3b82f6')
   status: String,            // 'active' | 'archived' (default: 'active')
   targetMasteryLevel: String,// 'beginner' | 'intermediate' | 'advanced' | 'comprehensive'
-  topicsCount: Number,       // Cached counter of child topics maintained via coordinated application updates (default: 0)
+  topicsCount: Number,       // Maintained count of canonical topics (default: 0)
+  syllabusStatus: String,    // 'no_syllabus' | 'draft' | 'approved' (default: 'no_syllabus')
+  activeSyllabusVersionId: ObjectId, // Ref: 'SyllabusVersion', nullable
   createdAt: Date,
   updatedAt: Date
 }
@@ -136,10 +138,55 @@ Represents a user-owned learning discipline or course syllabus.
 **Indexes**:
 - Unique Compound Index: `{ userId: 1, normalizedName: 1 }, { unique: true }` — prevents duplicate subject names within a user's workspace.
 - Dashboard Query Index: `{ userId: 1, status: 1, updatedAt: -1 }` — optimizes workspace filtering and chronological display.
+- Syllabus Status Index: `{ syllabusStatus: 1 }`
 
 ---
 
-### 3.2 Topic
+### 3.2 SyllabusVersion
+Represents an immutable or draft curriculum proposal / authoritative learning contract.
+
+```javascript
+{
+  _id: ObjectId,
+  subjectId: ObjectId,       // Ref: 'Subject', indexed, required
+  userId: ObjectId,          // Ref: 'User', indexed, required
+  version: Number,           // Monotonic version number (1, 2, 3...), required
+  status: String,            // 'draft' | 'approved' | 'superseded' (default: 'draft')
+  title: String,             // Curriculum title (default: 'Curriculum Syllabus')
+  sections: [
+    {
+      _id: ObjectId,
+      key: String,           // Stable key (e.g. 'sec-1')
+      title: String,
+      description: String,
+      orderIndex: Number,
+      topics: [
+        {
+          _id: ObjectId,
+          key: String,       // Stable key (e.g. 'top-1-1')
+          title: String,
+          description: String,
+          orderIndex: Number,
+          estimatedMinutes: Number
+        }
+      ]
+    }
+  ],
+  source: String,            // 'user_created' | 'ai_assisted' | 'imported'
+  changeSummary: String,     // Revision notes
+  approvedAt: Date,          // Timestamp of explicit approval
+  supersededAt: Date,        // Timestamp when replaced by a newer approved version
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Compound Unique Version Index: `{ subjectId: 1, version: 1 }, { unique: true }`
+- Compound Version Listing Index: `{ userId: 1, subjectId: 1, version: -1 }`
+
+---
+
+### 3.3 Topic
 Represents a curriculum unit or module belonging to a Subject with an embedded knowledge state.
 
 ```javascript
@@ -159,7 +206,7 @@ Represents a curriculum unit or module belonging to a Subject with an embedded k
     lastStudiedAt: Date      // Timestamp of last interaction
   },
   notesCount: Number,        // Future Phase 07 counter (default: 0)
-  chatsCount: Number,        // Future Phase 04 counter (default: 0)
+  chatsCount: Number,        // Phase 04 counter (default: 0)
   createdAt: Date,
   updatedAt: Date
 }
@@ -171,7 +218,7 @@ Represents a curriculum unit or module belonging to a Subject with an embedded k
 
 ---
 
-### 3.3 Chat
+### 3.4 Chat
 Represents an interactive conversation session optionally anchored to a Subject and Topic.
 
 ```javascript
@@ -197,7 +244,7 @@ Represents an interactive conversation session optionally anchored to a Subject 
 
 ---
 
-### 3.4 Message
+### 3.5 Message
 Represents an immutable conversational turn within a Chat session.
 
 ```javascript
@@ -210,6 +257,12 @@ Represents an immutable conversational turn within a Chat session.
   sequenceIndex: Number,     // 0-indexed sequential position counter, required
   status: String,            // 'sent' | 'delivered' | 'error' (default: 'sent')
   metadata: Object,          // Extensible metadata for tokens, model, citations
+  knowledgeContext: {
+    relevance: String,       // 'unclassified' | 'on_topic' | 'off_topic' | 'uncertain' (default: 'unclassified')
+    subjectId: ObjectId,     // Ref: 'Subject', nullable
+    topicId: ObjectId,       // Ref: 'Topic', nullable
+    disposition: String      // 'unclassified' | 'candidate' | 'excluded' | 'promoted' (default: 'unclassified')
+  },
   createdAt: Date,
   updatedAt: Date
 }
@@ -217,6 +270,27 @@ Represents an immutable conversational turn within a Chat session.
 **Indexes**:
 - Unique Compound Sequence Index: `{ chatId: 1, sequenceIndex: 1 }, { unique: true }` — guarantees strict deterministic chronological ordering and prevents collisions.
 - Tenant & Chat Query Index: `{ userId: 1, chatId: 1 }` — supports fast user-scoped aggregation and authorization.
+
+---
+
+### 3.6 Annotation
+Represents user-created auxiliary metadata (comments and tags) attached to a chat message.
+
+```javascript
+{
+  _id: ObjectId,
+  userId: ObjectId,          // Ref: 'User', indexed, required
+  chatId: ObjectId,          // Ref: 'Chat', indexed, required
+  messageId: ObjectId,       // Ref: 'Message', indexed, required
+  type: String,              // 'comment' | 'tag', required
+  content: String,           // Trimmed, max 1000 chars, required
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Message Annotation Index: `{ userId: 1, messageId: 1, createdAt: 1 }`
+- Chat Annotation Index: `{ userId: 1, chatId: 1, createdAt: 1 }`
 
 ---
 
@@ -241,3 +315,7 @@ Represents an immutable conversational turn within a Chat session.
    Subject `topicsCount` and Topic `chatsCount` are maintained through coordinated application-level updates without multi-document transactions when entities are created, reassigned, or deleted. Counts can also be reconciled from persisted child records upon single-entity retrieval. Cascading deletions are orchestrated at the application level (`Message.deleteMany` $\rightarrow$ `Chat.deleteMany` $\rightarrow$ `Topic.deleteMany` $\rightarrow$ `Subject.deleteOne`), avoiding multi-document transaction dependencies while preserving cross-tenant data safety.
 7. **Atomic Sequence Allocation & Unique Constraints**:
    Message ordering relies on `Chat.sequenceCounter` incremented atomically on the Chat document via `$inc`. Individual message documents enforce the unique compound constraint `{ chatId: 1, sequenceIndex: 1 }`. If a sequence index collision occurs due to legacy drift, an application retry loop reconciles the counter and safely retries without duplicating user message records.
+8. **Syllabus Immutability & Reconciled Topic Identity**:
+   Approved syllabus versions in `SyllabusVersion` are immutable historical records. Creating or editing draft syllabi never mutates canonical `Topic` records. When a version is explicitly approved (`POST /api/v1/subjects/:subjectId/syllabus/versions/:versionId/approve`), canonical topics are reconciled according to the approved version, preserving stable `Topic._id` for matching topics to maintain learning states, notes counts, and chat links without destructive recreation.
+9. **Auxiliary Annotations vs Canonical Knowledge**:
+   User comments and tags stored in `Annotation` are auxiliary metadata attached to raw conversational evidence. They are strictly segregated from `Topic.knowledgeState` and future canonical notes.

@@ -183,10 +183,28 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - Cross-tenant requests return `404 Not Found` rather than `403 Forbidden` to prevent resource ID enumeration attacks.
 
 ### 6.2 Cascade Lifecycle & Counter Management
-- When a `Subject` is deleted, all associated `Topic`, `Chat`, and `Message` records are purged.
-- When a `Topic` is deleted, all associated `Chat` and `Message` records are purged.
-- When a `Chat` is deleted, all child `Message` records are purged.
+- When a `Subject` is deleted, all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` records are purged.
+- When a `Topic` is deleted, all associated `Chat`, `Message`, and `Annotation` records are purged.
+- When a `Chat` is deleted, all child `Message` and `Annotation` records are purged.
 - Subject `topicsCount` and Topic `chatsCount` are maintained through coordinated application-level updates and reconciled on read lookups.
+
+### 6.3 Syllabus Lifecycle & Versioning (Phase 04.1)
+- Subjects start in `no_syllabus` state and do NOT require an approved syllabus for creation or topic management.
+- Draft syllabi are created with hierarchical sections and topics (`SyllabusVersion`, status: `draft`).
+- Multiple drafts can be edited safely; explicit user approval (`POST /api/v1/subjects/:id/syllabus/versions/:version/approve`) commits canonical topics into the `Topic` collection.
+- Approval reconciles canonical topics while preserving existing Topic `_id`s, descriptions, `notesCount`, `chatsCount`, and `knowledgeState` for matching normalized titles.
+- Prior approved versions transition to `superseded` status, ensuring an immutable version history.
+
+### 6.4 Knowledge Semantic Layers & Annotation Subsystem (Phase 04.1)
+- LearnForge enforces strict distinction across 7 semantic layers:
+  1. Raw conversation evidence (`Message`, `Chat`)
+  2. Draft syllabus (`SyllabusVersion`, status: `draft`)
+  3. Approved canonical syllabus (`SyllabusVersion`, status: `approved`)
+  4. Topic-related knowledge candidates
+  5. Canonical topic knowledge (`Topic.knowledgeState`)
+  6. Off-topic conversation (`Message.knowledgeContext.relevance: 'off_topic'`)
+  7. User-created comments/tags (`Annotation`)
+- `Annotation` model allows users to attach subjective commentary and semantic tags to messages and chats without polluting authoritative conversation evidence or canonical topic knowledge.
 
 ---
 
@@ -196,9 +214,11 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - **UI Shell Domain (Phase 02 & 02.1 - Implemented)**: Professional application shell, navigation, design tokens, route boundaries, and reusable primitives.
 - **Knowledge Hierarchy Domain (Phase 03 - Implemented)**: Subjects, topics, sequential ordering, and embedded knowledge state foundation.
 - **Conversation Domain (Phase 04 - Implemented)**: Chat sessions, chronological message sequencing (`sequenceIndex`), topic/subject context linking, and responsive two-pane workspace.
+- **Syllabus & Knowledge Governance Domain (Phase 04.1 - Implemented)**: Multi-version syllabus lifecycle, draft reconciliation, topic ID stability, off-topic data contract, and user annotations.
 - **AI Domain (Phase 05 - Planned)**: AI Gateway, task classification, and provider adapters (Gemini, OpenAI, Anthropic).
 - **Knowledge Extraction Domain (Phase 06 - Planned)**: Concept extraction, confidence tracking, and misconception detection.
 - **Notes Domain (Phase 07 - Planned)**: Structured block notes, versioning, and diff proposals.
 - **Study Mode Domain (Phase 08 - Planned)**: Socratic teacher logic, session objectives, and mastery pacing.
 - **Assessment Domain (Phase 10 - Planned)**: Quiz generation, attempts, and scoring.
 - **Import Domain (Phase 11 - Planned)**: External conversation parsing and knowledge merge.
+

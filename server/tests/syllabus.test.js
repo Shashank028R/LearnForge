@@ -1,0 +1,590 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import request from 'supertest';
+import mongoose from 'mongoose';
+import app from '../src/app.js';
+import { User } from '../src/models/User.js';
+import { UserSession } from '../src/models/UserSession.js';
+import { Subject } from '../src/models/Subject.js';
+import { Topic } from '../src/models/Topic.js';
+import { SyllabusVersion } from '../src/models/SyllabusVersion.js';
+import { hashSessionToken, generateSessionToken } from '../src/utils/authCrypto.js';
+
+describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () => {
+  let usersStore = new Map();
+  let sessionsStore = new Map();
+  let subjectsStore = new Map();
+  let topicsStore = new Map();
+  let syllabusStore = new Map();
+
+  let userA, userB;
+  let sessionCookieA, sessionCookieB;
+  let subjectA, subjectB;
+
+  beforeEach(() => {
+    usersStore.clear();
+    sessionsStore.clear();
+    subjectsStore.clear();
+    topicsStore.clear();
+    syllabusStore.clear();
+
+    // Mock User
+    vi.spyOn(User, 'findById').mockImplementation(async (id) => {
+      const u = usersStore.get(id?.toString());
+      if (!u) return null;
+      return { ...u, save: async () => u };
+    });
+
+    // Mock UserSession
+    vi.spyOn(UserSession, 'findOne').mockImplementation(async (query) => {
+      const hash = query.sessionTokenHash;
+      for (const s of sessionsStore.values()) {
+        if (s.sessionTokenHash === hash) {
+          return {
+            ...s,
+            save: async function () {
+              sessionsStore.set(s._id, { ...s, ...this });
+              return this;
+            },
+          };
+        }
+      }
+      return null;
+    });
+
+    // Mock Subject
+    vi.spyOn(Subject, 'findOne').mockImplementation(async (query) => {
+      for (const s of subjectsStore.values()) {
+        const idMatch = !query._id || s._id.toString() === query._id.toString();
+        const userMatch = !query.userId || s.userId.toString() === query.userId.toString();
+        if (idMatch && userMatch) {
+          return {
+            ...s,
+            save: async function () {
+              subjectsStore.set(s._id.toString(), { ...s, ...this });
+              return this;
+            },
+          };
+        }
+      }
+      return null;
+    });
+
+    // Mock Topic
+    vi.spyOn(Topic, 'find').mockImplementation((query) => {
+      const matched = [];
+      for (const t of topicsStore.values()) {
+        const subMatch = !query.subjectId || t.subjectId.toString() === query.subjectId.toString();
+        const userMatch = !query.userId || t.userId.toString() === query.userId.toString();
+        if (subMatch && userMatch) {
+          matched.push({
+            ...t,
+            save: async function () {
+              topicsStore.set(t._id.toString(), { ...t, ...this });
+              return this;
+            },
+          });
+        }
+      }
+      return {
+        sort: (sortObj) => {
+          if (sortObj?.orderIndex !== undefined) {
+            matched.sort((a, b) => a.orderIndex - b.orderIndex);
+          }
+          return Promise.resolve(matched);
+        },
+        then: (resolve) => resolve(matched),
+      };
+    });
+
+    vi.spyOn(Topic, 'create').mockImplementation(async (doc) => {
+      const id = new mongoose.Types.ObjectId();
+      const newTopic = {
+        _id: id,
+        ...doc,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      topicsStore.set(id.toString(), newTopic);
+      return newTopic;
+    });
+
+    vi.spyOn(Topic, 'countDocuments').mockImplementation(async (query) => {
+      let count = 0;
+      for (const t of topicsStore.values()) {
+        const subMatch = !query.subjectId || t.subjectId.toString() === query.subjectId.toString();
+        const userMatch = !query.userId || t.userId.toString() === query.userId.toString();
+        if (subMatch && userMatch) count++;
+      }
+      return count;
+    });
+
+    // Mock SyllabusVersion
+    vi.spyOn(SyllabusVersion, 'find').mockImplementation((query) => {
+      const matched = [];
+      for (const sv of syllabusStore.values()) {
+        const subMatch = !query.subjectId || sv.subjectId.toString() === query.subjectId.toString();
+        const userMatch = !query.userId || sv.userId.toString() === query.userId.toString();
+        if (subMatch && userMatch) {
+          matched.push({
+            ...sv,
+            save: async function () {
+              syllabusStore.set(sv._id.toString(), { ...sv, ...this });
+              return this;
+            },
+          });
+        }
+      }
+      return {
+        sort: (sortObj) => {
+          if (sortObj?.version === -1) {
+            matched.sort((a, b) => b.version - a.version);
+          }
+          return Promise.resolve(matched);
+        },
+        then: (resolve) => resolve(matched),
+      };
+    });
+
+    vi.spyOn(SyllabusVersion, 'findOne').mockImplementation((query) => {
+      const exec = async () => {
+        let candidates = [];
+        for (const sv of syllabusStore.values()) {
+          const idMatch = !query._id || sv._id.toString() === query._id.toString();
+          const subMatch = !query.subjectId || sv.subjectId.toString() === query.subjectId.toString();
+          const userMatch = !query.userId || sv.userId.toString() === query.userId.toString();
+          const statusMatch = !query.status || sv.status === query.status;
+          if (idMatch && subMatch && userMatch && statusMatch) {
+            candidates.push(sv);
+          }
+        }
+        if (candidates.length === 0) return null;
+        const target = candidates[0];
+        return {
+          ...target,
+          save: async function () {
+            syllabusStore.set(target._id.toString(), { ...target, ...this });
+            return this;
+          },
+        };
+      };
+
+      return {
+        sort: (sortObj) => ({
+          select: () => {
+            let list = Array.from(syllabusStore.values()).filter((sv) => {
+              const subMatch = !query.subjectId || sv.subjectId.toString() === query.subjectId.toString();
+              const userMatch = !query.userId || sv.userId.toString() === query.userId.toString();
+              const statusMatch = !query.status || sv.status === query.status;
+              return subMatch && userMatch && statusMatch;
+            });
+            if (sortObj?.version === -1) list.sort((a, b) => b.version - a.version);
+            return Promise.resolve(list[0] || null);
+          },
+          then: async (resolve) => {
+            let list = Array.from(syllabusStore.values()).filter((sv) => {
+              const subMatch = !query.subjectId || sv.subjectId.toString() === query.subjectId.toString();
+              const userMatch = !query.userId || sv.userId.toString() === query.userId.toString();
+              const statusMatch = !query.status || sv.status === query.status;
+              return subMatch && userMatch && statusMatch;
+            });
+            if (sortObj?.version === -1) list.sort((a, b) => b.version - a.version);
+            const target = list[0];
+            if (!target) return resolve(null);
+            return resolve({
+              ...target,
+              save: async function () {
+                syllabusStore.set(target._id.toString(), { ...target, ...this });
+                return this;
+              },
+            });
+          },
+        }),
+        then: (resolve) => exec().then(resolve),
+      };
+    });
+
+    vi.spyOn(SyllabusVersion, 'countDocuments').mockImplementation(async (query) => {
+      let count = 0;
+      for (const sv of syllabusStore.values()) {
+        const subMatch = !query.subjectId || sv.subjectId.toString() === query.subjectId.toString();
+        const userMatch = !query.userId || sv.userId.toString() === query.userId.toString();
+        if (subMatch && userMatch) count++;
+      }
+      return count;
+    });
+
+    vi.spyOn(SyllabusVersion, 'create').mockImplementation(async (doc) => {
+      const id = new mongoose.Types.ObjectId();
+      const newVersion = {
+        _id: id,
+        ...doc,
+        sections: doc.sections || [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      syllabusStore.set(id.toString(), newVersion);
+      return newVersion;
+    });
+
+    vi.spyOn(SyllabusVersion, 'updateMany').mockImplementation(async (filter, update) => {
+      let modified = 0;
+      for (const [id, sv] of syllabusStore.entries()) {
+        const subMatch = !filter.subjectId || sv.subjectId.toString() === filter.subjectId.toString();
+        const userMatch = !filter.userId || sv.userId.toString() === filter.userId.toString();
+        const statusMatch = !filter.status || sv.status === filter.status;
+        const idNotMatch = !filter._id?.$ne || sv._id.toString() !== filter._id.$ne.toString();
+        if (subMatch && userMatch && statusMatch && idNotMatch) {
+          if (update.$set) {
+            Object.assign(sv, update.$set);
+          }
+          syllabusStore.set(id, sv);
+          modified++;
+        }
+      }
+      return { modifiedCount: modified };
+    });
+
+    // Create Test Users & Sessions
+    const userAId = new mongoose.Types.ObjectId();
+    userA = {
+      _id: userAId,
+      email: 'user_a@example.com',
+      normalizedEmail: 'user_a@example.com',
+      status: 'active',
+      isEmailVerified: true,
+    };
+    usersStore.set(userAId.toString(), userA);
+
+    const tokenA = generateSessionToken();
+    const tokenHashA = hashSessionToken(tokenA);
+    sessionsStore.set('session_a', {
+      _id: 'session_a',
+      userId: userAId,
+      sessionTokenHash: tokenHashA,
+      isActive: true,
+      expiresAt: new Date(Date.now() + 86400000),
+    });
+    sessionCookieA = `learnforge_session=${tokenA}`;
+
+    const userBId = new mongoose.Types.ObjectId();
+    userB = {
+      _id: userBId,
+      email: 'user_b@example.com',
+      normalizedEmail: 'user_b@example.com',
+      status: 'active',
+      isEmailVerified: true,
+    };
+    usersStore.set(userBId.toString(), userB);
+
+    const tokenB = generateSessionToken();
+    const tokenHashB = hashSessionToken(tokenB);
+    sessionsStore.set('session_b', {
+      _id: 'session_b',
+      userId: userBId,
+      sessionTokenHash: tokenHashB,
+      isActive: true,
+      expiresAt: new Date(Date.now() + 86400000),
+    });
+    sessionCookieB = `learnforge_session=${tokenB}`;
+
+    // Subject for User A (no syllabus initially)
+    const subAId = new mongoose.Types.ObjectId();
+    subjectA = {
+      _id: subAId,
+      userId: userAId,
+      name: 'JavaScript Mastery',
+      normalizedName: 'javascript mastery',
+      topicsCount: 0,
+      syllabusStatus: 'no_syllabus',
+      activeSyllabusVersionId: null,
+      status: 'active',
+    };
+    subjectsStore.set(subAId.toString(), subjectA);
+
+    // Subject for User B
+    const subBId = new mongoose.Types.ObjectId();
+    subjectB = {
+      _id: subBId,
+      userId: userBId,
+      name: 'Python Foundations',
+      normalizedName: 'python foundations',
+      topicsCount: 0,
+      syllabusStatus: 'no_syllabus',
+      activeSyllabusVersionId: null,
+      status: 'active',
+    };
+    subjectsStore.set(subBId.toString(), subjectB);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('1. Returns no_syllabus status for fresh subject without requiring syllabus upfront', async () => {
+    const res = await request(app)
+      .get(`/api/v1/subjects/${subjectA._id}/syllabus`)
+      .set('Cookie', sessionCookieA);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.syllabusStatus).toBe('no_syllabus');
+    expect(res.body.data.activeVersion).toBeNull();
+    expect(res.body.data.latestDraft).toBeNull();
+    expect(res.body.data.totalVersions).toBe(0);
+  });
+
+  it('2. Creates a draft syllabus version (v1) without modifying canonical Topics', async () => {
+    const payload = {
+      title: 'JavaScript Curriculum v1',
+      sections: [
+        {
+          title: 'Fundamentals',
+          topics: [
+            { title: 'Variables & Scopes', description: 'let, const, var' },
+            { title: 'Data Types', description: 'primitives and objects' },
+          ],
+        },
+        {
+          title: 'Asynchronous JS',
+          topics: [
+            { title: 'Promises', description: 'resolve, reject, chaining' },
+            { title: 'Async/Await', description: 'async functions' },
+          ],
+        },
+      ],
+    };
+
+    const res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send(payload);
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.version).toBe(1);
+    expect(res.body.data.status).toBe('draft');
+    expect(res.body.data.sections).toHaveLength(2);
+
+    // Verify Subject status changed to draft
+    const updatedSubject = subjectsStore.get(subjectA._id.toString());
+    expect(updatedSubject.syllabusStatus).toBe('draft');
+
+    // Canonical topics must NOT be created yet
+    expect(topicsStore.size).toBe(0);
+  });
+
+  it('3. Updates a draft syllabus version', async () => {
+    // Create draft v1
+    const createRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Initial Draft',
+        sections: [{ title: 'Section 1', topics: [{ title: 'Topic 1' }] }],
+      });
+
+    const versionId = createRes.body.data._id;
+
+    // Update draft v1
+    const updateRes = await request(app)
+      .put(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${versionId}`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Revised Initial Draft',
+        changeSummary: 'Added more details',
+        sections: [
+          {
+            title: 'Section 1 Renamed',
+            topics: [
+              { title: 'Topic 1', description: 'Updated description' },
+              { title: 'Topic 2 Added', description: 'New topic' },
+            ],
+          },
+        ],
+      });
+
+    expect(updateRes.status).toBe(200);
+    expect(updateRes.body.success).toBe(true);
+    expect(updateRes.body.data.title).toBe('Revised Initial Draft');
+    expect(updateRes.body.data.changeSummary).toBe('Added more details');
+    expect(updateRes.body.data.sections[0].topics).toHaveLength(2);
+  });
+
+  it('4. Explicitly approves a syllabus version and reconciles canonical Topics', async () => {
+    // Create draft v1
+    const createRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'JavaScript Curriculum v1',
+        sections: [
+          {
+            title: 'Fundamentals',
+            topics: [
+              { title: 'Variables', description: 'Variables in JS' },
+              { title: 'Closures', description: 'Lexical scoping' },
+            ],
+          },
+        ],
+      });
+
+    const versionId = createRes.body.data._id;
+
+    // Approve syllabus
+    const approveRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${versionId}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    expect(approveRes.status).toBe(200);
+    expect(approveRes.body.success).toBe(true);
+    expect(approveRes.body.data.version.status).toBe('approved');
+    expect(approveRes.body.data.version.approvedAt).toBeDefined();
+
+    // Canonical Topics should now be created
+    expect(topicsStore.size).toBe(2);
+    const topics = Array.from(topicsStore.values());
+    expect(topics.map((t) => t.title)).toContain('Variables');
+    expect(topics.map((t) => t.title)).toContain('Closures');
+
+    // Subject status updated
+    const updatedSubject = subjectsStore.get(subjectA._id.toString());
+    expect(updatedSubject.syllabusStatus).toBe('approved');
+    expect(updatedSubject.activeSyllabusVersionId.toString()).toBe(versionId.toString());
+    expect(updatedSubject.topicsCount).toBe(2);
+  });
+
+  it('5. Prevents directly modifying an approved syllabus version', async () => {
+    // Create and approve v1
+    const createRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'JavaScript Curriculum v1',
+        sections: [{ title: 'Section 1', topics: [{ title: 'Topic 1' }] }],
+      });
+    const versionId = createRes.body.data._id;
+
+    await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${versionId}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    // Attempt to PUT on approved version
+    const updateRes = await request(app)
+      .put(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${versionId}`)
+      .set('Cookie', sessionCookieA)
+      .send({ title: 'Illegal Modification' });
+
+    expect(updateRes.status).toBe(400);
+    expect(updateRes.body.success).toBe(false);
+    expect(updateRes.body.message).toContain('Cannot modify an approved or superseded syllabus version');
+  });
+
+  it('6. Revising syllabus creates a new draft (v2) and supersedes v1 on approval while preserving stable topic identity', async () => {
+    // 1. Create and approve v1
+    const createV1 = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'JavaScript v1',
+        sections: [
+          {
+            title: 'Core',
+            topics: [
+              { title: 'Variables', description: 'var let const' },
+              { title: 'Closures', description: 'inner function' },
+            ],
+          },
+        ],
+      });
+    const v1Id = createV1.body.data._id;
+
+    await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v1Id}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    const initialVariablesTopic = Array.from(topicsStore.values()).find((t) => t.title === 'Variables');
+    const initialVariablesId = initialVariablesTopic._id.toString();
+
+    // 2. Create draft v2 (derived from v1)
+    const createV2 = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        baseVersionId: v1Id,
+        title: 'JavaScript v2 Draft',
+        sections: [
+          {
+            title: 'Core',
+            topics: [
+              { title: 'Variables', description: 'Updated explanation of variables' },
+              { title: 'Closures', description: 'inner function' },
+              { title: 'Promises', description: 'Async control flow' },
+            ],
+          },
+        ],
+      });
+
+    expect(createV2.status).toBe(201);
+    expect(createV2.body.data.version).toBe(2);
+    const v2Id = createV2.body.data._id;
+
+    // Verify v1 is still approved while v2 is draft
+    const v1DocBeforeApprove = syllabusStore.get(v1Id.toString());
+    expect(v1DocBeforeApprove.status).toBe('approved');
+
+    // 3. Approve v2
+    const approveV2 = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v2Id}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    expect(approveV2.status).toBe(200);
+
+    // Verify v1 is now superseded
+    const v1DocAfter = syllabusStore.get(v1Id.toString());
+    expect(v1DocAfter.status).toBe('superseded');
+    expect(v1DocAfter.supersededAt).toBeDefined();
+
+    // Verify v2 is active approved
+    const v2DocAfter = syllabusStore.get(v2Id.toString());
+    expect(v2DocAfter.status).toBe('approved');
+
+    // Verify stable topic identity preserved for 'Variables'
+    const updatedVariablesTopic = Array.from(topicsStore.values()).find((t) => t.title === 'Variables');
+    expect(updatedVariablesTopic._id.toString()).toBe(initialVariablesId);
+    expect(updatedVariablesTopic.description).toBe('Updated explanation of variables');
+
+    // New topic 'Promises' created
+    expect(topicsStore.size).toBe(3);
+  });
+
+  it('7. Rejects cross-tenant access to another user syllabus (returns 404)', async () => {
+    // Create draft for User A
+    const createRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Secret Syllabus',
+        sections: [{ title: 'Secret Section', topics: [{ title: 'Secret Topic' }] }],
+      });
+
+    const versionId = createRes.body.data._id;
+
+    // User B tries to view User A's syllabus
+    const statusRes = await request(app)
+      .get(`/api/v1/subjects/${subjectA._id}/syllabus`)
+      .set('Cookie', sessionCookieB);
+    expect(statusRes.status).toBe(404);
+
+    // User B tries to get version
+    const getVerRes = await request(app)
+      .get(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${versionId}`)
+      .set('Cookie', sessionCookieB);
+    expect(getVerRes.status).toBe(404);
+
+    // User B tries to approve version
+    const approveRes = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${versionId}/approve`)
+      .set('Cookie', sessionCookieB);
+    expect(approveRes.status).toBe(404);
+  });
+});

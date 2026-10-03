@@ -40,6 +40,28 @@ const messageSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: () => ({}),
     },
+    knowledgeContext: {
+      relevance: {
+        type: String,
+        enum: ['unclassified', 'on_topic', 'off_topic', 'uncertain'],
+        default: 'unclassified',
+      },
+      subjectId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Subject',
+        default: null,
+      },
+      topicId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Topic',
+        default: null,
+      },
+      disposition: {
+        type: String,
+        enum: ['unclassified', 'candidate', 'excluded', 'promoted'],
+        default: 'unclassified',
+      },
+    },
   },
   {
     timestamps: true,

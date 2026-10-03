@@ -6,12 +6,14 @@ const FOCUSABLE_SELECTOR =
 /**
  * Custom accessible focus trap hook for dialogs and modals.
  * - Saves and restores previous active element focus
- * - Moves focus into modal on open
+ * - Moves focus into modal only on open transition (does not steal focus during typing/state updates)
  * - Traps Tab and Shift+Tab within modal focusable elements
  * - Listens for Escape key to trigger onClose
  */
 export function useFocusTrap({ containerRef, isOpen, onClose, initialFocusRef }) {
   const previousActiveElement = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -22,16 +24,28 @@ export function useFocusTrap({ containerRef, isOpen, onClose, initialFocusRef })
     const container = containerRef.current;
     if (!container) return;
 
-    // Set initial focus
+    // Set initial focus on open transition only
     const timer = setTimeout(() => {
       if (initialFocusRef?.current && typeof initialFocusRef.current.focus === 'function') {
         initialFocusRef.current.focus();
       } else {
-        const focusables = container.querySelectorAll(FOCUSABLE_SELECTOR);
-        if (focusables.length > 0) {
-          focusables[0].focus();
+        const autoFocusEl = container.querySelector('[autofocus]');
+        if (autoFocusEl && typeof autoFocusEl.focus === 'function') {
+          autoFocusEl.focus();
         } else {
-          container.focus();
+          const formInput = container.querySelector(
+            'input:not([disabled]), textarea:not([disabled]), select:not([disabled])'
+          );
+          if (formInput && typeof formInput.focus === 'function') {
+            formInput.focus();
+          } else {
+            const focusables = container.querySelectorAll(FOCUSABLE_SELECTOR);
+            if (focusables.length > 0) {
+              focusables[0].focus();
+            } else {
+              container.focus();
+            }
+          }
         }
       }
     }, 10);
@@ -39,7 +53,9 @@ export function useFocusTrap({ containerRef, isOpen, onClose, initialFocusRef })
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        if (typeof onCloseRef.current === 'function') {
+          onCloseRef.current();
+        }
         return;
       }
 
@@ -84,7 +100,7 @@ export function useFocusTrap({ containerRef, isOpen, onClose, initialFocusRef })
         previousActiveElement.current.focus();
       }
     };
-  }, [isOpen, onClose, containerRef, initialFocusRef]);
+  }, [isOpen]); // Only rerun when isOpen transitions
 }
 
 export default useFocusTrap;

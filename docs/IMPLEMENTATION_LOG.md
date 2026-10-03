@@ -2,6 +2,44 @@
 
 This log is the permanent chronological engineering journal for the LearnForge project. Every phase records its objective, work performed, architectural decisions, testing, problems, and solutions.
 
+## [Phase 04.1] Syllabus & Knowledge Governance Foundation
+
+- **Date**: October 4, 2026
+- **Status**: Completed
+- **Phase**: Phase 04.1 — Syllabus & Knowledge Governance Foundation
+- **Core Principle**: *"Chat is the interaction layer. Knowledge is the product."*
+- **Objective**: Establish the product, data, and UX foundations for multi-version syllabus lifecycle management, explicit user approval, canonical topic reconciliation with stable Topic `_id` preservation, off-topic message categorization contracts, and lightweight user annotations (comments and tags), prior to downstream AI Gateway integration in Phase 05.
+
+### Work Performed
+1. **Architectural Foundations & ADR-013**:
+   - Codified distinct semantic boundaries across 7 layers: raw conversation evidence, draft syllabus, approved canonical syllabus, topic-related knowledge candidates, canonical topic knowledge, off-topic conversations, and user annotations.
+   - Enforced non-blocking subject creation: subjects begin in `no_syllabus` state without requiring an approved syllabus.
+   - Adopted multi-version immutable syllabus history (`SyllabusVersion`) with drafts, explicit approval, and superseded state tracking.
+2. **Domain Persistence & Models**:
+   - `server/src/models/SyllabusVersion.js`: `subjectId`, `userId`, `version`, `status` (`draft` | `approved` | `superseded`), `sections` (with nested `topics`), `source`, `changeSummary`, `approvedAt`, `supersededAt`. Compound unique index `{ subjectId: 1, version: 1 }`.
+   - `server/src/models/Annotation.js`: `userId`, `chatId`, `messageId`, `type` (`comment` | `tag`), `content`. Indexed on `{ userId: 1, chatId: 1, messageId: 1 }`.
+   - Updated `Subject.js`: Added `syllabusStatus` (`no_syllabus` | `draft` | `approved`) and `activeSyllabusVersionId`.
+   - Updated `Message.js`: Added `knowledgeContext` schema fields (`relevance`, `subjectId`, `topicId`, `disposition`).
+3. **REST APIs & Controllers**:
+   - `server/src/controllers/syllabusController.js`: `getSyllabusStatus`, `listSyllabusVersions`, `createSyllabusDraft`, `getSyllabusVersion`, `updateSyllabusDraft`, `approveSyllabusVersion`.
+   - Stable Topic ID Preservation: `approveSyllabusVersion` reconciles canonical topics with existing `Topic` records by normalized title, retaining `_id`, descriptions, `notesCount`, `chatsCount`, and `knowledgeState` while creating new topics and deprecating missing ones without data loss.
+   - `server/src/controllers/annotationController.js`: Full CRUD for user-authored comments and tags.
+   - `server/src/routes/syllabus.js` & `server/src/routes/annotations.js`: Protected with `requireDatabase` and `authenticateUser`.
+4. **Interactive UI & Accessibility**:
+   - `client/src/hooks/useFocusTrap.js`: Fixed critical bug where keystroke re-renders caused focus jumps to dialog close buttons by isolating `onClose` callbacks in refs and prioritizing autofocus elements.
+   - `client/src/pages/SubjectDetailPage.jsx`: Full syllabus governance panel with status badges, multi-version history, draft editor with section/topic management, and explicit approval confirmation modals.
+   - `client/src/pages/ChatsPage.jsx`: Rendered off-topic warning alerts strictly from backend `knowledgeContext.relevance === 'off_topic'` (zero client heuristics) and integrated inline comment/tag annotations.
+   - `client/src/api/syllabusApi.js` & `client/src/api/annotationsApi.js`: Frontend API clients.
+5. **Testing & Live Verification**:
+   - 12 new backend tests across `syllabus.test.js` and `annotations.test.js` (server total: 107 tests passing 100%).
+   - 5 new frontend tests in `SyllabusGovernance.test.jsx` (client total: 45 tests passing 100%).
+   - Total Monorepo Tests: 152 automated tests passing.
+   - Clean Vite production build in 12.56s.
+   - Live integration script `verify_phase04_1_live.js` passing against Atlas MongoDB and local backend across 11 stages.
+   - Browser subagent verification of modal focus stability, subject creation, syllabus draft generation, section editing, and explicit approval.
+
+---
+
 ## [Phase 04] Chat Infrastructure
 
 - **Date**: October 4, 2026

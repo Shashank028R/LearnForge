@@ -5,6 +5,34 @@ All notable changes to the LearnForge project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-10-04
+
+### Phase 04.1 — Syllabus & Knowledge Governance Foundation
+
+#### Added
+- **Domain Persistence & Models**:
+  - `SyllabusVersion.js`: Versioned syllabus model supporting `draft`, `approved`, and `superseded` states, structured hierarchical sections and topics, change summaries, and approval audit timestamps.
+  - `Annotation.js`: Model for user-authored auxiliary comments and tags attached to chats and messages.
+  - Added `syllabusStatus` and `activeSyllabusVersionId` to `Subject.js`.
+  - Added `knowledgeContext` (`relevance`, `subjectId`, `topicId`, `disposition`) to `Message.js`.
+- **REST APIs**:
+  - Full syllabus lifecycle management under `/api/v1/subjects/:subjectId/syllabus` (`GET /status`, `GET /versions`, `POST /drafts`, `GET /versions/:version`, `PUT /drafts/:version`, `POST /versions/:version/approve`).
+  - Full CRUD for comments and tags under `/api/v1/annotations`.
+- **Stable Topic Reconciliation**:
+  - `approveSyllabusVersion` reconciles syllabus topics against active `Topic` records, maintaining existing topic IDs, descriptions, `notesCount`, `chatsCount`, and `knowledgeState` without data loss.
+- **Interactive UI & Accessibility**:
+  - `SubjectDetailPage.jsx`: Added syllabus governance panel, draft editor, version history modal, and explicit approval confirmation modal.
+  - `ChatsPage.jsx`: Added off-topic detection banner display derived exclusively from backend response data (zero heuristic guessing) and added inline message comment/tag annotations.
+  - `useFocusTrap.js`: Fixed modal focus theft on input typing by stabilizing `onClose` references in React refs.
+- **Testing & Verification**:
+  - 12 new backend tests in `server/tests/syllabus.test.js` and `server/tests/annotations.test.js` (total 107 server tests passing).
+  - 5 new frontend tests in `client/src/pages/SyllabusGovernance.test.jsx` (total 45 client tests passing).
+  - Total automated monorepo tests increased to 152 tests (100% passing).
+  - Live Atlas integration verification passed with `verify_phase04_1_live.js`.
+  - Browser subagent verified smooth typing in modal dialogs without focus loss.
+
+---
+
 ## [0.5.0] - 2026-10-04
 
 ### Phase 04 — Chat Infrastructure

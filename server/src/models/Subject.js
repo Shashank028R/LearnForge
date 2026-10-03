@@ -48,6 +48,17 @@ const subjectSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    syllabusStatus: {
+      type: String,
+      enum: ['no_syllabus', 'draft', 'approved'],
+      default: 'no_syllabus',
+      index: true,
+    },
+    activeSyllabusVersionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SyllabusVersion',
+      default: null,
+    },
   },
   {
     timestamps: true,

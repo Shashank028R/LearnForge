@@ -386,3 +386,56 @@ In LearnForge, `POST /api/v1/chats/:chatId/messages` strictly rejects client req
 ### Q50: How are message sequences allocated safely under concurrency without distributed transactions?
 **Answer**:  
 In LearnForge, `Chat.sequenceCounter` is atomically incremented on the `Chat` document using MongoDB's single-document `$inc` operator (`findOneAndUpdate({ _id, userId }, { $inc: { sequenceCounter: N } })`). This reserves a contiguous range of integer sequence numbers for user and assistant messages prior to insertion. Additionally, each `Message` document enforces a compound unique index on `{ chatId: 1, sequenceIndex: 1 }`. If an unexpected sequence collision occurs (such as from legacy sequence drift), an application retry loop intercepts the E11000 error, reconciles the sequence counter, and re-inserts without duplicating logical user messages. This ensures continuous, ordered sequencing without requiring multi-document replica set transactions.
+
+---
+
+## 8. Phase 04.1 — Syllabus Lifecycle & Knowledge Governance
+
+### Q51: Why are chat conversations and notes separate semantic layers?
+**Answer**:  
+In LearnForge, **"Chat is the interaction layer. Knowledge is the product."**  
+Treating chat messages as notes conflates raw conversation evidence with verified, synthesized knowledge. Chat transcripts contain tangents, exploratory inquiries, syntax questions, corrections, and conversational banter. If raw messages were automatically copied into canonical notes, the curriculum would quickly devolve into noisy, disorganized text. Keeping them as distinct semantic layers ensures chat remains a free-flowing exploration medium while notes remain curated, high-mastery summaries.
+
+### Q52: Why must syllabus approval be an explicit user action rather than inferred from conversational affirmations?
+**Answer**:  
+Conversational language is inherently ambiguous. A user typing "looks good", "okay", or "continue" might be agreeing to a specific explanation, acknowledging a single point, or simply prompting the next response—not endorsing a complete curricular overhaul.  
+Treating conversational affirmations as automatic syllabus approvals creates severe state corruption and unexpected curriculum shifts. Approval is a legal and curricular contract that activates active learning goals and reconciles canonical topics. Therefore, it requires an explicit, intentional user action (`POST /api/v1/subjects/:subjectId/syllabus/versions/:versionId/approve`).
+
+### Q53: Why are syllabus versions immutable and history-preserving?
+**Answer**:  
+Learning is iterative and non-linear. Directly mutating an approved syllabus destroys historical context, invalidates past study audit trails, and makes rollbacks impossible.  
+By persisting versions (`v1`, `v2`, `v3`) in the `SyllabusVersion` collection with monotonic version numbers and status transitions (`draft` → `approved` → `superseded`), users can safely draft revisions derived from active syllabi without corrupting the live curriculum until they explicitly approve the new revision.
+
+### Q54: Why do draft syllabus changes not immediately modify canonical Topic records?
+**Answer**:  
+Drafting is a sandbox activity. A user may experiment with adding, deleting, re-ordering, or restructuring dozens of topics during curriculum design. If every keystroke or draft proposal directly mutated canonical `Topic` documents in MongoDB, it would prematurely create empty topic nodes, orphan existing notes, disrupt mastery calculations, and trigger unwanted side effects across the database. Drafts remain isolated in `SyllabusVersion` until explicit approval.
+
+### Q55: How does an approved syllabus reconcile with canonical Topic records while preserving stable identity?
+**Answer**:  
+When a syllabus version is approved:
+1. The server extracts the ordered list of topics across all sections.
+2. It queries existing canonical `Topic` records for that subject.
+3. For topics that match by normalized title, the server updates their `orderIndex` and `description` while **preserving their existing `_id`**, `status`, `knowledgeState`, `notesCount`, and `chatsCount`.
+4. For new topics introduced in the syllabus, new canonical `Topic` documents are created with `status: 'not_started'`.
+5. This reconciliation ensures that previous note links, study sessions, and mastery evaluations attached to stable topic IDs are never lost when curriculum versions evolve.
+
+### Q56: Why should off-topic questions still receive helpful responses rather than being rejected?
+**Answer**:  
+A learning assistant that refuses to answer tangential questions ("I can only talk about JavaScript closures") creates a frustrating and rigid user experience. Curiosity is natural—a developer studying JavaScript might suddenly ask about React Server Components or WebAssembly.  
+LearnForge encourages holistic learning by providing helpful, high-quality answers to off-topic questions while classifying the interaction as `relevance: 'off_topic'`. This prevents off-topic information from polluting canonical subject notes while answering the user's immediate question.
+
+### Q57: Why does the backend, not the frontend, own relevance classification?
+**Answer**:  
+Relevance classification is a semantic machine-learning classification task, not a static UI presentation rule. Client-side heuristic keyword matching (e.g. searching if a message contains the subject name) is fragile, inaccurate, and easily bypassed.  
+The backend AI Gateway (Phase 05) will evaluate semantic relevance against the active approved curriculum contract. The frontend simply renders the machine-readable classification provided in `Message.knowledgeContext.relevance`.
+
+### Q58: Why does Phase 04.1 not implement AI classification, and how will Phase 05 consume this contract?
+**Answer**:  
+Phase 04.1 adheres strictly to progressive architectural staging. Implementing fake AI heuristics or premature LLM SDK calls in Phase 04.1 would create technical debt and violate phase boundaries.  
+Instead, Phase 04.1 defines the durable domain models, database schemas, API envelopes, and UI states. When Phase 05 introduces the multi-model AI Gateway (Gemini, Claude, GPT-4o), it will simply populate the established `knowledgeContext: { relevance, subjectId, topicId, disposition }` fields without requiring any structural data migrations or frontend redesigns.
+
+### Q59: Why are user annotations (comments and tags) distinct from canonical knowledge?
+**Answer**:  
+Annotations are auxiliary, user-controlled scratchpad notes attached directly to conversational evidence (`Annotation` model). A user might tag an off-topic explanation with `#wasm-threading` or add a personal reminder comment.  
+These annotations belong to the interaction layer as private user metadata. They do not undergo knowledge extraction or automatic note consolidation, preserving the purity of canonical topic knowledge while giving users complete autonomy over auxiliary notes.
+

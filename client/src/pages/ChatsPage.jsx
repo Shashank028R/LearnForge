@@ -13,7 +13,8 @@ import {
   Icon,
 } from '../components/ui';
 import chatsApi from '../api/chatsApi';
-import subjectsApi from '../api/subjectsApi';
+import { subjectsApi, topicsApi } from '../api/subjectsApi';
+import annotationsApi from '../api/annotationsApi';
 
 export function ChatsPage() {
   const { chatId: routeChatId } = useParams();
@@ -28,6 +29,14 @@ export function ChatsPage() {
   const [isSending, setIsSending] = useState(false);
   const [chatsError, setChatsError] = useState(null);
   const [messagesError, setMessagesError] = useState(null);
+
+  // Annotations State (messageId -> array of annotations)
+  const [annotationsMap, setAnnotationsMap] = useState({});
+  const [annotatingMessage, setAnnotatingMessage] = useState(null);
+  const [annotationType, setAnnotationType] = useState('comment'); // 'comment' | 'tag'
+  const [annotationContent, setAnnotationContent] = useState('');
+  const [isSubmittingAnnotation, setIsSubmittingAnnotation] = useState(false);
+  const [annotationError, setAnnotationError] = useState('');
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,7 +94,6 @@ export function ChatsPage() {
         if (found) {
           setActiveChat(found);
         } else {
-          // If not in current list (maybe archived or direct URL), fetch directly
           fetchSingleChat(routeChatId);
         }
       } else if (list.length > 0 && !activeChat) {
@@ -118,13 +126,33 @@ export function ChatsPage() {
       setIsLoadingMessages(true);
       setMessagesError(null);
       const res = await chatsApi.listMessages(chatId);
-      setMessages(res?.messages || res?.data?.messages || []);
+      const msgList = res?.messages || res?.data?.messages || [];
+      setMessages(msgList);
       setTimeout(() => scrollToBottom(false), 50);
+
+      // Fetch annotations for all messages in the chat
+      fetchAnnotationsForMessages(chatId, msgList);
     } catch (err) {
       setMessagesError(err.message || 'Failed to load messages.');
     } finally {
       setIsLoadingMessages(false);
     }
+  };
+
+  const fetchAnnotationsForMessages = async (chatId, msgList) => {
+    const map = {};
+    for (const msg of msgList) {
+      const mId = msg.id || msg._id;
+      try {
+        const res = await annotationsApi.listForMessage(chatId, mId);
+        if (res?.data && res.data.length > 0) {
+          map[mId] = res.data;
+        }
+      } catch {
+        // ignore per-message annotation fetch errors
+      }
+    }
+    setAnnotationsMap(map);
   };
 
   // Load chats on initial render or filter changes
@@ -151,87 +179,102 @@ export function ChatsPage() {
     }
   }, [routeChatId]);
 
-  // Load Subjects when New Chat modal opens
-  useEffect(() => {
-    if (isNewChatOpen) {
+  // Load Subjects for New Chat Modal
+  const loadSubjectsForModal = async () => {
+    try {
       setIsLoadingSubjects(true);
-      subjectsApi.subjects
-        .list()
-        .then((res) => {
-          setAvailableSubjects(res?.subjects || res?.data?.subjects || []);
-        })
-        .catch(() => {})
-        .finally(() => setIsLoadingSubjects(false));
+      const res = await subjectsApi.list();
+      setAvailableSubjects(res?.subjects || res?.data?.subjects || []);
+    } catch (err) {
+      console.error('Failed to load subjects for new chat modal:', err);
+    } finally {
+      setIsLoadingSubjects(false);
     }
-  }, [isNewChatOpen]);
+  };
 
-  // Load Topics when Subject selection changes in Modal
-  useEffect(() => {
-    if (selectedSubjectId) {
-      subjectsApi.topics
-        .list(selectedSubjectId)
-        .then((res) => {
-          setAvailableTopics(res?.topics || res?.data?.topics || []);
-        })
-        .catch(() => setAvailableTopics([]));
-    } else {
+  // Load Topics when Subject changes in Modal
+  const handleSubjectChangeInModal = async (subjId) => {
+    setSelectedSubjectId(subjId);
+    setSelectedTopicId('');
+    if (!subjId) {
       setAvailableTopics([]);
-      setSelectedTopicId('');
+      return;
     }
-  }, [selectedSubjectId]);
+    try {
+      const res = await topicsApi.list(subjId);
+      setAvailableTopics(res?.topics || res?.data?.topics || []);
+    } catch (err) {
+      console.error('Failed to load topics for subject:', err);
+      setAvailableTopics([]);
+    }
+  };
 
   // Handle Send Message
   const handleSendMessage = async (e) => {
     if (e) e.preventDefault();
-    const content = messageInput.trim();
-    if (!content || !activeChat || isSending) return;
+    if (!messageInput.trim() || isSending || !activeChat) return;
 
-    const currentChatId = activeChat.id || activeChat._id;
-    setMessageInput('');
-    setIsSending(true);
+    const trimmed = messageInput.trim();
+    const chatId = activeChat.id || activeChat._id;
 
     // Optimistic user message preview
-    const tempUserMsg = {
+    const tempUserMessage = {
       id: `temp-${Date.now()}`,
       _id: `temp-${Date.now()}`,
+      chatId,
       role: 'user',
-      content,
-      sequenceIndex: messages.length,
-      createdAt: new Date().toISOString(),
+      content: trimmed,
       status: 'sending',
+      createdAt: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, tempUserMsg]);
-    setTimeout(() => scrollToBottom(true), 20);
+
+    setMessages((prev) => [...prev, tempUserMessage]);
+    setMessageInput('');
+    setIsSending(true);
+    setTimeout(() => scrollToBottom(true), 50);
 
     try {
-      const res = await chatsApi.sendMessage(currentChatId, { content });
-      const returnedMessages = res?.messages || res?.data?.messages || [];
-
-      // Replace optimistic message and append assistant response
-      setMessages((prev) => {
-        const withoutTemp = prev.filter((m) => !m.id.startsWith('temp-'));
-        return [...withoutTemp, ...returnedMessages];
+      const res = await chatsApi.sendMessage(chatId, {
+        content: trimmed,
+        role: 'user',
       });
 
-      // Update active chat title if generic
-      if (activeChat.title === 'New Conversation' && content) {
-        setActiveChat((prev) => (prev ? { ...prev, title: content.slice(0, 60) } : prev));
+      const responseMessages = res?.messages || res?.data?.messages || [];
+      if (responseMessages.length > 0) {
+        setMessages((prev) => {
+          const filtered = prev.filter((m) => m.id !== tempUserMessage.id && m._id !== tempUserMessage.id);
+          return [...filtered, ...responseMessages];
+        });
+      } else {
+        await fetchMessages(chatId);
       }
 
-      // Refresh chat list metadata
-      fetchChats();
-      setTimeout(() => scrollToBottom(true), 50);
+      // Update sidebar chat lastMessageAt / title
+      setChats((prev) =>
+        prev.map((c) => {
+          if (c.id === chatId || c._id === chatId) {
+            return {
+              ...c,
+              lastMessageAt: new Date().toISOString(),
+              messagesCount: (c.messagesCount || 0) + 2,
+              title:
+                c.title === 'New Conversation' ? trimmed.slice(0, 60) : c.title,
+            };
+          }
+          return c;
+        })
+      );
     } catch (err) {
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === tempUserMsg.id ? { ...m, status: 'error', error: err.message } : m
+          m.id === tempUserMessage.id || m._id === tempUserMessage.id
+            ? { ...m, status: 'error', errorMessage: err.message || 'Failed to send' }
+            : m
         )
       );
     } finally {
       setIsSending(false);
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-      }
+      setTimeout(() => scrollToBottom(true), 50);
     }
   };
 
@@ -242,14 +285,12 @@ export function ChatsPage() {
     setIsCreatingChat(true);
 
     try {
-      const payload = {};
-      if (newChatTitle.trim()) payload.title = newChatTitle.trim();
-      if (selectedTopicId) {
-        payload.topicId = selectedTopicId;
-      } else if (selectedSubjectId) {
-        payload.subjectId = selectedSubjectId;
-      }
-      if (initialPrompt.trim()) payload.initialMessage = initialPrompt.trim();
+      const payload = {
+        title: newChatTitle.trim() || undefined,
+        subjectId: selectedSubjectId || undefined,
+        topicId: selectedTopicId || undefined,
+        initialMessage: initialPrompt.trim() || undefined,
+      };
 
       const res = await chatsApi.create(payload);
       const createdChat = res?.chat || res?.data?.chat;
@@ -261,12 +302,14 @@ export function ChatsPage() {
       setSelectedTopicId('');
       setInitialPrompt('');
 
-      await fetchChats();
-
       if (createdChat) {
+        const newChatId = createdChat.id || createdChat._id;
+        setChats((prev) => [createdChat, ...prev]);
         setActiveChat(createdChat);
         setMessages(initialMsgs);
-        navigate(`/chats/${createdChat.id || createdChat._id}`);
+        navigate(`/chats/${newChatId}`);
+      } else {
+        await fetchChats();
       }
     } catch (err) {
       setFormError(err.message || 'Failed to create conversation.');
@@ -275,22 +318,23 @@ export function ChatsPage() {
     }
   };
 
-  // Handle Delete Chat Confirmation
+  // Handle Delete Chat
   const handleDeleteChat = async () => {
     if (!chatToDelete) return;
+    const delId = chatToDelete.id || chatToDelete._id;
     try {
-      const deleteId = chatToDelete.id || chatToDelete._id;
-      await chatsApi.delete(deleteId);
+      await chatsApi.delete(delId);
       setIsDeleteChatOpen(false);
       setChatToDelete(null);
 
-      const remaining = chats.filter((c) => c.id !== deleteId && c._id !== deleteId);
+      const remaining = chats.filter((c) => c.id !== delId && c._id !== delId);
       setChats(remaining);
 
-      if (activeChat && (activeChat.id === deleteId || activeChat._id === deleteId)) {
+      if (activeChat && (activeChat.id === delId || activeChat._id === delId)) {
         if (remaining.length > 0) {
-          setActiveChat(remaining[0]);
-          navigate(`/chats/${remaining[0].id || remaining[0]._id}`);
+          const next = remaining[0];
+          setActiveChat(next);
+          navigate(`/chats/${next.id || next._id}`);
         } else {
           setActiveChat(null);
           setMessages([]);
@@ -298,37 +342,36 @@ export function ChatsPage() {
         }
       }
     } catch (err) {
-      alert(err.message || 'Failed to delete conversation.');
+      setChatsError(err.message || 'Failed to delete conversation.');
     }
   };
 
-  // Toggle Archive Status
-  const handleToggleArchive = async (chat) => {
+  // Handle Toggle Chat Archive Status
+  const handleToggleArchive = async () => {
+    if (!activeChat) return;
+    const chatId = activeChat.id || activeChat._id;
+    const newStatus = activeChat.status === 'archived' ? 'active' : 'archived';
+
     try {
-      const newStatus = chat.status === 'active' ? 'archived' : 'active';
-      const res = await chatsApi.update(chat.id || chat._id, { status: newStatus });
-      const updated = res.data?.chat;
-
+      const res = await chatsApi.update(chatId, { status: newStatus });
+      const updated = res?.chat || res?.data?.chat || { ...activeChat, status: newStatus };
+      setActiveChat(updated);
       setChats((prev) =>
-        prev.map((c) => (c.id === chat.id || c._id === chat._id ? { ...c, status: newStatus } : c))
+        prev.map((c) => (c.id === chatId || c._id === chatId ? updated : c))
       );
-
-      if (activeChat && (activeChat.id === chat.id || activeChat._id === chat._id)) {
-        setActiveChat((prev) => (prev ? { ...prev, status: newStatus } : prev));
-      }
     } catch (err) {
-      alert(err.message || 'Failed to update conversation status.');
+      setChatsError(err.message || 'Failed to update conversation status.');
     }
   };
 
-  // Copy Message to Clipboard
+  // Handle Copy Message Content
   const handleCopyMessage = (msgId, text) => {
     navigator.clipboard.writeText(text);
     setCopiedMessageId(msgId);
     setTimeout(() => setCopiedMessageId(null), 2000);
   };
 
-  // Keyboard shortcut: Enter to send, Shift+Enter for newline
+  // Handle Textarea Keydown (Enter to send, Shift+Enter for newline)
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -336,38 +379,88 @@ export function ChatsPage() {
     }
   };
 
+  // Annotation Handlers
+  const handleOpenAnnotationModal = (msg, defaultType = 'comment') => {
+    setAnnotatingMessage(msg);
+    setAnnotationType(defaultType);
+    setAnnotationContent('');
+    setAnnotationError('');
+  };
+
+  const handleSaveAnnotation = async (e) => {
+    e.preventDefault();
+    if (!annotatingMessage || !annotationContent.trim()) return;
+
+    const chatId = activeChat.id || activeChat._id;
+    const messageId = annotatingMessage.id || annotatingMessage._id;
+
+    try {
+      setIsSubmittingAnnotation(true);
+      setAnnotationError('');
+      const res = await annotationsApi.create(chatId, messageId, {
+        type: annotationType,
+        content: annotationContent.trim(),
+      });
+
+      if (res?.data) {
+        setAnnotationsMap((prev) => ({
+          ...prev,
+          [messageId]: [...(prev[messageId] || []), res.data],
+        }));
+      }
+      setAnnotatingMessage(null);
+      setAnnotationContent('');
+    } catch (err) {
+      setAnnotationError(err.message || 'Failed to save annotation.');
+    } finally {
+      setIsSubmittingAnnotation(false);
+    }
+  };
+
+  const handleDeleteAnnotation = async (messageId, annotationId) => {
+    try {
+      await annotationsApi.delete(annotationId);
+      setAnnotationsMap((prev) => ({
+        ...prev,
+        [messageId]: (prev[messageId] || []).filter((a) => a._id !== annotationId),
+      }));
+    } catch (err) {
+      console.error('Failed to delete annotation:', err);
+    }
+  };
+
   return (
-    <div className="h-[calc(100vh-8.5rem)] flex flex-col md:flex-row bg-app-surface border border-app-border rounded-xl overflow-hidden shadow-sm">
+    <div className="h-[calc(100vh-4rem)] flex overflow-hidden -m-4 md:-m-6" data-testid="chats-page">
       {/* ======================================================== */}
-      {/* LEFT SIDEBAR: Conversation History & Filters             */}
+      {/* LEFT SIDEBAR: Conversation Sessions List & Search        */}
       {/* ======================================================== */}
-      <div className="w-full md:w-80 lg:w-96 flex flex-col border-b md:border-b-0 md:border-r border-app-border bg-app-bg-secondary shrink-0">
-        {/* Sidebar Header */}
-        <div className="p-3.5 border-b border-app-border space-y-3">
+      <div className="w-80 border-r border-app-border bg-app-bg-secondary/30 flex flex-col shrink-0">
+        {/* Sidebar Header & Action */}
+        <div className="p-3 border-b border-app-border space-y-2.5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Icon name="chat" size={18} className="text-app-accent" />
-              <h2 className="text-sm font-bold text-app-text-primary">Conversations</h2>
-              <Badge variant="neutral" size="sm">
-                {chats.length}
-              </Badge>
-            </div>
+            <h1 className="text-sm font-bold text-app-text-primary tracking-tight flex items-center gap-1.5">
+              <Icon name="chat" size={16} className="text-app-accent" />
+              <span>Socratic Dialogues</span>
+            </h1>
             <Button
               variant="primary"
               size="sm"
               icon={<Icon name="plus" size={14} />}
-              onClick={() => setIsNewChatOpen(true)}
-              className="text-xs py-1 px-2.5"
+              onClick={() => {
+                loadSubjectsForModal();
+                setIsNewChatOpen(true);
+              }}
+              data-testid="btn-new-chat"
             >
               New Chat
             </Button>
           </div>
 
-          {/* Search Bar */}
+          {/* Search Input */}
           <div className="relative">
             <Icon
               name="search"
-              size={14}
+              size={13}
               className="absolute left-2.5 top-1/2 -translate-y-1/2 text-app-text-muted"
             />
             <input
@@ -375,7 +468,7 @@ export function ChatsPage() {
               placeholder="Search conversations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs bg-app-surface border border-app-border rounded-lg text-app-text-primary placeholder:text-app-text-muted focus:outline-none focus:border-app-accent"
+              className="w-full text-xs pl-8 pr-3 py-1.5 bg-app-surface border border-app-border rounded-lg text-app-text-primary placeholder:text-app-text-muted focus:outline-none focus:border-app-accent"
             />
           </div>
 
@@ -518,85 +611,96 @@ export function ChatsPage() {
         {activeChat ? (
           <>
             {/* Conversation Top Header */}
-            <div className="p-3.5 px-4 border-b border-app-border bg-app-surface flex items-center justify-between gap-3 shrink-0">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h1 className="text-sm font-bold text-app-text-primary truncate">
-                    {activeChat.title}
-                  </h1>
-                  {activeChat.status === 'archived' && (
-                    <Badge variant="neutral" size="sm">
-                      Archived
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 mt-0.5 text-xs text-app-text-muted">
-                  {activeChat.subject && (
-                    <Link
-                      to={`/subjects/${activeChat.subject.id || activeChat.subject._id}`}
-                      className="hover:underline flex items-center gap-1 text-app-text-secondary"
-                    >
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: activeChat.subject.color || '#3b82f6' }}
-                      />
-                      {activeChat.subject.name}
-                    </Link>
-                  )}
-                  {activeChat.topic && (
-                    <>
-                      <span>•</span>
-                      <span className="text-app-text-secondary">{activeChat.topic.title}</span>
-                    </>
-                  )}
+            <div className="h-14 px-4 border-b border-app-border flex items-center justify-between shrink-0 bg-app-surface">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold text-app-text-primary truncate">
+                      {activeChat.title}
+                    </h2>
+                    {activeChat.status === 'archived' && (
+                      <Badge variant="neutral" size="sm">
+                        Archived
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Subject and Topic Breadcrumb */}
+                  <div className="flex items-center gap-2 text-xs text-app-text-muted truncate mt-0.5">
+                    {activeChat.subject ? (
+                      <Link
+                        to={`/subjects/${activeChat.subject.id || activeChat.subject._id}`}
+                        className="hover:underline flex items-center gap-1 font-medium"
+                        style={{ color: activeChat.subject.color || '#3b82f6' }}
+                      >
+                        <span
+                          className="w-1.5 h-1.5 rounded-full"
+                          style={{ backgroundColor: activeChat.subject.color || '#3b82f6' }}
+                        />
+                        <span>{activeChat.subject.name}</span>
+                      </Link>
+                    ) : (
+                      <span>Free-form conversation</span>
+                    )}
+
+                    {activeChat.topic && (
+                      <>
+                        <span>/</span>
+                        <span className="text-app-text-secondary font-medium truncate">
+                          {activeChat.topic.title}
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Actions Header */}
-              <div className="flex items-center gap-1.5 shrink-0">
+              {/* Action Toolbar */}
+              <div className="flex items-center gap-1 shrink-0">
                 <IconButton
-                  name="archive"
-                  size={15}
-                  title={activeChat.status === 'active' ? 'Archive Conversation' : 'Unarchive Conversation'}
-                  onClick={() => handleToggleArchive(activeChat)}
-                  className="text-app-text-muted hover:text-app-text-primary"
+                  icon={
+                    <Icon
+                      name={activeChat.status === 'archived' ? 'refresh' : 'archive'}
+                      size={15}
+                    />
+                  }
+                  label={activeChat.status === 'archived' ? 'Unarchive' : 'Archive'}
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleToggleArchive}
                 />
                 <IconButton
-                  name="trash"
-                  size={15}
-                  title="Delete Conversation"
+                  icon={<Icon name="trash" size={15} />}
+                  label="Delete Conversation"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => {
                     setChatToDelete(activeChat);
                     setIsDeleteChatOpen(true);
                   }}
-                  className="text-app-text-muted hover:text-app-danger"
+                  className="text-app-text-muted hover:text-status-danger"
                 />
               </div>
             </div>
 
-            {/* Messages Thread Container */}
+            {/* Messages Scroll Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {isLoadingMessages ? (
-                <div className="space-y-4 py-4">
+                <div className="space-y-4 max-w-2xl mx-auto pt-4">
                   <div className="flex items-start gap-3">
                     <Skeleton className="w-8 h-8 rounded-full shrink-0" />
-                    <div className="space-y-1.5 flex-1 max-w-lg">
+                    <div className="space-y-2 flex-1">
                       <Skeleton className="h-4 w-3/4 rounded" />
                       <Skeleton className="h-4 w-1/2 rounded" />
                     </div>
                   </div>
-                  <div className="flex items-start gap-3 justify-end">
-                    <div className="space-y-1.5 max-w-lg">
-                      <Skeleton className="h-4 w-48 rounded" />
-                    </div>
-                    <Skeleton className="w-8 h-8 rounded-full shrink-0" />
-                  </div>
                 </div>
               ) : messagesError ? (
                 <ErrorState
-                  title="Could not load messages"
+                  title="Failed to load messages"
                   message={messagesError}
-                  onRetry={() => fetchMessages(activeChat.id || activeChat._id)}
+                  actionLabel="Retry"
+                  onAction={() => fetchMessages(activeChat.id || activeChat._id)}
                 />
               ) : messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
@@ -634,12 +738,16 @@ export function ChatsPage() {
                 messages.map((msg) => {
                   const isUser = msg.role === 'user';
                   const msgId = msg.id || msg._id;
+                  const isOffTopic = msg.knowledgeContext?.relevance === 'off_topic';
+                  const msgAnnotations = annotationsMap[msgId] || [];
+
                   return (
                     <div
                       key={msgId}
                       className={`flex items-start gap-3 ${
                         isUser ? 'justify-end' : 'justify-start'
                       }`}
+                      data-testid={`message-${msgId}`}
                     >
                       {/* Assistant Avatar */}
                       {!isUser && (
@@ -648,42 +756,101 @@ export function ChatsPage() {
                         </div>
                       )}
 
-                      {/* Message Bubble */}
-                      <div
-                        className={`max-w-[85%] md:max-w-[75%] rounded-2xl p-3.5 text-xs relative group ${
-                          isUser
-                            ? 'bg-app-accent text-white rounded-tr-xs'
-                            : 'bg-app-bg-secondary border border-app-border text-app-text-primary rounded-tl-xs'
-                        }`}
-                      >
-                        <div className="whitespace-pre-wrap leading-relaxed">
-                          {msg.content}
-                        </div>
-
-                        {/* Footer / Time / Copy */}
-                        <div
-                          className={`flex items-center justify-between gap-2 mt-2 pt-1 border-t ${
-                            isUser ? 'border-white/20 text-white/75' : 'border-app-border/40 text-app-text-muted'
-                          } text-[10px]`}
-                        >
-                          <span>
-                            {msg.createdAt
-                              ? new Date(msg.createdAt).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })
-                              : ''}
-                          </span>
-
-                          <button
-                            onClick={() => handleCopyMessage(msgId, msg.content)}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity hover:underline inline-flex items-center gap-0.5"
-                            title="Copy message"
+                      {/* Message Bubble Column */}
+                      <div className="max-w-[85%] md:max-w-[75%] space-y-1.5">
+                        {/* Off-Topic Warning Banner (Rendered ONLY when relevance === 'off_topic') */}
+                        {isOffTopic && (
+                          <div
+                            className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-800 dark:text-amber-300 text-[11px] flex items-start gap-2"
+                            data-testid="off-topic-banner"
                           >
-                            <Icon name={copiedMessageId === msgId ? 'check' : 'copy'} size={11} />
-                            {copiedMessageId === msgId ? 'Copied' : 'Copy'}
-                          </button>
+                            <span className="font-bold shrink-0">⚠ Off-topic:</span>
+                            <span className="leading-snug">
+                              This isn't related to your current syllabus, so it won't be added to your canonical learning knowledge.
+                            </span>
+                          </div>
+                        )}
+
+                        <div
+                          className={`rounded-2xl p-3.5 text-xs relative group ${
+                            isUser
+                              ? 'bg-app-accent text-white rounded-tr-xs'
+                              : 'bg-app-bg-secondary border border-app-border text-app-text-primary rounded-tl-xs'
+                          }`}
+                        >
+                          <div className="whitespace-pre-wrap leading-relaxed">
+                            {msg.content}
+                          </div>
+
+                          {/* Footer / Time / Annotate / Copy */}
+                          <div
+                            className={`flex items-center justify-between gap-2 mt-2 pt-1 border-t ${
+                              isUser ? 'border-white/20 text-white/75' : 'border-app-border/40 text-app-text-muted'
+                            } text-[10px]`}
+                          >
+                            <span>
+                              {msg.createdAt
+                                ? new Date(msg.createdAt).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                : ''}
+                            </span>
+
+                            <div className="flex items-center gap-2">
+                              {/* Annotate Actions */}
+                              {!isUser && (
+                                <>
+                                  <button
+                                    onClick={() => handleOpenAnnotationModal(msg, 'comment')}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity hover:underline inline-flex items-center gap-0.5"
+                                  >
+                                    <Icon name="edit" size={10} /> Add Comment
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenAnnotationModal(msg, 'tag')}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity hover:underline inline-flex items-center gap-0.5"
+                                  >
+                                    <Icon name="layers" size={10} /> Add Tag
+                                  </button>
+                                </>
+                              )}
+
+                              <button
+                                onClick={() => handleCopyMessage(msgId, msg.content)}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity hover:underline inline-flex items-center gap-0.5"
+                                title="Copy message"
+                              >
+                                <Icon name={copiedMessageId === msgId ? 'check' : 'copy'} size={11} />
+                                {copiedMessageId === msgId ? 'Copied' : 'Copy'}
+                              </button>
+                            </div>
+                          </div>
                         </div>
+
+                        {/* User Auxiliary Annotations Display */}
+                        {msgAnnotations.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pt-0.5 pl-1" data-testid={`annotations-${msgId}`}>
+                            {msgAnnotations.map((ann) => (
+                              <div
+                                key={ann._id}
+                                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] bg-app-surface-muted border border-app-border text-app-text-secondary group/ann"
+                              >
+                                <span className="font-semibold text-app-text-muted">
+                                  {ann.type === 'tag' ? '#' : '💬'}
+                                </span>
+                                <span>{ann.content}</span>
+                                <button
+                                  onClick={() => handleDeleteAnnotation(msgId, ann._id)}
+                                  className="opacity-0 group-hover/ann:opacity-100 hover:text-status-danger transition-opacity"
+                                  title="Delete annotation"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       {/* User Avatar */}
@@ -751,17 +918,99 @@ export function ChatsPage() {
       </div>
 
       {/* ======================================================== */}
-      {/* MODAL: New Conversation Dialog                           */}
+      {/* MODAL: Add Message Annotation (Comment or Tag)           */}
+      {/* ======================================================== */}
+      <Dialog
+        isOpen={!!annotatingMessage}
+        onClose={() => setAnnotatingMessage(null)}
+        title="Add Auxiliary Annotation"
+        description="Preserve useful auxiliary thoughts without converting them to canonical knowledge."
+      >
+        <form onSubmit={handleSaveAnnotation} className="space-y-4 pt-2">
+          {annotationError && (
+            <div className="p-2.5 text-xs rounded bg-status-danger/10 border border-status-danger/20 text-status-danger font-medium">
+              {annotationError}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-app-text-primary mb-1.5">
+              Annotation Type
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setAnnotationType('comment')}
+                className={`py-1.5 px-3 rounded text-xs font-medium border text-center transition-colors ${
+                  annotationType === 'comment'
+                    ? 'bg-brand-500/15 border-brand-500 text-brand-700 dark:text-brand-300'
+                    : 'border-app-border text-app-text-secondary hover:bg-app-surface-muted'
+                }`}
+              >
+                💬 Comment
+              </button>
+              <button
+                type="button"
+                onClick={() => setAnnotationType('tag')}
+                className={`py-1.5 px-3 rounded text-xs font-medium border text-center transition-colors ${
+                  annotationType === 'tag'
+                    ? 'bg-brand-500/15 border-brand-500 text-brand-700 dark:text-brand-300'
+                    : 'border-app-border text-app-text-secondary hover:bg-app-surface-muted'
+                }`}
+              >
+                🏷️ Tag
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-app-text-primary mb-1">
+              {annotationType === 'tag' ? 'Tag Label' : 'Comment Content'}
+            </label>
+            <Input
+              placeholder={annotationType === 'tag' ? 'e.g. system-design, tricky-concept' : 'Add your thoughts or notes on this response...'}
+              value={annotationContent}
+              onChange={(e) => setAnnotationContent(e.target.value)}
+              required
+              autoFocus
+              maxLength={1000}
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-app-border">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setAnnotatingMessage(null)}
+              disabled={isSubmittingAnnotation}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              loading={isSubmittingAnnotation}
+            >
+              Save Annotation
+            </Button>
+          </div>
+        </form>
+      </Dialog>
+
+      {/* ======================================================== */}
+      {/* MODAL: New Conversation Creation Dialog                  */}
       {/* ======================================================== */}
       <Dialog
         isOpen={isNewChatOpen}
         onClose={() => setIsNewChatOpen(false)}
         title="Start New Socratic Conversation"
-        description="Link your session to a syllabus subject or topic for targeted conceptual tracking."
+        description="Initiate a targeted learning session linked to a subject or topic."
       >
         <form onSubmit={handleCreateChat} className="space-y-4 pt-2">
           {formError && (
-            <div className="p-2.5 rounded-lg bg-app-danger/10 border border-app-danger/20 text-xs text-app-danger">
+            <div className="p-2.5 text-xs rounded bg-app-danger/10 border border-app-danger/20 text-app-danger font-medium">
               {formError}
             </div>
           )}
@@ -769,29 +1018,32 @@ export function ChatsPage() {
           {/* Subject Selector */}
           <div>
             <label htmlFor="chat-subject-select" className="block text-xs font-semibold text-app-text-primary mb-1">
-              Subject (Optional)
+              Subject Scope (Optional)
             </label>
-            <select
-              id="chat-subject-select"
-              value={selectedSubjectId}
-              onChange={(e) => setSelectedSubjectId(e.target.value)}
-              className="w-full text-xs p-2 rounded-lg bg-app-bg-secondary border border-app-border text-app-text-primary focus:outline-none focus:border-app-accent"
-              disabled={isLoadingSubjects}
-            >
-              <option value="">-- General Conversation (No Subject) --</option>
-              {availableSubjects.map((s) => (
-                <option key={s.id || s._id} value={s.id || s._id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+            {isLoadingSubjects ? (
+              <Skeleton className="h-9 w-full rounded-lg" />
+            ) : (
+              <select
+                id="chat-subject-select"
+                value={selectedSubjectId}
+                onChange={(e) => handleSubjectChangeInModal(e.target.value)}
+                className="w-full text-xs p-2 rounded-lg bg-app-bg-secondary border border-app-border text-app-text-primary focus:outline-none focus:border-app-accent"
+              >
+                <option value="">-- General / No Subject Link --</option>
+                {availableSubjects.map((s) => (
+                  <option key={s.id || s._id} value={s.id || s._id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Topic Selector */}
           {selectedSubjectId && (
             <div>
               <label htmlFor="chat-topic-select" className="block text-xs font-semibold text-app-text-primary mb-1">
-                Topic (Optional)
+                Target Topic (Optional)
               </label>
               <select
                 id="chat-topic-select"

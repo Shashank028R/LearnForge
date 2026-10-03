@@ -10,6 +10,8 @@ import authRouter from './routes/auth.js';
 import subjectsRouter from './routes/subjects.js';
 import topicsRouter from './routes/topics.js';
 import chatsRouter from './routes/chats.js';
+import syllabusRouter from './routes/syllabus.js';
+import annotationsRouter from './routes/annotations.js';
 
 export function createApp() {
   const app = express();
@@ -36,6 +38,8 @@ export function createApp() {
   apiRouter.use(subjectsRouter);
   apiRouter.use(topicsRouter);
   apiRouter.use(chatsRouter);
+  apiRouter.use(syllabusRouter);
+  apiRouter.use(annotationsRouter);
 
   app.use(config.apiPrefix, apiRouter);
 

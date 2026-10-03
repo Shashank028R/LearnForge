@@ -71,6 +71,12 @@ function formatMessageResponse(message) {
     sequenceIndex: message.sequenceIndex,
     status: message.status,
     metadata: message.metadata || {},
+    knowledgeContext: message.knowledgeContext || {
+      relevance: 'unclassified',
+      subjectId: null,
+      topicId: null,
+      disposition: 'unclassified',
+    },
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
   };
