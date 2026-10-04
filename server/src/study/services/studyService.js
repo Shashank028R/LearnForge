@@ -13,9 +13,53 @@ import {
   validateStateTransition,
 } from '../stateMachine.js';
 
+/**
+ * Executes work within a real MongoDB multi-document transaction when available (e.g. Atlas / replica set).
+ * Gracefully falls back to non-transactional execution if running on a standalone test instance without replica set.
+ */
+async function runInTransaction(workFn) {
+  let dbSession = null;
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    try {
+      dbSession = await mongoose.startSession();
+      dbSession.startTransaction({
+        readConcern: { level: 'snapshot' },
+        writeConcern: { w: 'majority' },
+      });
+    } catch {
+      // Standalone MongoDB or transactions unsupported in current test environment
+      dbSession = null;
+    }
+  }
+
+  if (!dbSession) {
+    return await workFn(null);
+  }
+
+  try {
+    const result = await workFn(dbSession);
+    await dbSession.commitTransaction();
+    return result;
+  } catch (err) {
+    try {
+      await dbSession.abortTransaction();
+    } catch (_) {}
+    throw err;
+  } finally {
+    try {
+      await dbSession.endSession();
+    } catch (_) {}
+  }
+}
+
 export class StudyService {
+  constructor() {
+    this.testConcurrencyBarrier = null; // Test synchronization barrier hook
+  }
+
   /**
    * Creates a new topic-scoped study session or resumes the existing active session.
+   * Fully race-safe via database-level unique constraints and transactional check-and-create.
    */
   async createOrResumeSession(userId, topicId) {
     if (!mongoose.Types.ObjectId.isValid(topicId)) {
@@ -50,6 +94,11 @@ export class StudyService {
 
     if (existingSession) {
       return { session: existingSession, isNew: false };
+    }
+
+    // Concurrency test hook
+    if (this.testConcurrencyBarrier) {
+      await this.testConcurrencyBarrier.wait('createOrResumeSession');
     }
 
     // 2. Syllabus Pinning: Query approved syllabus if one exists for the subject
@@ -115,8 +164,24 @@ export class StudyService {
       lastActivityAt: new Date(),
     });
 
-    await sessionDoc.save();
-    return { session: sessionDoc, isNew: true };
+    try {
+      await sessionDoc.save();
+      return { session: sessionDoc, isNew: true };
+    } catch (saveErr) {
+      // Race protection: if another request created an active session concurrently, return that session cleanly
+      if (saveErr.code === 11000 || saveErr.message?.includes('E11000')) {
+        const concurrentSession = await StudySession.findOne({
+          userId,
+          topicId,
+          status: { $nin: TERMINAL_STATUSES },
+        }).sort({ lastActivityAt: -1 });
+
+        if (concurrentSession) {
+          return { session: concurrentSession, isNew: false };
+        }
+      }
+      throw saveErr;
+    }
   }
 
   /**
@@ -231,7 +296,7 @@ export class StudyService {
     // 4. In-flight evaluation state idempotency inspection
     if (session.evaluationState && session.evaluationState.clientTurnId === clientTurnId) {
       if (session.evaluationState.questionId === questionId && session.evaluationState.answerFingerprint === answerFingerprint) {
-        if (session.evaluationState.status === 'EVALUATING') {
+        if (session.evaluationState.status === 'EVALUATING' || session.evaluationState.status === 'RECEIVED') {
           return {
             idempotent: true,
             inFlight: true,
@@ -275,7 +340,7 @@ export class StudyService {
       throw error;
     }
 
-    // 6. Optimistic Concurrency & Atomic Lease Claim
+    // 6. Optimistic Concurrency & Atomic Claim (ANSWER_PENDING -> EVALUATING)
     const operationId = options.operationId || crypto.randomUUID();
     const leaseExpiresAt = new Date(Date.now() + 30000); // 30-second lease
 
@@ -284,6 +349,7 @@ export class StudyService {
       await options.barrier();
     }
 
+    // Step 1: Claim submission atomically into EVALUATING state
     const claimedSession = await StudySession.findOneAndUpdate(
       {
         _id: sessionId,
@@ -294,7 +360,7 @@ export class StudyService {
       },
       {
         $set: {
-          status: STUDY_STATUS.ANSWER_PENDING,
+          status: STUDY_STATUS.EVALUATING,
           'evaluationState.status': 'EVALUATING',
           'evaluationState.operationId': operationId,
           'evaluationState.clientTurnId': clientTurnId,
@@ -328,7 +394,7 @@ export class StudyService {
       parentTurnId = initialTurn._id;
     }
 
-    // 8. Execute AI Evaluation & Remediation Pipeline
+    // 7. Execute AI Evaluation & Remediation Pipeline
     let evaluation;
     let remediation = null;
     let canonicalConcepts = [];
@@ -387,12 +453,12 @@ export class StudyService {
       throw err;
     }
 
-    // 9. Determine Next Status
+    // 8. Determine Next Status
     const nextStatus = (evaluation.verdict === 'CORRECT' || evaluation.nextAction === 'ADVANCE')
       ? STUDY_STATUS.ADVANCING
       : STUDY_STATUS.REMEDIATING;
 
-    // 10. Construct Turn Document
+    // 9. Construct Turn Document
     const turnIndex = claimedSession.sequenceCounter;
     const newTurn = {
       turnIndex,
@@ -406,15 +472,16 @@ export class StudyService {
       remediation: remediation || { remediationText: '', followUpQuestion: '', remediatedAt: null },
     };
 
-    // 11. Authoritative Fenced Mutation Write (Guaranteed by operationId match)
-    const finalUpdateResult = await StudySession.updateOne(
-      {
+    // 10. Authoritative Fenced Mutation Write (Atomic & guarded by operationId fencing)
+    const finalUpdateResult = await runInTransaction(async (dbSession) => {
+      const query = {
         _id: sessionId,
         userId,
-        status: STUDY_STATUS.ANSWER_PENDING,
+        status: STUDY_STATUS.EVALUATING,
         'evaluationState.operationId': operationId, // FENCING CONDITION
-      },
-      {
+      };
+
+      const update = {
         $set: {
           status: nextStatus,
           'evaluationState.status': 'COMPLETED',
@@ -438,10 +505,13 @@ export class StudyService {
             ? { 'metrics.strugglingConceptIds': { $each: newTurn.question.targetConceptIds } }
             : {}),
         },
-      }
-    );
+      };
 
-    // 12. Handle Stale Worker Late Return (Lease Takeover Outcome)
+      const opts = dbSession ? { session: dbSession } : {};
+      return StudySession.updateOne(query, update, opts);
+    });
+
+    // 11. Handle Stale Worker Late Return (Lease Takeover Outcome)
     if (finalUpdateResult.matchedCount === 0) {
       console.warn(`[StudyService] Stale evaluation worker with operationId="${operationId}" was superseded and discarded safely.`);
       const currentLatestSession = await StudySession.findById(sessionId);
@@ -466,6 +536,7 @@ export class StudyService {
    * Advances the study session forward (ZERO re-evaluation).
    * - ADVANCING -> Next Active Question -> QUESTIONING
    * - REMEDIATING -> Follow-Up Question -> RECHECKING
+   * Fully protected by expected sessionVersion.
    */
   async continueSession(userId, sessionId, payload = {}) {
     const { sessionVersion } = payload;
@@ -490,11 +561,31 @@ export class StudyService {
 
       // Check if all concepts are demonstrated and session should complete
       if (canonicalConcepts.length > 0 && demonstratedSet.size >= canonicalConcepts.length) {
-        session.status = STUDY_STATUS.COMPLETED;
-        session.sessionVersion += 1;
-        session.lastActivityAt = new Date();
-        await session.save();
-        return session;
+        const completedSession = await StudySession.findOneAndUpdate(
+          {
+            _id: sessionId,
+            userId,
+            status: STUDY_STATUS.ADVANCING,
+            sessionVersion: session.sessionVersion,
+          },
+          {
+            $set: {
+              status: STUDY_STATUS.COMPLETED,
+              lastActivityAt: new Date(),
+            },
+            $inc: { sessionVersion: 1 },
+          },
+          { new: true }
+        );
+
+        if (!completedSession) {
+          const error = new Error('Stale sessionVersion. Please refresh session state.');
+          error.code = 'STALE_STUDY_STATE';
+          error.statusCode = 409;
+          throw error;
+        }
+
+        return completedSession;
       }
 
       let pinnedSyllabusContext = null;
@@ -520,13 +611,35 @@ export class StudyService {
         targetConcept: nextConcept,
       });
 
-      session.activeQuestion = nextQuestion;
-      session.status = STUDY_STATUS.QUESTIONING;
-      session.sessionVersion += 1;
-      session.metrics.totalQuestionsAsked += 1;
-      session.lastActivityAt = new Date();
-      await session.save();
-      return session;
+      const updated = await StudySession.findOneAndUpdate(
+        {
+          _id: sessionId,
+          userId,
+          status: STUDY_STATUS.ADVANCING,
+          sessionVersion: session.sessionVersion,
+        },
+        {
+          $set: {
+            activeQuestion: nextQuestion,
+            status: STUDY_STATUS.QUESTIONING,
+            lastActivityAt: new Date(),
+          },
+          $inc: {
+            sessionVersion: 1,
+            'metrics.totalQuestionsAsked': 1,
+          },
+        },
+        { new: true }
+      );
+
+      if (!updated) {
+        const error = new Error('Stale sessionVersion. Please refresh session state.');
+        error.code = 'STALE_STUDY_STATE';
+        error.statusCode = 409;
+        throw error;
+      }
+
+      return updated;
     }
 
     if (session.status === STUDY_STATUS.REMEDIATING) {
@@ -547,13 +660,35 @@ export class StudyService {
         generatedAt: new Date(),
       };
 
-      session.activeQuestion = followUpQuestion;
-      session.status = STUDY_STATUS.RECHECKING;
-      session.sessionVersion += 1;
-      session.metrics.totalQuestionsAsked += 1;
-      session.lastActivityAt = new Date();
-      await session.save();
-      return session;
+      const updated = await StudySession.findOneAndUpdate(
+        {
+          _id: sessionId,
+          userId,
+          status: STUDY_STATUS.REMEDIATING,
+          sessionVersion: session.sessionVersion,
+        },
+        {
+          $set: {
+            activeQuestion: followUpQuestion,
+            status: STUDY_STATUS.RECHECKING,
+            lastActivityAt: new Date(),
+          },
+          $inc: {
+            sessionVersion: 1,
+            'metrics.totalQuestionsAsked': 1,
+          },
+        },
+        { new: true }
+      );
+
+      if (!updated) {
+        const error = new Error('Stale sessionVersion. Please refresh session state.');
+        error.code = 'STALE_STUDY_STATE';
+        error.statusCode = 409;
+        throw error;
+      }
+
+      return updated;
     }
 
     const error = new Error(`Cannot continue study session from status "${session.status}". Expected "ADVANCING" or "REMEDIATING".`);
@@ -565,6 +700,7 @@ export class StudyService {
   /**
    * Pauses an active study session.
    * Allowed ONLY from QUESTIONING, REMEDIATING, RECHECKING.
+   * Fully atomic with sessionVersion.
    */
   async pauseSession(userId, sessionId, payload = {}) {
     const { sessionVersion } = payload;
@@ -579,17 +715,37 @@ export class StudyService {
 
     validateStateTransition(session.status, STUDY_STATUS.PAUSED);
 
-    session.pausedFromStatus = session.status;
-    session.status = STUDY_STATUS.PAUSED;
-    session.sessionVersion += 1;
-    session.lastActivityAt = new Date();
-    await session.save();
+    const updated = await StudySession.findOneAndUpdate(
+      {
+        _id: sessionId,
+        userId,
+        status: { $in: ALLOWED_PAUSE_STATUSES },
+        sessionVersion: session.sessionVersion,
+      },
+      {
+        $set: {
+          pausedFromStatus: session.status,
+          status: STUDY_STATUS.PAUSED,
+          lastActivityAt: new Date(),
+        },
+        $inc: { sessionVersion: 1 },
+      },
+      { new: true }
+    );
 
-    return session;
+    if (!updated) {
+      const error = new Error('Stale sessionVersion or state modified concurrently.');
+      error.code = 'STALE_STUDY_STATE';
+      error.statusCode = 409;
+      throw error;
+    }
+
+    return updated;
   }
 
   /**
    * Resumes a paused study session back to its exact prior status.
+   * Fully atomic with sessionVersion.
    */
   async resumeSession(userId, sessionId, payload = {}) {
     const { sessionVersion } = payload;
@@ -612,17 +768,37 @@ export class StudyService {
     const restoreStatus = session.pausedFromStatus || STUDY_STATUS.QUESTIONING;
     validateStateTransition(session.status, restoreStatus, { pausedFromStatus: session.pausedFromStatus });
 
-    session.status = restoreStatus;
-    session.pausedFromStatus = null;
-    session.sessionVersion += 1;
-    session.lastActivityAt = new Date();
-    await session.save();
+    const updated = await StudySession.findOneAndUpdate(
+      {
+        _id: sessionId,
+        userId,
+        status: STUDY_STATUS.PAUSED,
+        sessionVersion: session.sessionVersion,
+      },
+      {
+        $set: {
+          status: restoreStatus,
+          pausedFromStatus: null,
+          lastActivityAt: new Date(),
+        },
+        $inc: { sessionVersion: 1 },
+      },
+      { new: true }
+    );
 
-    return session;
+    if (!updated) {
+      const error = new Error('Stale sessionVersion or state modified concurrently.');
+      error.code = 'STALE_STUDY_STATE';
+      error.statusCode = 409;
+      throw error;
+    }
+
+    return updated;
   }
 
   /**
    * Terminates a study session permanently (EXITED).
+   * Fully atomic with sessionVersion.
    */
   async exitSession(userId, sessionId) {
     const session = await this.getSessionById(userId, sessionId);
@@ -631,16 +807,28 @@ export class StudyService {
       return session;
     }
 
-    session.status = STUDY_STATUS.EXITED;
-    session.sessionVersion += 1;
-    session.lastActivityAt = new Date();
-    await session.save();
+    const updated = await StudySession.findOneAndUpdate(
+      {
+        _id: sessionId,
+        userId,
+        status: { $ne: STUDY_STATUS.EXITED },
+      },
+      {
+        $set: {
+          status: STUDY_STATUS.EXITED,
+          lastActivityAt: new Date(),
+        },
+        $inc: { sessionVersion: 1 },
+      },
+      { new: true }
+    );
 
-    return session;
+    return updated || session;
   }
 
   /**
    * Recovers an expired evaluation lease (safe takeover).
+   * Fully atomic with sessionVersion.
    */
   async recoverExpiredLease(userId, sessionId) {
     const newOperationId = crypto.randomUUID();
@@ -653,6 +841,8 @@ export class StudyService {
       },
       {
         $set: {
+          status: STUDY_STATUS.EVALUATING,
+          'evaluationState.status': 'EVALUATING',
           'evaluationState.operationId': newOperationId,
           'evaluationState.startedAt': new Date(),
           'evaluationState.leaseExpiresAt': new Date(Date.now() + 30000),

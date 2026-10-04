@@ -183,6 +183,16 @@ studySessionSchema.index({ userId: 1, topicId: 1, status: 1 });
 studySessionSchema.index({ userId: 1, status: 1, lastActivityAt: -1 });
 studySessionSchema.index({ userId: 1, subjectId: 1, lastActivityAt: -1 });
 
+// Database-level race-safety constraint: only one active (non-terminal) session allowed per user and topic
+studySessionSchema.index(
+  { userId: 1, topicId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: { $nin: ['COMPLETED', 'EXITED'] } },
+    name: 'unique_active_study_session_per_user_topic',
+  }
+);
+
 // Multikey index for clientTurnId query acceleration.
 // Uniqueness is session-scoped and enforced by application-level transactional query logic.
 studySessionSchema.index({ 'turns.clientTurnId': 1 });

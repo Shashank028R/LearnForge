@@ -426,13 +426,13 @@ async function runLiveVerification() {
     const newOpId = recoveredSession.evaluationState.operationId;
     if (newOpId === staleOpId) throw new Error('Lease recovery failed to replace stale operationId.');
 
-    // Worker A returns late and attempts to write with staleOpId
+    // Worker A returns late and attempts to write with staleOpId matching current EVALUATING status
     const lateWriteResult = await StudySession.updateOne(
       {
         _id: createdSession._id,
         userId: userA._id,
-        status: STUDY_STATUS.ANSWER_PENDING,
-        'evaluationState.operationId': staleOpId, // OLD EXPIRED OPERATION ID
+        status: STUDY_STATUS.EVALUATING, // Exactly matching the current session status
+        'evaluationState.operationId': staleOpId, // OLD EXPIRED OPERATION ID — FENCING BARRIER
       },
       {
         $set: { status: STUDY_STATUS.ADVANCING },
@@ -443,7 +443,7 @@ async function runLiveVerification() {
       throw new Error('Fencing violation: Late worker was able to match and write with expired operationId.');
     }
     console.log(`  -> Worker B Takeover New operationId: ${newOpId}`);
-    console.log(`  -> Late Worker A Commit Matched Documents: ${lateWriteResult.matchedCount} (Rejected Harmlessly)`);
+    console.log(`  -> Late Worker A Commit Matched Documents: ${lateWriteResult.matchedCount} (Rejected Strictly by operationId Fencing)`);
     console.log('  -> PASS: Authoritative lease fencing protects against late worker state corruption.\n');
 
     // --- Gate 16: Cross-Tenant Security Isolation ---

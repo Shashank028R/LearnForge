@@ -305,6 +305,7 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
         let statusMatch = true;
         if (filter.status) {
           if (filter.status.$in) statusMatch = filter.status.$in.includes(ss.status);
+          else if (filter.status.$ne) statusMatch = ss.status !== filter.status.$ne;
           else statusMatch = ss.status === filter.status;
         }
 
@@ -335,7 +336,13 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
           // Apply $inc
           if (update.$inc) {
             for (const [k, v] of Object.entries(update.$inc)) {
-              ss[k] = (ss[k] || 0) + v;
+              if (k.startsWith('metrics.')) {
+                const subK = k.split('.')[1];
+                ss.metrics = ss.metrics || {};
+                ss.metrics[subK] = (ss.metrics[subK] || 0) + v;
+              } else {
+                ss[k] = (ss[k] || 0) + v;
+              }
             }
           }
 
@@ -357,12 +364,18 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
         const idMatch = !filter._id || ss._id.toString() === filter._id.toString();
         const userMatch = !filter.userId || ss.userId.toString() === filter.userId.toString();
 
+        let statusMatch = true;
+        if (filter.status) {
+          if (filter.status.$in) statusMatch = filter.status.$in.includes(ss.status);
+          else statusMatch = ss.status === filter.status;
+        }
+
         let opIdMatch = true;
         if (filter['evaluationState.operationId']) {
           opIdMatch = ss.evaluationState?.operationId === filter['evaluationState.operationId'];
         }
 
-        if (idMatch && userMatch && opIdMatch) {
+        if (idMatch && userMatch && statusMatch && opIdMatch) {
           if (update.$set) {
             for (const [k, v] of Object.entries(update.$set)) {
               if (k.startsWith('evaluationState.')) {
@@ -880,7 +893,7 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
       {
         _id: sessionId,
         userId: userA._id,
-        status: STUDY_STATUS.ANSWER_PENDING,
+        status: STUDY_STATUS.EVALUATING,
         'evaluationState.operationId': opId_A, // STALE OPERATION ID
       },
       {
@@ -1012,5 +1025,62 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
       .expect(400);
 
     expect(answerRes.body.error.code).toBe('TERMINAL_STUDY_STATE');
+  });
+
+  it('23. handles genuine concurrent identical-clientTurnId race deterministically', async () => {
+    const createRes = await request(app)
+      .post(`/api/v1/topics/${topicA._id}/study/sessions`)
+      .set('Cookie', sessionCookieA)
+      .expect(201);
+
+    const sessionId = createRes.body.data.session._id;
+    const questionId = createRes.body.data.session.activeQuestion.questionId;
+    const sharedClientTurnId = 'turn-identical-race-001';
+    const sharedAnswer = 'Exact identical answer payload submitted simultaneously.';
+
+    const [res1, res2] = await Promise.all([
+      request(app)
+        .post(`/api/v1/study-sessions/${sessionId}/answer`)
+        .set('Cookie', sessionCookieA)
+        .send({
+          questionId,
+          sessionVersion: 1,
+          clientTurnId: sharedClientTurnId,
+          answer: sharedAnswer,
+        }),
+      request(app)
+        .post(`/api/v1/study-sessions/${sessionId}/answer`)
+        .set('Cookie', sessionCookieA)
+        .send({
+          questionId,
+          sessionVersion: 1,
+          clientTurnId: sharedClientTurnId,
+          answer: sharedAnswer,
+        }),
+    ]);
+
+    const statuses = [res1.status, res2.status];
+    expect(statuses).toContain(200);
+    // The second request either fails with 409 STALE_STUDY_STATE (version claimed) or resolves idempotently
+    expect(statuses.every((s) => s === 200 || s === 409)).toBe(true);
+  });
+
+  it('24. grounds expectedReasoningSignals in canonical concept descriptions and operational evidence', () => {
+    const rawAiOutputWithoutSignals = {
+      questionType: 'mechanism',
+      prompt: 'Explain the mechanism of Leader Election.',
+      targetConceptNames: ['Leader Election'],
+      expectedReasoningSignals: [], // AI generated no signals
+    };
+
+    const normalized = studyAiService._validateAndNormalizeQuestion(
+      rawAiOutputWithoutSignals,
+      [concept1, concept2],
+      concept1
+    );
+
+    expect(normalized.expectedReasoningSignals.length).toBeGreaterThan(0);
+    expect(normalized.expectedReasoningSignals[0]).toContain('Leader Election');
+    expect(normalized.expectedReasoningSignals[0]).toContain(concept1.description);
   });
 });

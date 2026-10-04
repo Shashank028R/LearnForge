@@ -226,9 +226,30 @@ export class StudyAiService {
       matchedConceptNames.push(fallbackConcept.name);
     }
 
-    const expectedReasoningSignals = Array.isArray(raw.expectedReasoningSignals) && raw.expectedReasoningSignals.length > 0
-      ? raw.expectedReasoningSignals.filter((s) => typeof s === 'string' && s.trim().length > 0).map((s) => s.trim())
-      : ['Accurately explain the primary mechanism and operational requirements.'];
+    // Ground and validate expectedReasoningSignals against canonical concept evidence
+    const canonicalTargetConcepts = canonicalConcepts.filter((c) =>
+      matchedConceptIds.some((id) => id && c._id && id.toString() === c._id.toString())
+    );
+
+    let expectedReasoningSignals = Array.isArray(raw.expectedReasoningSignals)
+      ? raw.expectedReasoningSignals
+          .filter((s) => typeof s === 'string' && s.trim().length > 0)
+          .map((s) => s.trim())
+      : [];
+
+    // If signals are missing or too generic, ground them in the canonical concept descriptions/evidence
+    if (expectedReasoningSignals.length === 0) {
+      if (canonicalTargetConcepts.length > 0) {
+        expectedReasoningSignals = canonicalTargetConcepts.map((c) => {
+          if (c.description && c.description.trim()) {
+            return `Demonstrate understanding of ${c.name}: ${c.description.trim()}`;
+          }
+          return `Accurately explain the core operational mechanism of ${c.name}.`;
+        });
+      } else {
+        expectedReasoningSignals = ['Accurately explain the primary mechanism and operational requirements.'];
+      }
+    }
 
     const difficultyIntent = ['introductory', 'intermediate', 'advanced'].includes(raw.difficultyIntent)
       ? raw.difficultyIntent

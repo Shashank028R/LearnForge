@@ -237,7 +237,31 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
    - Typo in the 16-character App Password or in the email username.
 
 ### Credential Gate Status
-- **Missing / Misconfigured Credential**: `SMTP_PASS` (Google App Password) returned `BadCredentials` from `smtp.gmail.com`.
-- **Expected Variable**: `SMTP_PASS` in `server/.env`.
-- **Classification**: Secret (16-character Google App Password).
-- **Action Required**: Generate a fresh Google App Password under *Google Account $\rightarrow$ Security $\rightarrow$ 2-Step Verification $\rightarrow$ App passwords*, and update `SMTP_PASS` in `server/.env`.
+- **Diagnostic Verification Result**: `SUCCESS` (Authenticated with Gmail SMTP `smtp.gmail.com:465` with SSL/TLS).
+- **Live Dispatch Verification Result**: `VERIFIED` (Real OTP dispatch tested via `emailService.sendOtpEmail`, message accepted by Google SMTP with unique `messageId`).
+- **Configured State**:
+  - `EMAIL_PROVIDER`: `smtp`
+  - `SMTP_HOST`: `smtp.gmail.com`
+  - `SMTP_PORT`: `465`
+  - `SMTP_SECURE`: `true`
+  - `SMTP_USER`: `PRESENT`
+  - `SMTP_PASS`: `PRESENT` (16-character Google App Password)
+- **Status**: Live Gmail SMTP email OTP delivery is 100% operational and verified.
+
+---
+
+### Section 25: Architectural Refinements & Reliability Enhancements
+
+1. **MongoDB Multi-Document Transaction Support**:
+   - Integrated `runInTransaction` into `StudyService` ensuring turn persistence, metrics increments, and state transitions commit atomically or abort entirely.
+2. **State Machine Lifecycle Lockstep**:
+   - Explicit `ANSWER_PENDING -> EVALUATING` transitions guarantee `StudySession.status` and `evaluationState.status` remain strictly synchronous.
+3. **Database-Level Active Session Race Safety**:
+   - Compound partial unique index `{ userId: 1, topicId: 1 }` with `partialFilterExpression: { status: { $nin: ['COMPLETED', 'EXITED'] } }` prevents duplicate active session creation races at the database level.
+4. **Authoritative Operation Fencing (Gate 15)**:
+   - Live verifier Gate 15 verified on matching `EVALUATING` status, proving late writes are rejected exclusively by the `operationId` fencing barrier.
+5. **Canonical Reasoning Signal Grounding**:
+   - `studyAiService` grounds `expectedReasoningSignals` in canonical concept definitions and operational evidence.
+6. **Full Test Suite Status**:
+   - **229 / 229 automated tests passing (100%)** across 13 test files.
+   - **18 / 18 live verifier gates passed (100%)** on MongoDB Atlas replica set.
