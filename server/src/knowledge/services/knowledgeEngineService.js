@@ -14,6 +14,49 @@ import { LearningStateMachine } from '../state/learningStateMachine.js';
  * learning state transitions, and transactional persistence.
  */
 export class KnowledgeEngineService {
+  static testBarriers = new Map();
+
+  /**
+   * Deterministic test synchronization barrier (Enabled ONLY in non-production environments)
+   * Ensures concurrent requests rendezvous after passing the initial findOne() idempotency check
+   * and before entering MongoDB transaction persistence, guaranteeing that the transaction/unique-index
+   * collision path is deterministically exercised.
+   */
+  static async awaitTestBarrier(barrierKey, expectedCount = 2, timeoutMs = 15000) {
+    if (!barrierKey || process.env.NODE_ENV === 'production') return;
+
+    let entry = KnowledgeEngineService.testBarriers.get(barrierKey);
+    if (!entry) {
+      let resolveBarrier;
+      let rejectBarrier;
+      const promise = new Promise((resolve, reject) => {
+        resolveBarrier = resolve;
+        rejectBarrier = reject;
+      });
+      entry = {
+        count: 0,
+        expected: expectedCount,
+        promise,
+        resolve: resolveBarrier,
+        reject: rejectBarrier,
+        timer: setTimeout(() => {
+          KnowledgeEngineService.testBarriers.delete(barrierKey);
+          resolveBarrier(); // Fail open after timeout to avoid hanging indefinitely
+        }, timeoutMs),
+      };
+      KnowledgeEngineService.testBarriers.set(barrierKey, entry);
+    }
+
+    entry.count += 1;
+    if (entry.count >= entry.expected) {
+      clearTimeout(entry.timer);
+      KnowledgeEngineService.testBarriers.delete(barrierKey);
+      entry.resolve();
+    }
+
+    await entry.promise;
+  }
+
   constructor(aiGateway = null) {
     this.aiGateway = aiGateway;
     this.extractor = new EventExtractor(aiGateway);
@@ -62,6 +105,7 @@ export class KnowledgeEngineService {
         skipped: true,
         duplicate: true,
         reason: 'already_processed',
+        resolvedVia: 'pre_check',
         idempotencyKey,
       };
     }
@@ -122,6 +166,11 @@ export class KnowledgeEngineService {
       };
     }
 
+    // Test Synchronization Barrier (Enabled ONLY in non-production test environments)
+    if (params.testBarrierKey && process.env.NODE_ENV !== 'production') {
+      await KnowledgeEngineService.awaitTestBarrier(params.testBarrierKey);
+    }
+
     // 5. Mandatory Multi-Document Transaction Boundary
     let session = null;
     try {
@@ -159,7 +208,10 @@ export class KnowledgeEngineService {
       });
 
       await session.commitTransaction();
-      return result;
+      return {
+        ...result,
+        resolvedVia: 'transaction_commit',
+      };
     } catch (err) {
       try {
         await session.abortTransaction();
@@ -177,8 +229,8 @@ export class KnowledgeEngineService {
         /E11000|duplicate key|WriteConflict/i.test(err.message || '');
 
       if (isDuplicateKeyOrConflict) {
-        // Allow winner transaction up to 300ms to finalize commit if racing simultaneously
-        for (let retryCount = 0; retryCount < 6; retryCount++) {
+        // Allow winner transaction up to 10 seconds to finalize commit on MongoDB Atlas/replica set
+        for (let retryCount = 0; retryCount < 100; retryCount++) {
           const confirmedEvent = await LearningEvent.findOne({
             userId,
             $or: [
@@ -193,10 +245,11 @@ export class KnowledgeEngineService {
               skipped: true,
               duplicate: true,
               reason: 'already_processed',
+              resolvedVia: 'transaction_conflict_recovery',
               idempotencyKey,
             };
           }
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 100));
         }
       }
 

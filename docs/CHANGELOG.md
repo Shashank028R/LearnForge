@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `BaseProvider.js`: Abstract provider adapter with health state tracking, failure counters, and standardized error normalization (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
   - `GeminiProvider.js`: Concrete adapter for Google Gemini models using official `@google/genai` (v2.27.0).
   - `OpenAIProvider.js`: Concrete adapter for OpenAI models using official `openai` (v7.27.0).
-  - `GroqProvider.js`: Concrete adapter for Groq models using official `groq-sdk` (v1.6.0). Default model `openai/gpt-oss-120b`.
+  - `GroqProvider.js`: Concrete adapter for Groq models using official `groq-sdk` (v1.6.0). Default model `openai/gpt-oss-20b`.
   - Anthropic: Marked `DISABLED / DEFERRED` and excluded from Phase 05 active provider set.
 - **Task-Based Automatic Model Router (`ModelRouter.js`)**:
   - Defined task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) and mapped each to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).

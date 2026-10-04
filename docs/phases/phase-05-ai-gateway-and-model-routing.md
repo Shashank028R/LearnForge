@@ -62,7 +62,7 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 
 1. **`GeminiProvider`** (`server/src/ai/providers/geminiProvider.js`): Uses official `@google/genai` (v2.27.0). Defaults to `gemini-2.5-flash`.
 2. **`OpenAIProvider`** (`server/src/ai/providers/openaiProvider.js`): Uses official `openai` (v7.27.0). Defaults to `gpt-4o-mini`.
-3. **`GroqProvider`** (`server/src/ai/providers/groqProvider.js`): Uses official `groq-sdk` (v1.6.0). Defaults to `openai/gpt-oss-120b`.
+3. **`GroqProvider`** (`server/src/ai/providers/groqProvider.js`): Uses official `groq-sdk` (v1.6.0). Defaults to `openai/gpt-oss-20b`.
 4. **Anthropic**: `DISABLED / DEFERRED`. Not part of active Phase 05 provider set.
 
 ### Normalized Response Envelope
@@ -70,7 +70,7 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 {
   "text": "Socratic explanation...",
   "provider": "groq",
-  "model": "openai/gpt-oss-120b",
+  "model": "openai/gpt-oss-20b",
   "task": "pedagogical_explanation",
   "usage": {
     "promptTokens": 120,
@@ -81,7 +81,7 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
   "latencyMs": 412,
   "routingMetadata": {
     "selectedProvider": "groq",
-    "selectedModel": "openai/gpt-oss-120b",
+    "selectedModel": "openai/gpt-oss-20b",
     "reason": "task_policy_pedagogical_explanation",
     "attempts": 1
   },
@@ -134,5 +134,5 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 - **External AI Providers**:
   - Gemini: `CONFIGURED` / `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
   - OpenAI: `CONFIGURED` / `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
-  - Groq: `LIVE-VERIFIED` (Tested live with `GROQ_API_KEY` and `openai/gpt-oss-120b`, exact marker `"LearnForge Groq Live Verified"` verified)
+  - Groq: `LIVE-VERIFIED` (Tested live with `GROQ_API_KEY` and `openai/gpt-oss-20b`, exact marker `"LearnForge Groq Live Verified"` verified)
   - Anthropic: `DISABLED / DEFERRED` (Not part of active Phase 05 provider set)

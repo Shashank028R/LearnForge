@@ -250,7 +250,7 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
     it('GroqProvider preserves generic maxTokens for general tasks and enforces 800 token cap only on knowledge_event_extraction', async () => {
       const groq = new GroqProvider({
         apiKey: 'test-groq-key',
-        model: 'openai/gpt-oss-120b',
+        model: 'openai/gpt-oss-20b',
       });
 
       const mockCreate = vi.fn().mockResolvedValue({
@@ -428,7 +428,7 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
 
     it('falls back to secondary provider after primary provider exhausts its retry budget', async () => {
       const primaryProvider = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
-      const fallbackProvider = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-120b' });
+      const fallbackProvider = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-20b' });
 
       let primaryCalls = 0;
       let fallbackCalls = 0;
@@ -443,7 +443,7 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
         return {
           text: 'Success from Groq fallback provider',
           provider: 'groq',
-          model: 'openai/gpt-oss-120b',
+          model: 'openai/gpt-oss-20b',
           task: AI_TASK_TYPES.GENERAL_CHAT,
           usage: { totalTokens: 30 },
           finishReason: 'stop',
@@ -476,7 +476,7 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
 
     it('falls back immediately without retrying on non-retryable errors (e.g. auth error)', async () => {
       const failingAuth = new GeminiProvider({ apiKey: 'bad-key', model: 'gemini-2.5-flash' });
-      const healthyGroq = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-120b' });
+      const healthyGroq = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-20b' });
 
       let authCalls = 0;
       let groqCalls = 0;
@@ -491,7 +491,7 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
         return {
           text: 'Groq recovered from unretryable Gemini auth error',
           provider: 'groq',
-          model: 'openai/gpt-oss-120b',
+          model: 'openai/gpt-oss-20b',
           task: AI_TASK_TYPES.GENERAL_CHAT,
           usage: { totalTokens: 15 },
           finishReason: 'stop',
@@ -522,7 +522,7 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
 
     it('throws AIAllProvidersFailedError when all configured providers are exhausted', async () => {
       const mockGemini = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
-      const mockGroq = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-120b' });
+      const mockGroq = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-20b' });
 
       vi.spyOn(mockGemini, 'generate').mockRejectedValue(
         new AIProviderUnavailableError('Gemini 500', { provider: 'gemini' })

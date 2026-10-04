@@ -350,6 +350,11 @@ export async function triggerMessageExtraction(req, res, next) {
     }
 
     // 5. Invoke Knowledge Engine with persisted database Message entities
+    const testBarrierKey =
+      process.env.NODE_ENV !== 'production'
+        ? (req.headers['x-test-sync-barrier'] || req.body?.testBarrierKey || null)
+        : null;
+
     const result = await knowledgeEngine.processExchangeEvidence({
       userId: req.user._id,
       subjectId: topic.subjectId,
@@ -359,6 +364,7 @@ export async function triggerMessageExtraction(req, res, next) {
       userMessage,
       assistantMessage,
       requestId: req.id || 'unknown',
+      testBarrierKey,
     });
 
     return res.status(200).json({

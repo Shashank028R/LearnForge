@@ -59,7 +59,7 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - `server/src/ai/providers/baseProvider.js`: Base adapter class with health state tracking (healthy/degraded), failure counters, and standardized error normalization (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
    - `server/src/ai/providers/geminiProvider.js`: Adapter for Google Gemini models using official `@google/genai` (v2.27.0).
    - `server/src/ai/providers/openaiProvider.js`: Adapter for OpenAI models using official `openai` (v7.27.0).
-   - `server/src/ai/providers/groqProvider.js`: Adapter for Groq models using official `groq-sdk` (v1.6.0). Configured default model `openai/gpt-oss-120b`.
+   - `server/src/ai/providers/groqProvider.js`: Adapter for Groq models using official `groq-sdk` (v1.6.0). Configured default model `openai/gpt-oss-20b`.
    - `server/src/ai/router/modelRouter.js`: Automatic task-based router selecting optimal providers by capability matching, health status, and fallback chains:
      - `general_chat`: `gemini` → `groq` → `openai`
      - `pedagogical_explanation`: `openai` → `gemini` → `groq`
@@ -94,7 +94,7 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - External Live Provider Status:
      - Gemini: `CONFIGURED` / `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`
      - OpenAI: `CONFIGURED` / `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`
-     - Groq: `LIVE-VERIFIED` (Tested live with `GROQ_API_KEY` and `openai/gpt-oss-120b`, exact marker `"LearnForge Groq Live Verified"` verified)
+     - Groq: `LIVE-VERIFIED` (Tested live with `GROQ_API_KEY` and `openai/gpt-oss-20b`, exact marker `"LearnForge Groq Live Verified"` verified)
      - Anthropic: `DISABLED / DEFERRED` (Not part of active Phase 05 provider set)
 
 ---

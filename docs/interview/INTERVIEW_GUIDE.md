@@ -539,7 +539,7 @@ When external AI API keys are not supplied in `.env` or all upstream providers a
 ### Q73: Why did you implement official SDK adapters for Gemini, OpenAI, and Groq, and what is the status of Anthropic?
 **Answer**:  
 - **Official SDKs**: `@google/genai`, `openai`, and `groq-sdk` provide typed interfaces, built-in HTTP connection pooling/keep-alive, accurate token usage tracking, and structured error schemas.
-- **Groq Integration**: Integrated via `groq-sdk` (v1.6.0) targeting `openai/gpt-oss-120b` for ultra-low latency inference and semantic classification.
+- **Groq Integration**: Integrated via `groq-sdk` (v1.6.0) targeting `openai/gpt-oss-20b` for ultra-low latency inference and semantic classification.
 - **Anthropic Deferral**: Because Anthropic credits are not active for Phase 05, the Anthropic adapter and dependency were marked `DISABLED / DEFERRED` and removed from active routing and fallback chains, preventing broken fallback loops and eliminating unused dependencies.
 
 ### Q74: What is the Credential Gate and how does it distinguish between automated mocks and live provider verification?
@@ -548,7 +548,7 @@ The Credential Gate is a mandatory engineering standard:
 - Unit and integration tests must run deterministically via mocks/spies without pretending they constitute live network verification.
 - Real live provider verification requires genuine user-supplied credentials in local environment variables.
 - When live credentials are unconfigured, the verification status is explicitly declared as `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`.
-- When live credentials exist and successfully execute live upstream requests (as verified with Groq `openai/gpt-oss-120b`), the status is reported as `LIVE-VERIFIED`.
+- When live credentials exist and successfully execute live upstream requests (as verified with Groq `openai/gpt-oss-20b`), the status is reported as `LIVE-VERIFIED`.
 
 ### Q75: Why are canonical notes not automatically extracted in Phase 05?
 **Answer**:  

@@ -99,7 +99,7 @@ During Phases 04 and 04.1, strict dependency discipline was maintained:
 During Phase 05, official LLM provider SDKs were integrated to power the multi-provider AI Gateway:
 - **`@google/genai` (`^2.27.0` / `2.27.0`)**: Official Google GenAI SDK for Gemini models adapter (`gemini-2.5-flash`).
 - **`openai` (`^7.27.0` / `7.27.0`)**: Official OpenAI Node.js SDK for GPT models adapter (`gpt-4o-mini`).
-- **`groq-sdk` (`^1.6.0` / `1.6.0`)**: Official Groq SDK for Groq models adapter (`openai/gpt-oss-120b`).
+- **`groq-sdk` (`^1.6.0` / `1.6.0`)**: Official Groq SDK for Groq models adapter (`openai/gpt-oss-20b`).
 - **Anthropic Provider Status**: Removed `@anthropic-ai/sdk` dependency. Anthropic adapter is marked `DISABLED / DEFERRED` and excluded from Phase 05 active provider set.
 - **Zero frontend AI packages added**: All AI interactions, provider routing, and error normalizations are encapsulated exclusively on the backend (`server/src/ai/`).
 

@@ -92,18 +92,18 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
           text: JSON.stringify({ relevance: 'on_topic', reason: 'Matches topic' }),
           classification: { relevance: 'on_topic', reason: 'Matches topic' },
           provider: 'groq',
-          model: 'openai/gpt-oss-120b',
+          model: 'openai/gpt-oss-20b',
           task: req.task,
         };
       }
       return {
         text: 'That is an intriguing question. To break this down Socratically: what is the fundamental principle behind this concept?',
         provider: 'groq',
-        model: 'openai/gpt-oss-120b',
+        model: 'openai/gpt-oss-20b',
         task: req.task || AI_TASK_TYPES.GENERAL_CHAT,
         usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
         latencyMs: 5,
-        routingMetadata: { selectedProvider: 'groq', selectedModel: 'openai/gpt-oss-120b', reason: 'mocked_unit_test', attempts: 1 },
+        routingMetadata: { selectedProvider: 'groq', selectedModel: 'openai/gpt-oss-20b', reason: 'mocked_unit_test', attempts: 1 },
       };
     });
 

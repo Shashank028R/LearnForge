@@ -588,7 +588,7 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
             topicSummaryUpdate: 'Focuses on compile-time memory safety invariants.',
             rationale: 'Core pedagogical principle introduced',
           }),
-          metadata: { provider: 'groq', model: 'openai/gpt-oss-120b', latencyMs: 250 },
+          metadata: { provider: 'groq', model: 'openai/gpt-oss-20b', latencyMs: 250 },
         }),
       };
 
@@ -605,7 +605,7 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       expect(result.events[0].conceptName).toBe('Aliasing XOR Mutability');
       expect(result.events[0].classificationOutcome).toBe('NEW');
       expect(result.metadata.provider).toBe('groq');
-      expect(result.metadata.model).toBe('openai/gpt-oss-120b');
+      expect(result.metadata.model).toBe('openai/gpt-oss-20b');
     });
 
     it('falls back to deterministic extraction when AI Gateway fails', async () => {
@@ -958,7 +958,7 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
           ],
         }),
         provider: 'groq',
-        model: 'openai/gpt-oss-120b',
+        model: 'openai/gpt-oss-20b',
       });
 
       const firstRes = await engine.processExchangeEvidence({
@@ -973,6 +973,7 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
 
       expect(firstRes.success).toBe(true);
       expect(firstRes.learningEvents.length).toBe(3);
+      expect(firstRes.resolvedVia).toBe('transaction_commit');
       expect(firstRes.learningEvents[0].idempotencyKey).toBe(`${userA._id}:${sourceMsgId}:v1.0`);
       expect(firstRes.learningEvents[1].idempotencyKey).toBe(`${userA._id}:${sourceMsgId}:v1.0:e1`);
       expect(firstRes.learningEvents[2].idempotencyKey).toBe(`${userA._id}:${sourceMsgId}:v1.0:e2`);
@@ -991,6 +992,7 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       expect(repeatRes.skipped).toBe(true);
       expect(repeatRes.duplicate).toBe(true);
       expect(repeatRes.reason).toBe('already_processed');
+      expect(repeatRes.resolvedVia).toBe('pre_check');
     });
 
     it('P1-CorrectionPrecedence: Recovers from NEEDS_REVIEW when extractor output contains misconception payload', () => {
@@ -1419,6 +1421,63 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       expect(savedConcept.conflictState.description).toContain('contradicts');
     });
 
+    it('P1-DeterministicBarrier: Proves concurrent race condition entering transaction path and recovering from collision', async () => {
+      const fakeGateway = {
+        generate: vi.fn().mockResolvedValue({
+          text: JSON.stringify({
+            events: [
+              {
+                conceptName: 'Concurrent Race Concept',
+                eventType: 'concept_introduced',
+                classificationOutcome: 'NEW',
+                evidenceText: 'Race condition test concept',
+              },
+            ],
+          }),
+          provider: 'groq',
+          model: 'openai/gpt-oss-20b',
+        }),
+      };
+      const engine = new KnowledgeEngineService(fakeGateway);
+      const sourceMsgId = new mongoose.Types.ObjectId();
+      const chatId = new mongoose.Types.ObjectId();
+      const barrierKey = `test-race-barrier-${Date.now()}`;
+
+      // Run two concurrent requests synchronized with the barrier key
+      const [res1, res2] = await Promise.all([
+        engine.processExchangeEvidence({
+          userId: userA._id,
+          subjectId: subjectA._id,
+          topicId: topicA._id,
+          chatId,
+          sourceMessageId: sourceMsgId,
+          userMessage: { content: 'Concurrent message' },
+          assistantMessage: { content: 'Concurrent response' },
+          testBarrierKey: barrierKey,
+        }),
+        engine.processExchangeEvidence({
+          userId: userA._id,
+          subjectId: subjectA._id,
+          topicId: topicA._id,
+          chatId,
+          sourceMessageId: sourceMsgId,
+          userMessage: { content: 'Concurrent message' },
+          assistantMessage: { content: 'Concurrent response' },
+          testBarrierKey: barrierKey,
+        }),
+      ]);
+
+      const results = [res1, res2];
+      const commits = results.filter((r) => r.success && !r.duplicate);
+      const duplicates = results.filter((r) => r.duplicate);
+
+      expect(commits.length).toBe(1);
+      expect(duplicates.length).toBe(1);
+      expect(commits[0].resolvedVia).toBe('transaction_commit');
+      expect(duplicates[0].reason).toBe('already_processed');
+      expect(duplicates[0].resolvedVia).toBe('transaction_conflict_recovery');
+    });
+
     it('P1-NewConceptSemantics: Preserves normal NEW classification on brand-new concept', async () => {
       const fakeGateway = {
         generate: vi.fn(),
@@ -1439,7 +1498,7 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
           ],
         }),
         provider: 'groq',
-        model: 'qwen/qwen3.8-27b',
+        model: 'openai/gpt-oss-20b',
       });
 
       const res = await engine.processExchangeEvidence({

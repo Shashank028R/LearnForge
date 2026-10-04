@@ -10,7 +10,7 @@ export class GroqProvider extends BaseProvider {
   constructor(config = {}) {
     super('groq', {
       apiKey: config.apiKey || process.env.GROQ_API_KEY || '',
-      model: config.model || process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+      model: config.model || process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
       ...config,
     });
     this.client = this.config.apiKey ? new Groq({ apiKey: this.config.apiKey }) : null;
@@ -24,7 +24,7 @@ export class GroqProvider extends BaseProvider {
     const startTime = Date.now();
     try {
       const systemPrompt = buildSystemPrompt(normalizedRequest.task, normalizedRequest);
-      const modelName = normalizedRequest.model || this.config.model || 'openai/gpt-oss-120b';
+      const modelName = normalizedRequest.model || this.config.model || 'openai/gpt-oss-20b';
 
       const messages = [
         { role: 'system', content: systemPrompt },

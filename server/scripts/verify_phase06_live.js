@@ -212,7 +212,7 @@ async function runLiveVerification() {
 
     // Hard Fail-Closed Assertions: REAL application AI pipeline must use Groq and configured model
     const expectedProvider = 'groq';
-    const expectedModel = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+    const expectedModel = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
 
     if (firstEvent.metadata?.provider !== expectedProvider) {
       throw new Error(
@@ -281,6 +281,9 @@ async function runLiveVerification() {
     if (reprocessData.data?.reason !== 'already_processed') {
       throw new Error(`FAIL-CLOSED: Expected duplicate reason 'already_processed', received '${reprocessData.data?.reason}'`);
     }
+    if (reprocessData.data?.resolvedVia !== 'pre_check') {
+      throw new Error(`FAIL-CLOSED: Expected serial duplicate to be caught at pre_check, received '${reprocessData.data?.resolvedVia}'`);
+    }
 
     const totalEventsAfterReprocess = await LearningEvent.countDocuments({ userId: testUser._id });
     const totalConceptsAfterReprocess = await Concept.countDocuments({ userId: testUser._id });
@@ -302,7 +305,7 @@ async function runLiveVerification() {
     console.log(`✓ End-to-end serial multi-event idempotency verified: exact event count (${totalEventsAfterReprocess}) and concept score preserved`);
 
     // 7.1 Concurrent Extraction Verification on Fresh Exchange (Exercises Real Transaction/Unique-Index Race)
-    console.log('  Testing concurrent identical extraction requests on a COMPLETELY FRESH exchange...');
+    console.log('  Testing concurrent identical extraction requests on a COMPLETELY FRESH exchange with deterministic synchronization barrier...');
     const freshConcurrentChat = await Chat.create({
       userId: testUser._id,
       subjectId: subject._id,
@@ -337,7 +340,7 @@ async function runLiveVerification() {
       },
     });
 
-    // Verify 0 LearningEvents exist for this fresh exchange prior to running the concurrent race
+    // 1. Assert fresh exchange has EXACTLY 0 LearningEvents prior to running the concurrent race
     const preConcurrentEventsForMsg = await LearningEvent.countDocuments({
       userId: testUser._id,
       sourceMessageId: freshAssistantMsg._id,
@@ -347,12 +350,18 @@ async function runLiveVerification() {
     }
 
     const eventsBeforeConcurrency = await LearningEvent.countDocuments({ userId: testUser._id });
+    const barrierKey = `live-concurrency-barrier-${Date.now()}`;
 
-    // Launch TWO identical POST /extract-knowledge requests with Promise.all()
+    // Launch TWO concurrent extraction requests synchronized to enter transaction processing simultaneously
+    const concurrentHeaders = {
+      ...authHeaders,
+      'x-test-sync-barrier': barrierKey,
+    };
+
     const [concurrentRes1, concurrentRes2] = await Promise.all([
       fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
         method: 'POST',
-        headers: authHeaders,
+        headers: concurrentHeaders,
         body: JSON.stringify({
           chatId: freshConcurrentChat._id.toString(),
           userMessageId: freshUserMsg._id.toString(),
@@ -361,7 +370,7 @@ async function runLiveVerification() {
       }),
       fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
         method: 'POST',
-        headers: authHeaders,
+        headers: concurrentHeaders,
         body: JSON.stringify({
           chatId: freshConcurrentChat._id.toString(),
           userMessageId: freshUserMsg._id.toString(),
@@ -382,7 +391,7 @@ async function runLiveVerification() {
     const successResults = results.filter((r) => r.success === true && !r.duplicate);
     const duplicateResults = results.filter((r) => r.duplicate === true);
 
-    // Hard Gate: Exactly 1 request succeeds with mutation, exactly 1 resolves safely as duplicate
+    // 2 & 3. Hard Gate: Exactly 1 request succeeds with transaction commit, exactly 1 resolves safely as duplicate
     if (successResults.length !== 1 || duplicateResults.length !== 1) {
       throw new Error(
         `FAIL-CLOSED: Expected exactly 1 successful extraction and 1 duplicate resolution in fresh concurrency test. Received: successes=${successResults.length}, duplicates=${duplicateResults.length}`
@@ -395,7 +404,17 @@ async function runLiveVerification() {
       );
     }
 
-    // Assert database state: exactly one logical set of LearningEvents exists
+    // 4. Hard Gate: Prove that both requests crossed the initial findOne() boundary and entered the transaction path
+    // The duplicate MUST have resolved via 'transaction_conflict_recovery' (catching E11000/WriteConflict inside the transaction),
+    // NOT via 'pre_check' (which would indicate request B only ran after request A committed).
+    if (duplicateResults[0].resolvedVia !== 'transaction_conflict_recovery') {
+      throw new Error(
+        `FAIL-CLOSED: Concurrent extraction did NOT exercise the transaction/unique-index collision path. Resolved via '${duplicateResults[0].resolvedVia}' instead of 'transaction_conflict_recovery'.`
+      );
+    }
+    console.log(`✓ TRANSACTION RACE PROVEN: Concurrent duplicate caught E11000/WriteConflict inside transaction and resolved via '${duplicateResults[0].resolvedVia}'`);
+
+    // 5 & 6. Assert database state: exactly one logical set of LearningEvents exists, no raw E11000 leaked, no duplicate events
     const persistedConcurrentEvents = await LearningEvent.find({
       userId: testUser._id,
       sourceMessageId: freshAssistantMsg._id,
@@ -415,7 +434,8 @@ async function runLiveVerification() {
       );
     }
 
-    console.log(`✓ Fresh-exchange concurrent idempotency verified: exactly 1 mutation, 1 duplicate/already_processed, 0 raw E11000 leaks, ${persistedConcurrentEvents.length} events created`);
+    // 7. No concept score / evidence double mutation
+    console.log(`✓ FAIL-CLOSED CONCURRENCY GATE PASSED: Both requests crossed initial findOne(), exactly 1 transaction committed, exactly 1 duplicate recovered from collision, 0 raw E11000 leaked, ${persistedConcurrentEvents.length} events created`);
 
     // 8. Assertive Misconception Live Verification
     console.log('\n[8/14] Asserting Misconception Detection & Transition to NEEDS_REVIEW (Fail-Closed)...');
