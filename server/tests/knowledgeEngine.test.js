@@ -877,6 +877,15 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       expect(schema.s.hooks._pres.has('deleteOne')).toBe(true);
       expect(schema.s.hooks._pres.has('deleteMany')).toBe(true);
       expect(schema.s.hooks._pres.has('findOneAndDelete')).toBe(true);
+
+      // Test bulkWrite mutation and deletion rejection
+      await expect(
+        LearningEvent.bulkWrite([{ updateOne: { filter: { _id: event._id }, update: { confidenceScore: 100 } } }])
+      ).rejects.toThrow('LearningEvent is an immutable append-only audit ledger');
+
+      await expect(
+        LearningEvent.bulkWrite([{ deleteOne: { filter: { _id: event._id } } }])
+      ).rejects.toThrow('LearningEvent is an immutable append-only audit ledger');
     });
 
     it('P1-MultiEvent: Enforces exchange-level idempotency for 1, 3, and 10 events', async () => {

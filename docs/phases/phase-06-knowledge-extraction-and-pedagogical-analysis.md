@@ -26,7 +26,7 @@ The following boundaries were strictly observed:
 
 ### B. LearningEvent Model (`server/src/models/LearningEvent.js`)
 - Append-only, immutable, tenant-scoped ledger entry recording each discrete learning observation with source attribution.
-- **Append-Only Immutability**: Protected by Mongoose pre-hooks on `save` (if not new), `updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace`, `deleteOne`, `deleteMany`, and `findOneAndDelete`. Timestamps schema configured with `{ createdAt: true, updatedAt: false }`.
+- **Append-Only Immutability**: Protected by Mongoose pre-hooks on `save` (if not new), `updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace`, `deleteOne`, `deleteMany`, `findOneAndDelete`, AND a schema-level static `bulkWrite` guard blocking all update, replace, and delete operations. Timestamps schema configured with `{ createdAt: true, updatedAt: false }`.
 - **Compound Unique Index (Idempotency)**: `{ userId: 1, idempotencyKey: 1 }`. Exchange-level base key `${userId}:${sourceMessageId}:${version}` used for primary event (i=0) and keyed suffix `:e${i}` for subsequent events, ensuring atomic deduplication across 1, 3, or 10 events.
 - **Query Indexes**: `{ userId: 1, topicId: 1, createdAt: -1 }`, `{ userId: 1, conceptId: 1, createdAt: -1 }`, `{ userId: 1, sourceMessageId: 1 }`.
 - **Fields**: `userId`, `subjectId`, `topicId`, `chatId`, `sourceMessageId`, `conceptId`, `conceptName`, `eventType`, `classificationOutcome`, `evidenceText`, `confidenceScore`, `previousStatus`, `newStatus`, `misconception`, `idempotencyKey`, `metadata`.
@@ -35,7 +35,7 @@ The following boundaries were strictly observed:
 1. **`EventExtractor` (`extraction/eventExtractor.js`)**:
    - Calls the Phase 05 `AIGateway` with task `KNOWLEDGE_EVENT_EXTRACTION`.
    - Consumes the normalized `AIResponse` contract (`{ text, provider, model, task, usage, routingMetadata, latencyMs }`).
-   - Parses and validates structured JSON schema envelopes with markdown fence and reasoning token cleansing.
+   - Parses and validates structured JSON schema envelopes with markdown fence cleansing and robust array salvage for truncated JSON streams.
    - Deterministic rule-based fallback when AI providers are unconfigured or unavailable.
 2. **`ConceptResolver` (`resolution/conceptResolver.js`)**:
    - Matches candidate concepts against existing records via exact normalized name (`normalizedName`) and normalized aliases (`normalizedAliases`).
@@ -43,8 +43,8 @@ The following boundaries were strictly observed:
    - Classifies relationships: `NEW`, `EXISTING`, `DUPLICATE`, `COMPLEMENTARY`, `CORRECTION`, `CONFLICT`.
 3. **`LearningStateMachine` (`state/learningStateMachine.js`)**:
    - Governs deterministic, bounded state transitions with explicit precedence:
-     1. **Correction Precedence**: `concept_corrected` / `CORRECTION` evaluated first, recovering from `NEEDS_REVIEW` to `LEARNING` (or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`).
-     2. **Misconception / Conflict**: Regresses to `NEEDS_REVIEW` with deterministic penalties (-15 to -30).
+     1. **Misconception Precedence**: `misconception_detected` / `concept_misunderstood` / active misconceptions evaluate first, setting `NEEDS_REVIEW` with deterministic penalties (-15 to -30) and preserving `NEEDS_REVIEW` until an explicit `concept_corrected` / `CORRECTION` event occurs.
+     2. **Correction Precedence**: Valid `concept_corrected` / `CORRECTION` recovers from `NEEDS_REVIEW` to `LEARNING` (or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`).
      3. **Normal Progression**:
         - `NOT_STARTED` → `INTRODUCED` on first evidence encounter (`evidenceCount = 1`, score 25).
         - `INTRODUCED` → `LEARNING` when `evidenceCount >= 2` and `confidenceScore >= 40`.
@@ -74,16 +74,18 @@ The following boundaries were strictly observed:
 - **Automated Backend Tests**: **158 / 158 passed (100%)** across 11 test files (`server/tests/knowledgeEngine.test.js`, `server/tests/chats.test.js`, etc.).
 - **Automated Frontend Tests**: **46 / 46 passed (100%)** (`client/src/App.test.jsx`, etc.).
 - **Total Monorepo Tests**: **204 / 204 passed (100%)**.
-- **Live Integration Verification (`server/scripts/verify_phase06_live.js` - All 19 Gates Passed)**:
-  - Live Express API health verified.
-  - MongoDB Atlas replica set connected and multi-document transactions verified.
-  - On-topic exchange created and extracted into `LearningEvent` and `Concept`.
-  - **REAL application AI extraction verified**: `provider: "groq"`, `model: "openai/gpt-oss-120b"`.
-  - Multi-event idempotency verified on repeated processing (0 extra events created).
-  - Forged message rejection verified on manual endpoint (`HTTP 400 INVALID_EVIDENCE`).
-  - Cross-tenant isolation verified with `HTTP 404`.
-  - Misconception clarification and correction recovery verified.
-  - Off-topic message governance exclusion verified.
-  - `LearningEvent` ledger immutability verified (rejection of `updateOne`, `deleteOne`, `findOneAndDelete`).
-  - Phase boundary verified: 0 `NoteDocument` / `NoteVersion` instances created.
-  - Direct Groq API verified with `KNOWLEDGE_EVENT_EXTRACTION` task.
+- **Live Integration Verification (`server/scripts/verify_phase06_live.js` - All 14 Assertive Gates Passed)**:
+  1. Live Express API health verified (`GET /api/v1/health` status `healthy`).
+  2. MongoDB Atlas replica set connected.
+  3. Multi-document MongoDB transactions confirmed supported.
+  4. Authenticated test users established.
+  5. Authoritative subject and approved syllabus v1 established.
+  6. **REAL AI Extraction Pipeline Verified**: Real chat exchange executed through `chatController` → `KnowledgeEngineService` → `EventExtractor` → `AIGateway` using live provider `groq` and model `qwen/qwen3.8-27b`.
+  7. **Multi-Event Extraction & Idempotency Verified**: Multi-concept exchange extracted 3 events, and re-processing verified exact 0 duplicate event and concept score mutation.
+  8. **Assertive Misconception Verification**: Hard-asserted transition to `NEEDS_REVIEW`, confidence score reduction, and active misconception tracking.
+  9. **Assertive Correction Recovery**: Hard-asserted recovery to `LEARNING`, resolution of active misconceptions, and confidence score increase.
+  10. **Assertive Off-Topic Governance**: Hard-asserted `relevance === 'off_topic'` and `disposition === 'excluded'` with exact 0 mutation on `LearningEvent` and `Concept` counts.
+  11. **Ledger Immutability & bulkWrite Guard**: Schema pre-hooks and static `bulkWrite` override strictly reject `updateOne`, `updateMany`, `replaceOne`, `deleteOne`, `deleteMany`, `findOneAndDelete`, and update/delete `bulkWrite` operations.
+  12. **Security Trust Boundaries**: Forged message IDs rejected (`HTTP 400 INVALID_EVIDENCE`) and cross-tenant access blocked (`HTTP 404`).
+  13. **Hard Phase Boundaries**: Exactly 0 `NoteDocument` and 0 `NoteVersion` records created.
+  14. **Direct Groq Provider Health**: Verified direct provider execution on `qwen/qwen3.8-27b`.

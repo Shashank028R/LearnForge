@@ -34,7 +34,12 @@ export class LearningStateMachine {
     let newScore = currentScore;
     const isMisconception = eventType === 'misconception_detected' || eventType === 'concept_misunderstood';
     const isCorrection = (eventType === 'concept_corrected' || classificationOutcome === 'CORRECTION') && !isMisconception;
-    const hasActiveMisconception = Boolean(misconception && misconception.misconceptionText);
+    const hasNewMisconception = Boolean(misconception && misconception.misconceptionText);
+    const hasExistingActiveMisconception = Boolean(
+      currentConcept &&
+        Array.isArray(currentConcept.misconceptions) &&
+        currentConcept.misconceptions.some((m) => m.isActive)
+    );
     const isConflict = classificationOutcome === 'CONFLICT' || eventType === 'concept_conflict';
 
     // 1. Correction of Previous Misconception -> Explicit Precedence Recovery (Evaluated First)
@@ -58,16 +63,20 @@ export class LearningStateMachine {
       };
     }
 
-    // 2. Misconception / Confusion / Conflict -> Immediate regression to NEEDS_REVIEW
+    // 2. Misconception / Confusion / Conflict / Unresolved Active Misconception -> Immediate/Preserved NEEDS_REVIEW
     if (
-      hasActiveMisconception ||
+      hasNewMisconception ||
+      hasExistingActiveMisconception ||
+      currentStatus === LEARNING_STATES.NEEDS_REVIEW ||
       isConflict ||
       eventType === 'misconception_detected' ||
       eventType === 'concept_misunderstood'
     ) {
       newStatus = LEARNING_STATES.NEEDS_REVIEW;
-      const penalty = misconception?.severity === 'high' ? 30 : misconception?.severity === 'low' ? 15 : 20;
-      newScore = Math.max(0, Math.round(currentScore - penalty));
+      if (hasNewMisconception || isMisconception || isConflict) {
+        const penalty = misconception?.severity === 'high' ? 30 : misconception?.severity === 'low' ? 15 : 20;
+        newScore = Math.max(0, Math.round(currentScore - penalty));
+      }
       return {
         previousStatus: isNew ? null : currentStatus,
         newStatus,

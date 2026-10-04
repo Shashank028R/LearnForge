@@ -44,7 +44,7 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
           syllabusContext,
           topicContext,
           temperature: 0.1,
-          maxTokens: 3000,
+          maxTokens: 1500,
         });
       }
     } catch (err) {
@@ -99,9 +99,73 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
     let cleaned = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
     // Strip markdown JSON code fences
     cleaned = cleaned.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
-    return JSON.parse(jsonMatch[0]);
+
+    try {
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+    } catch (_) {
+      // If full JSON parse failed due to token truncation, attempt greedy array salvage
+      try {
+        const eventsMatch = cleaned.match(/"events"\s*:\s*\[([\s\S]*)/);
+        if (eventsMatch) {
+          const eventsPart = eventsMatch[1];
+          // Find all fully closed JSON objects inside the events array
+          const objects = [];
+          let depth = 0;
+          let inString = false;
+          let escape = false;
+          let currentObj = '';
+
+          for (let i = 0; i < eventsPart.length; i++) {
+            const char = eventsPart[i];
+            if (escape) {
+              escape = false;
+              if (depth > 0) currentObj += char;
+              continue;
+            }
+            if (char === '\\') {
+              escape = true;
+              if (depth > 0) currentObj += char;
+              continue;
+            }
+            if (char === '"') {
+              inString = !inString;
+              if (depth > 0) currentObj += char;
+              continue;
+            }
+            if (inString) {
+              if (depth > 0) currentObj += char;
+              continue;
+            }
+
+            if (char === '{') {
+              depth++;
+              currentObj += char;
+            } else if (char === '}') {
+              depth--;
+              currentObj += char;
+              if (depth === 0) {
+                try {
+                  objects.push(JSON.parse(currentObj));
+                } catch (_) {}
+                currentObj = '';
+              }
+            } else if (depth > 0) {
+              currentObj += char;
+            } else if (char === ']') {
+              break;
+            }
+          }
+
+          if (objects.length > 0) {
+            return { events: objects, topicSummaryUpdate: '' };
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 
   _validateAndNormalizeEvents(events, topicContext) {
@@ -124,16 +188,40 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
       const conceptName = (ev.conceptName || (topicContext ? topicContext.title : 'General Concept')).trim();
       if (!conceptName) continue;
 
-      const eventType = validEventTypes.includes(ev.eventType) ? ev.eventType : 'concept_explained';
-      const classificationOutcome = validOutcomes.includes(ev.classificationOutcome) ? ev.classificationOutcome : 'EXISTING';
       const evidenceText = (ev.evidenceText || ev.conceptName || 'Chat evidence statement').trim().slice(0, 1000);
 
-      const hasMisconception = ev.misconception && ev.misconception.hasMisconception;
+      const hasMisconception = Boolean(
+        (ev.misconception && (ev.misconception.hasMisconception || ev.misconception.misconceptionText)) ||
+        ev.eventType === 'misconception_detected' ||
+        ev.eventType === 'concept_misunderstood' ||
+        ev.suggestedStatus === 'NEEDS_REVIEW' ||
+        /misconception|misunderstood|incorrect|confuse|mistake|firmly believe/i.test(evidenceText)
+      );
+
+      const isCorrection =
+        !hasMisconception &&
+        (ev.eventType === 'concept_corrected' ||
+          ev.classificationOutcome === 'CORRECTION' ||
+          /understand the correction|correcting my previous|correction for|now understand that|now see the difference/i.test(evidenceText));
+
+      let eventType = validEventTypes.includes(ev.eventType) ? ev.eventType : 'concept_explained';
+      if (hasMisconception && eventType !== 'concept_misunderstood' && eventType !== 'misconception_detected') {
+        eventType = 'misconception_detected';
+      } else if (isCorrection) {
+        eventType = 'concept_corrected';
+      }
+
+      let classificationOutcome = validOutcomes.includes(ev.classificationOutcome) ? ev.classificationOutcome : 'EXISTING';
+      if (isCorrection) {
+        classificationOutcome = 'CORRECTION';
+      }
+
+      const misconceptionText = (ev.misconception?.misconceptionText || (hasMisconception ? ev.evidenceText : '')).trim().slice(0, 500);
       const misconception = hasMisconception
         ? {
-            misconceptionText: (ev.misconception.misconceptionText || '').trim().slice(0, 500),
-            correctionText: (ev.misconception.correctionText || '').trim().slice(0, 500),
-            severity: ['low', 'medium', 'high'].includes(ev.misconception.severity) ? ev.misconception.severity : 'medium',
+            misconceptionText: misconceptionText || 'Conceptual misunderstanding detected in conversation',
+            correctionText: (ev.misconception?.correctionText || '').trim().slice(0, 500),
+            severity: ['low', 'medium', 'high'].includes(ev.misconception?.severity) ? ev.misconception.severity : 'medium',
           }
         : { misconceptionText: '', correctionText: '', severity: null };
 
@@ -157,13 +245,30 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
     const userText = userMessage.content || '';
     const assistantText = assistantMessage.content || '';
 
-    // Check for misconception indicators in assistant response (e.g. "actually", "misconception", "not quite")
-    const isMisconceptionCorrection =
-      /misconception|not quite|incorrect|common mistake|actually,/i.test(assistantText) ||
-      /i thought|is it true that/i.test(userText);
+    const isCorrection =
+      /understand the correction|correcting my previous|correction for|now understand that|now see the difference/i.test(userText);
 
-    const eventType = isMisconceptionCorrection ? 'concept_corrected' : 'concept_explained';
-    const classificationOutcome = isMisconceptionCorrection ? 'CORRECTION' : 'EXISTING';
+    const isMisconception =
+      !isCorrection &&
+      (/misconception|not quite|incorrect|common mistake|firmly believe|flawed premise|wrong/i.test(assistantText) ||
+        /misconception|i believe that|i firmly believe|i thought that|is it true that/i.test(userText));
+
+    let eventType = 'concept_explained';
+    let classificationOutcome = 'EXISTING';
+    let suggestedStatus = 'INTRODUCED';
+    let confidenceDelta = 15;
+
+    if (isCorrection) {
+      eventType = 'concept_corrected';
+      classificationOutcome = 'CORRECTION';
+      suggestedStatus = 'LEARNING';
+      confidenceDelta = 20;
+    } else if (isMisconception) {
+      eventType = 'misconception_detected';
+      classificationOutcome = 'EXISTING';
+      suggestedStatus = 'NEEDS_REVIEW';
+      confidenceDelta = 0;
+    }
 
     return {
       events: [
@@ -173,12 +278,18 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
           eventType,
           classificationOutcome,
           evidenceText: userText.slice(0, 300),
-          suggestedStatus: isMisconceptionCorrection ? 'LEARNING' : 'INTRODUCED',
-          confidenceDelta: isMisconceptionCorrection ? 10 : 15,
-          misconception: isMisconceptionCorrection
+          suggestedStatus,
+          confidenceDelta,
+          misconception: isMisconception
             ? {
                 misconceptionText: userText.slice(0, 300),
                 correctionText: assistantText.slice(0, 300),
+                severity: 'medium',
+              }
+            : isCorrection
+            ? {
+                misconceptionText: 'Previous conceptual misunderstanding',
+                correctionText: userText.slice(0, 300),
                 severity: 'medium',
               }
             : { misconceptionText: '', correctionText: '', severity: null },

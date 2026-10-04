@@ -209,7 +209,19 @@ export class KnowledgeEngineService {
         eventData,
       });
 
-      const isCorrection = eventData.classificationOutcome === 'CORRECTION' || eventData.eventType === 'concept_corrected';
+      const isMisconception =
+        eventData.eventType === 'misconception_detected' ||
+        eventData.eventType === 'concept_misunderstood' ||
+        transition.newStatus === 'NEEDS_REVIEW' ||
+        Boolean(eventData.misconception?.misconceptionText);
+
+      const isCorrection =
+        !isMisconception &&
+        (eventData.classificationOutcome === 'CORRECTION' || eventData.eventType === 'concept_corrected');
+
+      const effectiveMisconceptionText =
+        eventData.misconception?.misconceptionText ||
+        (isMisconception ? eventData.evidenceText || 'Misconception detected in conversation' : '');
 
       // C. Concept Persistence
       if (!conceptDoc) {
@@ -226,17 +238,18 @@ export class KnowledgeEngineService {
           status: transition.newStatus,
           confidenceScore: transition.confidenceScore,
           evidenceCount: 1,
-          misconceptions: eventData.misconception?.misconceptionText
-            ? [
-                {
-                  misconceptionText: eventData.misconception.misconceptionText,
-                  correctionText: eventData.misconception.correctionText,
-                  detectedAt: new Date(),
-                  resolvedAt: isCorrection ? new Date() : null,
-                  isActive: !isCorrection,
-                },
-              ]
-            : [],
+          misconceptions:
+            isMisconception || transition.newStatus === 'NEEDS_REVIEW'
+              ? [
+                  {
+                    misconceptionText: effectiveMisconceptionText || 'Conceptual misunderstanding detected in conversation',
+                    correctionText: eventData.misconception?.correctionText || '',
+                    detectedAt: new Date(),
+                    resolvedAt: isCorrection ? new Date() : null,
+                    isActive: !isCorrection,
+                  },
+                ]
+              : [],
           conflictState: {
             hasConflict: eventData.classificationOutcome === 'CONFLICT',
             description: eventData.classificationOutcome === 'CONFLICT' ? eventData.evidenceText : '',
@@ -263,23 +276,28 @@ export class KnowledgeEngineService {
             }
           }
           // If a corrected misconception is attached, record it as resolved
-          if (eventData.misconception?.misconceptionText) {
+          if (effectiveMisconceptionText) {
             conceptDoc.misconceptions.push({
-              misconceptionText: eventData.misconception.misconceptionText,
-              correctionText: eventData.misconception.correctionText || '',
+              misconceptionText: effectiveMisconceptionText,
+              correctionText: eventData.misconception?.correctionText || '',
               detectedAt: new Date(),
               resolvedAt: new Date(),
               isActive: false,
             });
           }
-        } else if (eventData.misconception?.misconceptionText) {
-          conceptDoc.misconceptions.push({
-            misconceptionText: eventData.misconception.misconceptionText,
-            correctionText: eventData.misconception.correctionText,
-            detectedAt: new Date(),
-            isActive: true,
-          });
+        } else if (isMisconception || transition.newStatus === 'NEEDS_REVIEW') {
+          const hasActive = conceptDoc.misconceptions.some((m) => m.isActive);
+          if (!hasActive || effectiveMisconceptionText) {
+            conceptDoc.misconceptions.push({
+              misconceptionText: effectiveMisconceptionText || 'Conceptual misunderstanding detected in conversation',
+              correctionText: eventData.misconception?.correctionText || '',
+              detectedAt: new Date(),
+              isActive: true,
+            });
+          }
         }
+
+        conceptDoc.markModified('misconceptions');
 
         if (eventData.classificationOutcome === 'CONFLICT') {
           conceptDoc.conflictState = {

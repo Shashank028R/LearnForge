@@ -196,5 +196,15 @@ learningEventSchema.pre('findOneAndDelete', function (next) {
   next(immutableLedgerDeleteError());
 });
 
+// Guard against bulk mutation/deletion bypass via Model.bulkWrite
+learningEventSchema.static('bulkWrite', async function (ops = [], options = {}) {
+  for (const op of ops) {
+    if (op.updateOne || op.updateMany || op.replaceOne || op.deleteOne || op.deleteMany) {
+      throw immutableLedgerError();
+    }
+  }
+  return mongoose.Model.bulkWrite.call(this, ops, options);
+});
+
 export const LearningEvent = mongoose.models.LearningEvent || mongoose.model('LearningEvent', learningEventSchema);
 export default LearningEvent;

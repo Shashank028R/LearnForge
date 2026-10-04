@@ -27,7 +27,7 @@ export async function connectDatabase() {
     });
 
     await mongoose.connect(config.mongoUri, {
-      serverSelectionTimeoutMS: 3000,
+      serverSelectionTimeoutMS: 10000,
     });
   } catch (error) {
     connectionStatus = 'disconnected';
