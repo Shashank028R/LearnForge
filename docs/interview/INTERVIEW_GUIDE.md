@@ -487,16 +487,16 @@ The centralized `AIGateway` (`server/src/ai/gateway/aiGateway.js`) abstracts all
 **Answer**:  
 1. **User Focus & Calm Workspace**: Students and developers come to LearnForge to master technical subjects, not to configure machine learning infrastructure or evaluate model trade-offs.
 2. **Optimization by Task**: Different tasks demand different capabilities (e.g. `pedagogical_explanation` requires complex multi-step reasoning, whereas `knowledge_relevance_classification` requires ultra-fast, low-latency semantic categorization).
-3. **Dynamic Health & Availability**: If OpenAI or Gemini experiences an outage or rate limit spike, the server automatically routes around degraded providers. A static client-selected model would simply fail.
+3. **Dynamic Health & Availability**: If a provider experiences an outage or rate limit spike, the server automatically routes around degraded providers. A static client-selected model would simply fail.
 4. **Security & Cost Governance**: The server remains the sole trust boundary, preventing malicious clients from forcing expensive models on trivial tasks.
 
 ### Q66: How does LearnForge define its task taxonomy and capability requirements?
 **Answer**:  
 LearnForge establishes a typed task taxonomy in `server/src/ai/schemas/tasks.js`:
-- `general_chat` → Requires `text_generation` (Default preference: Gemini → OpenAI → Anthropic).
-- `pedagogical_explanation` → Requires `text_generation`, `complex_reasoning` (Default preference: OpenAI → Anthropic → Gemini).
-- `syllabus_generation` → Requires `structured_output`, `complex_reasoning` (Default preference: Anthropic → OpenAI → Gemini).
-- `knowledge_relevance_classification` → Requires `fast_classification`, `structured_output` (Default preference: Gemini → OpenAI → Anthropic).
+- `general_chat` → Requires `text_generation` (Default preference: Gemini → Groq → OpenAI).
+- `pedagogical_explanation` → Requires `text_generation`, `complex_reasoning` (Default preference: OpenAI → Gemini → Groq).
+- `syllabus_generation` → Requires `structured_output`, `complex_reasoning` (Default preference: OpenAI → Gemini → Groq).
+- `knowledge_relevance_classification` → Requires `fast_classification`, `structured_output` (Default preference: Groq → Gemini → OpenAI).
 
 ### Q67: How does the AI Gateway handle transient provider failures, rate limits, and retries?
 **Answer**:  
@@ -525,7 +525,7 @@ When external AI API keys are not supplied in `.env` or all upstream providers a
 
 ### Q71: How does LearnForge protect credentials and prevent secret leakage in telemetry/logs?
 **Answer**:  
-1. **Strict Credential Gate**: Zero hardcoded keys or fake API keys in code or test files. All credentials are read from server environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+1. **Strict Credential Gate**: Zero hardcoded keys or fake API keys in code or test files. All credentials are read from server environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`).
 2. **Redacted Telemetry**: `AITelemetry` logs structured latency, task, provider, and token counts with correlation request IDs (`requestId`) while stripping authentication headers, tokens, and raw conversation bodies.
 
 ### Q72: How are sequence numbers and transactional message invariants preserved during AI generation?
@@ -535,20 +535,19 @@ When external AI API keys are not supplied in `.env` or all upstream providers a
 3. Upon AI response normalization, the assistant message is persisted with the subsequent sequence index (`sequenceIndex = 1`).
 4. If an AI call fails, the user message remains safely recorded with `status: 'sent'` or `status: 'error'`, allowing instant retry without duplicate sequence collisions or database corruption.
 
-### Q73: Why did you implement official SDK adapters for Gemini, OpenAI, and Anthropic rather than generic HTTP fetch?
+### Q73: Why did you implement official SDK adapters for Gemini, OpenAI, and Groq, and what is the status of Anthropic?
 **Answer**:  
-Official SDKs (`@google/genai`, `openai`, `@anthropic-ai/sdk`) provide:
-- Typed request/response interfaces and official model parameter mapping.
-- Built-in HTTP connection pooling and keep-alive optimization.
-- Accurate handling of provider-specific token usage metadata and error object schemas.
-- Future-proof streaming and function-calling capabilities for later phases.
+- **Official SDKs**: `@google/genai`, `openai`, and `groq-sdk` provide typed interfaces, built-in HTTP connection pooling/keep-alive, accurate token usage tracking, and structured error schemas.
+- **Groq Integration**: Integrated via `groq-sdk` (v1.6.0) targeting `openai/gpt-oss-120b` for ultra-low latency inference and semantic classification.
+- **Anthropic Deferral**: Because Anthropic credits are not active for Phase 05, the Anthropic adapter and dependency were marked `DISABLED / DEFERRED` and removed from active routing and fallback chains, preventing broken fallback loops and eliminating unused dependencies.
 
 ### Q74: What is the Credential Gate and how does it distinguish between automated mocks and live provider verification?
 **Answer**:  
 The Credential Gate is a mandatory engineering standard:
 - Unit and integration tests must run deterministically via mocks/spies without pretending they constitute live network verification.
 - Real live provider verification requires genuine user-supplied credentials in local environment variables.
-- When live credentials are unconfigured, the verification status is explicitly declared as `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`, ensuring total engineering honesty without fabricated verification claims.
+- When live credentials are unconfigured, the verification status is explicitly declared as `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`.
+- When live credentials exist and successfully execute live upstream requests (as verified with Groq `openai/gpt-oss-120b`), the status is reported as `LIVE-VERIFIED`.
 
 ### Q75: Why are canonical notes not automatically extracted in Phase 05?
 **Answer**:  

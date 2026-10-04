@@ -3,6 +3,7 @@ import { config } from './config/env.js';
 import { connectDatabase } from './config/database.js';
 
 async function startServer() {
+  // Initializing server in specified environment
   console.log(`[LearnForge Server] Initializing in ${config.nodeEnv} mode...`);
 
   // Connect to database gracefully

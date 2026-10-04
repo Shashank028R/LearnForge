@@ -238,7 +238,7 @@ Automatic Model Router (`server/src/ai/router/modelRouter.js`)
       │
       ├── Gemini Adapter (`GeminiProvider.js` → @google/genai)
       ├── OpenAI Adapter (`OpenAIProvider.js` → openai)
-      └── Anthropic Adapter (`AnthropicProvider.js` → @anthropic-ai/sdk)
+      └── Groq Adapter (`GroqProvider.js` → groq-sdk)
       │
       ▼
 Normalized AI Response (`AIResponse`) & Error Normalization
@@ -251,11 +251,12 @@ Message Persistence with Knowledge Relevance Classification
 
 - **Core Principle**: "Chat is the interaction layer. Knowledge is the product. AI is the pedagogical engine."
 - **Task & Capability Taxonomy**:
-  - `general_chat`: Multi-turn conversational learning (`text_generation`).
-  - `pedagogical_explanation`: Conceptual breakdowns with intuition, mechanics, misconceptions, and active recall checks (`text_generation`, `complex_reasoning`).
-  - `syllabus_generation`: Structured curriculum planning (`structured_output`, `complex_reasoning`).
-  - `knowledge_relevance_classification`: Fast semantic classification of whether user input is `on_topic`, `off_topic`, or `uncertain` (`fast_classification`).
-- **Server Trust Boundary**: Zero frontend provider or model dropdowns. The server selects the optimal provider based on task capabilities, configured priorities (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), and provider health.
+  - `general_chat`: Multi-turn conversational learning (`text_generation`). Default route: Gemini → Groq → OpenAI.
+  - `pedagogical_explanation`: Conceptual breakdowns with intuition, mechanics, misconceptions, and active recall checks (`text_generation`, `complex_reasoning`). Default route: OpenAI → Gemini → Groq.
+  - `syllabus_generation`: Structured curriculum planning (`structured_output`, `complex_reasoning`). Default route: OpenAI → Gemini → Groq.
+  - `knowledge_relevance_classification`: Fast semantic classification of whether user input is `on_topic`, `off_topic`, or `uncertain` (`fast_classification`). Default route: Groq → Gemini → OpenAI.
+- **Server Trust Boundary**: Zero frontend provider or model dropdowns. The server selects the optimal provider based on task capabilities, configured priorities (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`), and provider health.
+- **Anthropic Provider Status**: `DISABLED / DEFERRED`. Not part of active Phase 05 provider set; no live calls, no Anthropic credentials required.
 - **Resilience Strategy**: Bounded retries with exponential jitter on transient failures (`429`, `503`, `ETIMEDOUT`), provider fallback on failure, and immediate offline Socratic engine fallback when external credentials are not configured.
 - **Authoritative Syllabus Context**: In prompt construction (`promptRegistry.js`), only explicitly approved syllabus versions (`status: 'approved'`) are treated as authoritative curriculum. Draft and superseded versions are never injected as authoritative context.
 
@@ -268,7 +269,7 @@ Message Persistence with Knowledge Relevance Classification
 - **Knowledge Hierarchy Domain (Phase 03 - Implemented)**: Subjects, topics, sequential ordering, and embedded knowledge state foundation.
 - **Conversation Domain (Phase 04 - Implemented)**: Chat sessions, chronological message sequencing (`sequenceIndex`), topic/subject context linking, and responsive two-pane workspace.
 - **Syllabus & Knowledge Governance Domain (Phase 04.1 - Implemented)**: Multi-version syllabus lifecycle, draft reconciliation, topic ID stability, off-topic data contract, and user annotations.
-- **AI Domain (Phase 05 - Implemented)**: Centralized AI Gateway, task-based model router, provider adapters (Gemini, OpenAI, Anthropic), normalized envelopes, retry/fallback engine, and knowledge relevance governance.
+- **AI Domain (Phase 05 - Implemented)**: Centralized AI Gateway, task-based model router, provider adapters (Gemini, OpenAI, Groq), normalized envelopes, retry/fallback engine, and knowledge relevance governance. Anthropic disabled/deferred.
 - **Knowledge Extraction Domain (Phase 06 - Planned)**: Concept extraction, confidence tracking, and misconception detection.
 - **Notes Domain (Phase 07 - Planned)**: Structured block notes, versioning, and diff proposals.
 - **Study Mode Domain (Phase 08 - Planned)**: Socratic teacher logic, session objectives, and mastery pacing.

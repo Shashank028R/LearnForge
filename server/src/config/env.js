@@ -41,10 +41,10 @@ export const config = {
     geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     openaiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-latest',
+    groqApiKey: process.env.GROQ_API_KEY || '',
+    groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
     defaultTimeoutMs: parseInt(process.env.AI_DEFAULT_TIMEOUT_MS || '30000', 10),
     maxRetries: parseInt(process.env.AI_MAX_RETRIES || '2', 10),
-    defaultProviderPriority: (process.env.AI_PROVIDER_PRIORITY || 'gemini,openai,anthropic').split(',').map((p) => p.trim()),
+    defaultProviderPriority: (process.env.AI_PROVIDER_PRIORITY || 'gemini,openai,groq').split(',').map((p) => p.trim()),
   },
 };

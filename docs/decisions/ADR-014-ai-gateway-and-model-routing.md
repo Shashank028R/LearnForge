@@ -7,7 +7,7 @@ Accepted
 LearnForge is an AI-powered mastery workspace designed around the fundamental principle:
 > *Chat is the interaction layer. Knowledge is the product. AI is the pedagogical engine.*
 
-Directly coupling LLM provider SDKs (e.g. Google Gemini, OpenAI, Anthropic Claude) to Express controllers, domain models, or React components creates severe technical debt:
+Directly coupling LLM provider SDKs (e.g. Google Gemini, OpenAI, Groq) to Express controllers, domain models, or React components creates severe technical debt:
 1. **Vendor Lock-in & Fragility:** Provider-specific response schemas, token usage conventions, and error codes leak across the codebase.
 2. **Brittle Frontend Complexity:** Forcing clients to select models or providers exposes internal infrastructure concerns and degrades user focus.
 3. **Curriculum Leakage & Hallucination:** Sending unverified draft syllabi or cross-tenant context to LLMs compromises educational integrity.
@@ -21,18 +21,20 @@ We needed a centralized, provider-neutral AI architecture governed strictly by t
 All AI interactions must pass through the `AIGateway` subsystem (`server/src/ai/`).
 - **Normalized Request Contract (`validateAndNormalizeAIRequest`)**: Encapsulates `task`, `messages`, `systemPrompt`, `subjectContext`, `syllabusContext`, `topicContext`, `temperature`, `timeoutMs`, and `requestId`.
 - **Normalized Response Contract (`AIResponse`)**: Emits uniform `{ text, provider, model, task, usage, finishReason, latencyMs, routingMetadata, requestId }` independent of the underlying provider SDK.
-- **Provider SDK Isolation**: Provider SDKs (`@google/genai`, `openai`, `@anthropic-ai/sdk`) are strictly confined to `server/src/ai/providers/`. No Express controllers or frontend components may import provider SDKs.
+- **Provider SDK Isolation**: Provider SDKs (`@google/genai`, `openai`, `groq-sdk`) are strictly confined to `server/src/ai/providers/`. No Express controllers or frontend components may import provider SDKs.
+- **Active Providers for Phase 05**: `gemini`, `openai`, `groq`.
+- **Anthropic Status**: `DISABLED / DEFERRED`. Not part of active Phase 05 provider set, not included in routing or fallback chains, not live-verified, and no Anthropic credentials required.
 
 ### 2. Task Taxonomy & Capability-Based Routing
 LearnForge defines a structured task and capability taxonomy:
 - **Task Types**:
-  - `general_chat`: Multi-turn conversational learning and general inquiries.
-  - `pedagogical_explanation`: Deep conceptual breakdowns with intuition, mechanics, misconceptions, and active recall checks.
-  - `syllabus_generation`: Structured curriculum generation and topic hierarchical planning.
-  - `knowledge_relevance_classification`: Fast semantic classification of whether user input is `on_topic`, `off_topic`, or `uncertain`.
+  - `general_chat`: Multi-turn conversational learning and general inquiries. Default routing: `gemini` → `groq` → `openai`.
+  - `pedagogical_explanation`: Deep conceptual breakdowns with intuition, mechanics, misconceptions, and active recall checks. Default routing: `openai` → `gemini` → `groq`.
+  - `syllabus_generation`: Structured curriculum generation and topic hierarchical planning. Default routing: `openai` → `gemini` → `groq`.
+  - `knowledge_relevance_classification`: Fast semantic classification of whether user input is `on_topic`, `off_topic`, or `uncertain`. Default routing: `groq` → `gemini` → `openai`.
 - **Capabilities**: `text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`.
 - **Automatic Model Router (`ModelRouter`)**:
-  - Automatically selects the optimal provider/model based on task capability requirements, configured priority order (`GEMINI`, `OPENAI`, `ANTHROPIC`), and real-time provider health metrics.
+  - Automatically selects the optimal provider/model based on task capability requirements, configured priority order (`gemini`, `openai`, `groq`), and real-time provider health metrics.
   - **Zero Frontend Model Selection**: The client never chooses or specifies AI providers or model names. The server remains the sole trust and routing boundary.
 
 ### 3. Resilient Multi-Provider Failure Handling & Retries
@@ -57,12 +59,12 @@ LearnForge defines a structured task and capability taxonomy:
 - Off-topic conversations are preserved as conversational evidence but **never automatically create canonical notes, topic summaries, or curriculum modifications**.
 
 ### 6. Credential Gate & Redacted Observability
-- API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are read strictly from server environment variables.
+- API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`) are read strictly from server environment variables.
 - Telemetry (`AITelemetry`) logs structured request latency, task, provider, and token counts with request IDs while strictly redacting secrets, auth headers, and raw user conversation bodies.
 
 ## Consequences
 - **Positive:**
-  - High availability: Transparent fallback between Gemini, OpenAI, and Anthropic ensures zero downtime during single-provider outages.
+  - High availability: Transparent fallback between Gemini, OpenAI, and Groq ensures resilience during single-provider outages.
   - Testability: Clean normalized provider interfaces allow comprehensive automated unit and integration tests without network dependency.
   - Pedagogical consistency: Centralized prompt templates enforce high-rigor Socratic teaching standards across all models.
   - Strict security: API keys and cross-tenant learning context can never leak to the client or external log aggregators.

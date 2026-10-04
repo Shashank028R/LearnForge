@@ -10,6 +10,7 @@ import { Chat } from '../src/models/Chat.js';
 import { Message } from '../src/models/Message.js';
 import { Annotation } from '../src/models/Annotation.js';
 import { SyllabusVersion } from '../src/models/SyllabusVersion.js';
+import { aiGateway, AI_TASK_TYPES } from '../src/ai/index.js';
 import { hashSessionToken, generateSessionToken } from '../src/utils/authCrypto.js';
 
 describe('Chat Infrastructure API (/api/v1/chats)', () => {
@@ -56,6 +57,28 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
       sort: () => Array.from(annotationsStore.values()),
       then: (resolve) => Promise.resolve(resolve(Array.from(annotationsStore.values()))),
     }));
+
+    // Mock AI Gateway for fast deterministic testing
+    vi.spyOn(aiGateway, 'generate').mockImplementation(async (req) => {
+      if (req.task === AI_TASK_TYPES.KNOWLEDGE_RELEVANCE_CLASSIFICATION) {
+        return {
+          text: JSON.stringify({ relevance: 'on_topic', reason: 'Matches topic' }),
+          classification: { relevance: 'on_topic', reason: 'Matches topic' },
+          provider: 'groq',
+          model: 'openai/gpt-oss-120b',
+          task: req.task,
+        };
+      }
+      return {
+        text: 'That is an intriguing question. To break this down Socratically: what is the fundamental principle behind this concept?',
+        provider: 'groq',
+        model: 'openai/gpt-oss-120b',
+        task: req.task || AI_TASK_TYPES.GENERAL_CHAT,
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+        latencyMs: 5,
+        routingMetadata: { selectedProvider: 'groq', selectedModel: 'openai/gpt-oss-120b', reason: 'mocked_unit_test', attempts: 1 },
+      };
+    });
 
     // 1. Mock User model
     vi.spyOn(User, 'findById').mockImplementation(async (id) => {

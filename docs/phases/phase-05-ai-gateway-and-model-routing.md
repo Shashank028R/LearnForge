@@ -21,9 +21,9 @@ AI Gateway (`AIGateway.js`)
       ↓
 Automatic Task-Based Model Router (`ModelRouter.js`)
       ↓
-Provider Adapter (`BaseProvider.js` → `GeminiProvider` | `OpenAIProvider` | `AnthropicProvider`)
+Provider Adapter (`BaseProvider.js` → `GeminiProvider` | `OpenAIProvider` | `GroqProvider`)
       ↓
-Upstream AI Provider (Google Gemini / OpenAI / Anthropic Claude)
+Upstream AI Provider (Google Gemini / OpenAI / Groq)
 ```
 
 1. **Client Sends Message**: Client dispatches user prompt (`role: "user"`). Client never selects a provider or model.
@@ -49,10 +49,10 @@ Upstream AI Provider (Google Gemini / OpenAI / Anthropic Claude)
 
 | Task Type | Required Capabilities | Default Preference Chain | Purpose |
 | :--- | :--- | :--- | :--- |
-| `general_chat` | `text_generation` | Gemini → OpenAI → Anthropic | Free-form learning dialogues, Q&A, and exploration. |
-| `pedagogical_explanation` | `text_generation`, `complex_reasoning` | OpenAI → Anthropic → Gemini | Structured conceptual deep-dives (intuition, mechanics, edge cases, active recall checks). |
-| `syllabus_generation` | `structured_output`, `complex_reasoning` | Anthropic → OpenAI → Gemini | Comprehensive curriculum planning and hierarchical topic structuring. |
-| `knowledge_relevance_classification` | `fast_classification`, `structured_output` | Gemini → OpenAI → Anthropic | Fast semantic evaluation of message alignment with active syllabus scope. |
+| `general_chat` | `text_generation` | Gemini → Groq → OpenAI | Free-form learning dialogues, Q&A, and exploration. |
+| `pedagogical_explanation` | `text_generation`, `complex_reasoning` | OpenAI → Gemini → Groq | Structured conceptual deep-dives (intuition, mechanics, edge cases, active recall checks). |
+| `syllabus_generation` | `structured_output`, `complex_reasoning` | OpenAI → Gemini → Groq | Comprehensive curriculum planning and hierarchical topic structuring. |
+| `knowledge_relevance_classification` | `fast_classification`, `structured_output` | Groq → Gemini → OpenAI | Fast semantic evaluation of message alignment with active syllabus scope. |
 
 ---
 
@@ -62,14 +62,15 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 
 1. **`GeminiProvider`** (`server/src/ai/providers/geminiProvider.js`): Uses official `@google/genai` (v2.27.0). Defaults to `gemini-2.5-flash`.
 2. **`OpenAIProvider`** (`server/src/ai/providers/openaiProvider.js`): Uses official `openai` (v7.27.0). Defaults to `gpt-4o-mini`.
-3. **`AnthropicProvider`** (`server/src/ai/providers/anthropicProvider.js`): Uses official `@anthropic-ai/sdk` (v0.131.0). Defaults to `claude-3-5-sonnet-latest`.
+3. **`GroqProvider`** (`server/src/ai/providers/groqProvider.js`): Uses official `groq-sdk` (v1.6.0). Defaults to `openai/gpt-oss-120b`.
+4. **Anthropic**: `DISABLED / DEFERRED`. Not part of active Phase 05 provider set.
 
 ### Normalized Response Envelope
 ```json
 {
   "text": "Socratic explanation...",
-  "provider": "gemini",
-  "model": "gemini-2.5-flash",
+  "provider": "groq",
+  "model": "openai/gpt-oss-120b",
   "task": "pedagogical_explanation",
   "usage": {
     "promptTokens": 120,
@@ -79,8 +80,8 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
   "finishReason": "stop",
   "latencyMs": 412,
   "routingMetadata": {
-    "selectedProvider": "gemini",
-    "selectedModel": "gemini-2.5-flash",
+    "selectedProvider": "groq",
+    "selectedModel": "openai/gpt-oss-120b",
     "reason": "task_policy_pedagogical_explanation",
     "attempts": 1
   },
@@ -110,7 +111,7 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 
 1. **Credential Gate**:
    - Zero hardcoded keys or fake test keys in codebase or test fixtures.
-   - Credentials read exclusively from environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+   - Credentials read exclusively from environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`).
    - `.env.example` contains placeholders only.
 2. **Tenant Isolation**:
    - Server validates that `chatId`, `subjectId`, and `topicId` strictly belong to `req.user._id`.
@@ -125,11 +126,12 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 
 ## 6. Verification Summary
 
-- **Unit & Mocked Tests**: 127/127 backend tests passing (`server/tests/aiGateway.test.js`, `server/tests/chats.test.js`, etc.).
+- **Unit & Mocked Tests**: 128/128 backend tests passing (`server/tests/aiGateway.test.js`, `server/tests/chats.test.js`, etc.).
 - **Client Tests**: 46/46 frontend tests passing (`client/src/App.test.jsx`, `client/src/pages/Chats.test.jsx`, etc.).
-- **Client Production Build**: Passed cleanly with Vite (`dist/` built in 12.89s).
+- **Client Production Build**: Passed cleanly with Vite (`dist/` built cleanly).
 - **MongoDB Atlas Live Integration**: `server/scripts/verify_phase05_live.js` verified end-to-end against live Express API and Atlas cluster.
 - **External AI Providers**:
   - Gemini: `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
   - OpenAI: `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
-  - Anthropic: `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
+  - Groq: `LIVE-VERIFIED` (Tested live with `GROQ_API_KEY` and `openai/gpt-oss-120b`)
+  - Anthropic: `DISABLED / NOT PART OF ACTIVE PHASE 05 PROVIDER SET` (Not required for Phase 05)

@@ -194,22 +194,37 @@ async function runLiveVerification() {
     console.log(`  - Relevance: ${latestAssistant?.knowledgeContext?.relevance || 'unclassified'}`);
     console.log(`  - Disposition: ${latestAssistant?.knowledgeContext?.disposition || 'unclassified'}`);
 
-    // Step 8: External Live Provider Status Inspection
+    // Step 8: External Live Provider Status Inspection & Groq Verification
     console.log('\n[8/8] Inspecting Live AI Provider Credentials & Verification Status...');
-    const liveProviders = {
-      gemini: Boolean(config.ai?.geminiApiKey && config.ai.geminiApiKey !== 'placeholder'),
-      openai: Boolean(config.ai?.openaiApiKey && config.ai.openaiApiKey !== 'placeholder'),
-      anthropic: Boolean(config.ai?.anthropicApiKey && config.ai.anthropicApiKey !== 'placeholder'),
-    };
-
-    console.log('  Provider Configuration Status:');
-    for (const [pName, isConfigured] of Object.entries(liveProviders)) {
-      if (isConfigured) {
-        console.log(`  - ${pName.toUpperCase()}: CONFIGURED (Live key supplied)`);
-      } else {
-        console.log(`  - ${pName.toUpperCase()}: IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED (No API Key supplied)`);
+    
+    // Test Groq live generation if key is supplied
+    let groqLiveSuccess = false;
+    let groqLiveError = null;
+    if (config.ai?.groqApiKey && config.ai.groqApiKey !== 'placeholder') {
+      try {
+        console.log('  Testing live Groq API connection...');
+        const { GroqProvider } = await import('../src/ai/providers/groqProvider.js');
+        const liveGroq = new GroqProvider({ apiKey: config.ai.groqApiKey, model: config.ai.groqModel });
+        const liveRes = await liveGroq.generate({
+          task: AI_TASK_TYPES.GENERAL_CHAT,
+          messages: [{ role: 'user', content: 'Respond with exactly: "LearnForge Groq Live Verified"' }],
+          requestId: `live_groq_${Date.now()}`,
+        });
+        if (liveRes?.text) {
+          groqLiveSuccess = true;
+          console.log(`  ✓ GROQ LIVE VERIFIED: Model="${liveRes.model}" Latency=${liveRes.latencyMs}ms Tokens=${liveRes.usage?.totalTokens}`);
+        }
+      } catch (err) {
+        groqLiveError = err.message;
+        console.warn(`  ⚠ Groq Live verification failed: ${err.message}`);
       }
     }
+
+    console.log('\n  Provider Status Summary:');
+    console.log(`  - GEMINI: ${config.ai?.geminiApiKey && config.ai.geminiApiKey !== 'placeholder' ? 'CONFIGURED' : 'IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED (No API Key)'}`);
+    console.log(`  - OPENAI: ${config.ai?.openaiApiKey && config.ai.openaiApiKey !== 'placeholder' ? 'CONFIGURED' : 'IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED (No API Key)'}`);
+    console.log(`  - GROQ: ${groqLiveSuccess ? 'LIVE-VERIFIED (Active)' : groqLiveError ? `IMPLEMENTED — FAILED: ${groqLiveError}` : 'IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED'}`);
+    console.log(`  - ANTHROPIC: DISABLED / NOT PART OF ACTIVE PHASE 05 PROVIDER SET (Not required)`);
 
     console.log('\n================================================================');
     console.log('✓ PHASE 05 LIVE INTEGRATION VERIFICATION PASSED');

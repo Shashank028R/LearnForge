@@ -1,41 +1,43 @@
 import { BaseProvider } from './baseProvider.js';
 import { createNormalizedAIResponse } from '../schemas/aiResponse.js';
 import { buildSystemPrompt } from '../prompts/promptRegistry.js';
-import Anthropic from '@anthropic-ai/sdk';
+import Groq from 'groq-sdk';
 
 /**
- * Anthropic Claude Provider Adapter (Phase 05)
+ * Groq Provider Adapter (Phase 05)
  */
-export class AnthropicProvider extends BaseProvider {
+export class GroqProvider extends BaseProvider {
   constructor(config = {}) {
-    super('anthropic', {
-      apiKey: config.apiKey || process.env.ANTHROPIC_API_KEY || '',
-      model: config.model || process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-latest',
+    super('groq', {
+      apiKey: config.apiKey || process.env.GROQ_API_KEY || '',
+      model: config.model || process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
       ...config,
     });
-    this.client = this.config.apiKey ? new Anthropic({ apiKey: this.config.apiKey }) : null;
+    this.client = this.config.apiKey ? new Groq({ apiKey: this.config.apiKey }) : null;
   }
 
   async generate(normalizedRequest) {
     if (!this.isConfigured()) {
-      throw this.normalizeError(new Error('ANTHROPIC_API_KEY is not configured.'), normalizedRequest.requestId);
+      throw this.normalizeError(new Error('GROQ_API_KEY is not configured.'), normalizedRequest.requestId);
     }
 
     const startTime = Date.now();
     try {
       const systemPrompt = buildSystemPrompt(normalizedRequest.task, normalizedRequest);
-      const modelName = normalizedRequest.model || this.config.model || 'claude-3-5-sonnet-latest';
+      const modelName = normalizedRequest.model || this.config.model || 'openai/gpt-oss-120b';
 
-      const messages = (normalizedRequest.messages || []).map((m) => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content,
-      }));
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...(normalizedRequest.messages || []).map((m) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+        })),
+      ];
 
-      const client = this.client || new Anthropic({ apiKey: this.config.apiKey });
+      const client = this.client || new Groq({ apiKey: this.config.apiKey });
 
-      const response = await client.messages.create({
+      const response = await client.chat.completions.create({
         model: modelName,
-        system: systemPrompt,
         messages,
         temperature: normalizedRequest.temperature,
         max_tokens: normalizedRequest.maxTokens,
@@ -44,10 +46,8 @@ export class AnthropicProvider extends BaseProvider {
       const latencyMs = Date.now() - startTime;
       this.recordSuccess();
 
-      let text = '';
-      if (Array.isArray(response.content)) {
-        text = response.content.map((c) => c.text || '').join('');
-      }
+      const choice = response.choices?.[0];
+      const text = choice?.message?.content || '';
 
       // If task is classification, attempt to parse JSON classification
       let classification = null;
@@ -60,9 +60,9 @@ export class AnthropicProvider extends BaseProvider {
 
       const usage = response.usage
         ? {
-            promptTokens: response.usage.input_tokens || 0,
-            completionTokens: response.usage.output_tokens || 0,
-            totalTokens: (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0),
+            promptTokens: response.usage.prompt_tokens || 0,
+            completionTokens: response.usage.completion_tokens || 0,
+            totalTokens: response.usage.total_tokens || 0,
           }
         : null;
 
@@ -72,7 +72,7 @@ export class AnthropicProvider extends BaseProvider {
         model: modelName,
         task: normalizedRequest.task,
         usage,
-        finishReason: response.stop_reason || 'stop',
+        finishReason: choice?.finish_reason || 'stop',
         latencyMs,
         requestId: normalizedRequest.requestId,
         classification,

@@ -16,10 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `BaseProvider.js`: Abstract provider adapter with health state tracking, failure counters, and standardized error normalization (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
   - `GeminiProvider.js`: Concrete adapter for Google Gemini models using official `@google/genai` (v2.27.0).
   - `OpenAIProvider.js`: Concrete adapter for OpenAI models using official `openai` (v7.27.0).
-  - `AnthropicProvider.js`: Concrete adapter for Anthropic Claude models using official `@anthropic-ai/sdk` (v0.131.0).
+  - `GroqProvider.js`: Concrete adapter for Groq models using official `groq-sdk` (v1.6.0). Default model `openai/gpt-oss-120b`.
+  - Anthropic: Marked `DISABLED / DEFERRED` and excluded from Phase 05 active provider set.
 - **Task-Based Automatic Model Router (`ModelRouter.js`)**:
   - Defined task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) and mapped each to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
   - Automatic, deterministic provider selection without exposing model or provider options to the frontend.
+  - Configured active preference chains:
+    - `general_chat`: `gemini` → `groq` → `openai`
+    - `pedagogical_explanation`: `openai` → `gemini` → `groq`
+    - `syllabus_generation`: `openai` → `gemini` → `groq`
+    - `knowledge_relevance_classification`: `groq` → `gemini` → `openai`
   - Resilience engine with bounded exponential backoff with jitter on transient failures (`429`, `503`, `ETIMEDOUT`) and provider fallback chains.
   - Offline Socratic fallback engine (`model: 'socratic-engine'`) delivering deterministic responses when external API keys are unconfigured.
 - **Centralized Prompt Registry & Curriculum Context Isolation (`promptRegistry.js`)**:
@@ -39,11 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rendered off-topic warning banner strictly from backend metadata (`knowledgeContext.relevance === 'off_topic'`).
   - Displayed calm pedagogical task metadata on assistant message bubbles.
 - **Testing & Verification**:
-  - 14 comprehensive unit and integration tests in `server/tests/aiGateway.test.js` (total 127 server tests passing 100%).
+  - 15 comprehensive unit and integration tests in `server/tests/aiGateway.test.js` (total 128 server tests passing 100%).
   - 46 frontend tests passing in `client/` (total 46 client tests passing 100%).
-  - Total automated monorepo tests increased to 173 tests (100% passing).
-  - Clean Vite production build (`dist/` generated in 12.89s with 0 errors).
-  - Live Atlas API verification script (`verify_phase05_live.js`) exercising real Express HTTP APIs and Atlas database invariants across 8 stages.
+  - Total automated monorepo tests increased to 174 tests (100% passing).
+  - Clean Vite production build (`dist/` generated cleanly with 0 errors).
+  - Live Atlas API verification script (`verify_phase05_live.js`) exercising real Express HTTP APIs, Atlas database, and live Groq inference.
 
 ---
 

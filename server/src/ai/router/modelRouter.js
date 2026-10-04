@@ -7,14 +7,14 @@ import { AIAllProvidersFailedError } from '../errors/aiErrors.js';
 export class ModelRouter {
   constructor(providers = {}, options = {}) {
     this.providers = providers; // Map of name -> BaseProvider instance
-    this.priorityOrder = options.priorityOrder || ['gemini', 'openai', 'anthropic'];
+    this.priorityOrder = options.priorityOrder || ['gemini', 'openai', 'groq'];
 
     // Default task-to-provider preferences based on explicit capability configuration
     this.taskPreferences = {
-      [AI_TASK_TYPES.GENERAL_CHAT]: ['gemini', 'openai', 'anthropic'],
-      [AI_TASK_TYPES.PEDAGOGICAL_EXPLANATION]: ['openai', 'anthropic', 'gemini'],
-      [AI_TASK_TYPES.SYLLABUS_GENERATION]: ['anthropic', 'openai', 'gemini'],
-      [AI_TASK_TYPES.KNOWLEDGE_RELEVANCE_CLASSIFICATION]: ['gemini', 'openai', 'anthropic'],
+      [AI_TASK_TYPES.GENERAL_CHAT]: ['gemini', 'groq', 'openai'],
+      [AI_TASK_TYPES.PEDAGOGICAL_EXPLANATION]: ['openai', 'gemini', 'groq'],
+      [AI_TASK_TYPES.SYLLABUS_GENERATION]: ['openai', 'gemini', 'groq'],
+      [AI_TASK_TYPES.KNOWLEDGE_RELEVANCE_CLASSIFICATION]: ['groq', 'gemini', 'openai'],
       ...(options.taskPreferences || {}),
     };
   }

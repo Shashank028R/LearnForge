@@ -72,9 +72,9 @@
 
 ### Phase 05 (AI Gateway, Automatic Model Routing & Pedagogical Engine)
 - **Centralized AI Gateway**: Provider-neutral gateway (`server/src/ai/gateway/aiGateway.js`) implementing `generate(request)` with normalized envelopes (`AIResponse`).
-- **Official Provider Adapters**: Concrete adapters for Google Gemini (`@google/genai`), OpenAI (`openai`), and Anthropic Claude (`@anthropic-ai/sdk`) with uniform error normalization and health monitoring.
+- **Official Provider Adapters**: Concrete adapters for Google Gemini (`@google/genai`), OpenAI (`openai`), and Groq (`groq-sdk`) with uniform error normalization and health monitoring. Anthropic marked `DISABLED / DEFERRED`.
 - **Task & Capability Taxonomy**: Typed task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) mapped to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
-- **Automatic Model Routing**: Server-side deterministic router (`ModelRouter`) selecting optimal models without exposing provider choices to frontend.
+- **Automatic Model Routing**: Server-side deterministic router (`ModelRouter`) selecting optimal models without exposing provider choices to frontend (`general_chat`: Gemini → Groq → OpenAI; `pedagogical_explanation` & `syllabus_generation`: OpenAI → Gemini → Groq; `knowledge_relevance_classification`: Groq → Gemini → OpenAI).
 - **Resilience Engine**: Bounded exponential backoff with jitter on transient failures (`429`, `503`, `ETIMEDOUT`), provider fallback chains, and offline Socratic engine fallback.
 - **Curriculum Context Isolation**: Strict prompt assembly ensuring only approved syllabi (`status: 'approved'`) are treated as authoritative curriculum.
 - **Knowledge Relevance Governance**: Automatic semantic relevance classification (`on_topic`, `off_topic`, `uncertain`) with `excluded` disposition for off-topic queries, preventing canonical note pollution.

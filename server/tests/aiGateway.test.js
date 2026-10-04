@@ -4,7 +4,7 @@ import { ModelRouter } from '../src/ai/router/modelRouter.js';
 import { BaseProvider } from '../src/ai/providers/baseProvider.js';
 import { GeminiProvider } from '../src/ai/providers/geminiProvider.js';
 import { OpenAIProvider } from '../src/ai/providers/openaiProvider.js';
-import { AnthropicProvider } from '../src/ai/providers/anthropicProvider.js';
+import { GroqProvider } from '../src/ai/providers/groqProvider.js';
 import { validateAndNormalizeAIRequest } from '../src/ai/schemas/aiRequest.js';
 import { AI_TASK_TYPES, AI_CAPABILITIES } from '../src/ai/schemas/tasks.js';
 import {
@@ -19,7 +19,7 @@ import {
 import { buildSystemPrompt } from '../src/ai/prompts/promptRegistry.js';
 import { aiTelemetry } from '../src/ai/telemetry/aiTelemetry.js';
 
-describe('AI Gateway & Task-Based Model Routing', () => {
+describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -81,16 +81,6 @@ describe('AI Gateway & Task-Based Model Routing', () => {
   });
 
   describe('2. Provider Adapters', () => {
-    class MockAdapter extends BaseProvider {
-      constructor(name, config, mockFn) {
-        super(name, config);
-        this.mockFn = mockFn;
-      }
-      async generate(normalizedReq) {
-        return this.mockFn(normalizedReq);
-      }
-    }
-
     it('BaseProvider normalizes error types correctly', () => {
       const provider = new BaseProvider('test_provider', { apiKey: 'key' });
 
@@ -187,37 +177,74 @@ describe('AI Gateway & Task-Based Model Routing', () => {
       expect(mockCreate).toHaveBeenCalled();
     });
 
-    it('AnthropicProvider adapter maps messages with separate system prompt', async () => {
-      const anthropic = new AnthropicProvider({
-        apiKey: 'test-anthropic-key',
-        model: 'claude-3-5-sonnet-latest',
+    it('GroqProvider adapter maps chat completions and normalizes response safely', async () => {
+      const groq = new GroqProvider({
+        apiKey: 'test-groq-key',
+        model: 'llama-3.3-70b-versatile',
       });
 
       const mockCreate = vi.fn().mockResolvedValue({
-        content: [{ type: 'text', text: 'Dynamic programming memoizes subproblems.' }],
-        stop_reason: 'end_turn',
-        usage: { input_tokens: 30, output_tokens: 45 },
+        choices: [
+          {
+            message: { content: 'Dynamic programming memoizes subproblem solutions.' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 30, completion_tokens: 45, total_tokens: 75 },
       });
 
-      anthropic.client = {
-        messages: {
-          create: mockCreate,
+      groq.client = {
+        chat: {
+          completions: {
+            create: mockCreate,
+          },
         },
       };
 
       const req = validateAndNormalizeAIRequest({
         task: AI_TASK_TYPES.PEDAGOGICAL_EXPLANATION,
-        systemPrompt: 'You are an algorithms expert.',
+        systemPrompt: 'You are an algorithms educator.',
         messages: [{ role: 'user', content: 'What is dynamic programming?' }],
-        requestId: 'req-claude-1',
+        requestId: 'req-groq-1',
       });
 
-      const res = await anthropic.generate(req);
-      expect(res.text).toBe('Dynamic programming memoizes subproblems.');
-      expect(res.provider).toBe('anthropic');
-      expect(res.model).toBe('claude-3-5-sonnet-latest');
+      const res = await groq.generate(req);
+      expect(res.text).toBe('Dynamic programming memoizes subproblem solutions.');
+      expect(res.provider).toBe('groq');
+      expect(res.model).toBe('llama-3.3-70b-versatile');
       expect(res.usage.totalTokens).toBe(75);
       expect(mockCreate).toHaveBeenCalled();
+    });
+
+    it('GroqProvider parses classification output when task is knowledge_relevance_classification', async () => {
+      const groq = new GroqProvider({
+        apiKey: 'test-groq-key',
+        model: 'llama-3.3-70b-versatile',
+      });
+
+      const mockCreate = vi.fn().mockResolvedValue({
+        choices: [
+          {
+            message: { content: '```json\n{"relevance": "off_topic", "confidence": 0.95, "reason": "Recipe question"}\n```' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 15, total_tokens: 25 },
+      });
+
+      groq.client = {
+        chat: { completions: { create: mockCreate } },
+      };
+
+      const req = validateAndNormalizeAIRequest({
+        task: AI_TASK_TYPES.KNOWLEDGE_RELEVANCE_CLASSIFICATION,
+        messages: [{ role: 'user', content: 'How to bake cookies?' }],
+        requestId: 'req-groq-class-1',
+      });
+
+      const res = await groq.generate(req);
+      expect(res.classification).toBeDefined();
+      expect(res.classification.relevance).toBe('off_topic');
     });
   });
 
@@ -225,31 +252,36 @@ describe('AI Gateway & Task-Based Model Routing', () => {
     it('selects provider and model deterministically based on task capabilities', () => {
       const mockGemini = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
       const mockOpenAI = new OpenAIProvider({ apiKey: 'oai-key', model: 'gpt-4o-mini' });
-      const mockAnthropic = new AnthropicProvider({ apiKey: 'ant-key', model: 'claude-3-5-sonnet-latest' });
+      const mockGroq = new GroqProvider({ apiKey: 'grq-key', model: 'llama-3.3-70b-versatile' });
 
       const providers = {
         gemini: mockGemini,
         openai: mockOpenAI,
-        anthropic: mockAnthropic,
+        groq: mockGroq,
       };
 
       const router = new ModelRouter(providers, {
-        priorityOrder: ['gemini', 'openai', 'anthropic'],
+        priorityOrder: ['gemini', 'openai', 'groq'],
       });
 
-      // Knowledge relevance classification -> preferred gemini
+      // Knowledge relevance classification -> preference groq -> gemini -> openai
       const fastDecision = router.selectRoute(AI_TASK_TYPES.KNOWLEDGE_RELEVANCE_CLASSIFICATION);
-      expect(fastDecision.providerName).toBe('gemini');
-      expect(fastDecision.model).toBe('gemini-2.5-flash');
+      expect(fastDecision.providerName).toBe('groq');
+      expect(fastDecision.model).toBe('llama-3.3-70b-versatile');
 
-      // Pedagogical explanation -> preference openai/anthropic/gemini
+      // General chat -> preference gemini -> groq -> openai
+      const chatDecision = router.selectRoute(AI_TASK_TYPES.GENERAL_CHAT);
+      expect(chatDecision.providerName).toBe('gemini');
+      expect(chatDecision.model).toBe('gemini-2.5-flash');
+
+      // Pedagogical explanation -> preference openai -> gemini -> groq
       const reasoningDecision = router.selectRoute(AI_TASK_TYPES.PEDAGOGICAL_EXPLANATION);
-      expect(['gemini', 'openai', 'anthropic']).toContain(reasoningDecision.providerName);
+      expect(reasoningDecision.providerName).toBe('openai');
     });
 
     it('falls back to alternate provider when primary provider is degraded', () => {
       const mockGemini = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
-      const mockOpenAI = new OpenAIProvider({ apiKey: 'oai-key', model: 'gpt-4o-mini' });
+      const mockGroq = new GroqProvider({ apiKey: 'grq-key', model: 'llama-3.3-70b-versatile' });
 
       // Mark gemini degraded with 3 failures
       mockGemini.recordFailure(new AIProviderUnavailableError('Service Unavailable', { provider: 'gemini' }));
@@ -258,19 +290,19 @@ describe('AI Gateway & Task-Based Model Routing', () => {
 
       const providers = {
         gemini: mockGemini,
-        openai: mockOpenAI,
+        groq: mockGroq,
       };
 
       const router = new ModelRouter(providers, {
-        priorityOrder: ['gemini', 'openai'],
+        priorityOrder: ['gemini', 'groq'],
         taskPreferences: {
-          [AI_TASK_TYPES.GENERAL_CHAT]: ['gemini', 'openai'],
+          [AI_TASK_TYPES.GENERAL_CHAT]: ['gemini', 'groq'],
         },
       });
 
       const fallbackDecision = router.selectRoute(AI_TASK_TYPES.GENERAL_CHAT);
-      expect(fallbackDecision.providerName).toBe('openai');
-      expect(fallbackDecision.model).toBe('gpt-4o-mini');
+      expect(fallbackDecision.providerName).toBe('groq');
+      expect(fallbackDecision.model).toBe('llama-3.3-70b-versatile');
     });
   });
 
@@ -308,7 +340,7 @@ describe('AI Gateway & Task-Based Model Routing', () => {
 
     it('retries transient failures and succeeds on subsequent attempt', async () => {
       const mockProvider = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
-      const secondaryProvider = new OpenAIProvider({ apiKey: 'oai-key', model: 'gpt-4o-mini' });
+      const secondaryProvider = new GroqProvider({ apiKey: 'grq-key', model: 'llama-3.3-70b-versatile' });
 
       vi.spyOn(mockProvider, 'generate').mockRejectedValue(
         new AIRateLimitedError('Rate limit exceeded', { provider: 'gemini' })
@@ -316,8 +348,8 @@ describe('AI Gateway & Task-Based Model Routing', () => {
 
       vi.spyOn(secondaryProvider, 'generate').mockResolvedValue({
         text: 'Success after fallback retry',
-        provider: 'openai',
-        model: 'gpt-4o-mini',
+        provider: 'groq',
+        model: 'llama-3.3-70b-versatile',
         task: AI_TASK_TYPES.GENERAL_CHAT,
         usage: { totalTokens: 25 },
         finishReason: 'stop',
@@ -326,8 +358,8 @@ describe('AI Gateway & Task-Based Model Routing', () => {
       });
 
       const gateway = new AIGateway({
-        customProviders: { gemini: mockProvider, openai: secondaryProvider },
-        routerOptions: { priorityOrder: ['gemini', 'openai'] },
+        customProviders: { gemini: mockProvider, groq: secondaryProvider },
+        routerOptions: { priorityOrder: ['gemini', 'groq'] },
         maxRetries: 2,
       });
 
@@ -338,20 +370,20 @@ describe('AI Gateway & Task-Based Model Routing', () => {
       });
 
       expect(res.text).toBe('Success after fallback retry');
-      expect(res.provider).toBe('openai');
+      expect(res.provider).toBe('groq');
     });
 
     it('fails immediately without retrying on non-retryable errors (e.g. invalid request or auth error)', async () => {
-      const mockProvider = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
+      const mockProvider = new GroqProvider({ apiKey: 'grq-key', model: 'llama-3.3-70b-versatile' });
       let callCount = 0;
       vi.spyOn(mockProvider, 'generate').mockImplementation(async () => {
         callCount++;
-        throw new AIAuthenticationError('Invalid API Key', { provider: 'gemini' });
+        throw new AIAuthenticationError('Invalid API Key', { provider: 'groq' });
       });
 
       const gateway = new AIGateway({
-        customProviders: { gemini: mockProvider },
-        routerOptions: { priorityOrder: ['gemini'] },
+        customProviders: { groq: mockProvider },
+        routerOptions: { priorityOrder: ['groq'] },
         maxRetries: 3,
       });
 
@@ -405,15 +437,15 @@ describe('AI Gateway & Task-Based Model Routing', () => {
 
       aiTelemetry.recordRequest({
         task: AI_TASK_TYPES.GENERAL_CHAT,
-        provider: 'gemini',
-        model: 'gemini-2.5-flash',
+        provider: 'groq',
+        model: 'llama-3.3-70b-versatile',
         requestId: 'req-telemetry-1',
       });
 
       aiTelemetry.recordSuccess({
         task: AI_TASK_TYPES.GENERAL_CHAT,
-        provider: 'gemini',
-        model: 'gemini-2.5-flash',
+        provider: 'groq',
+        model: 'llama-3.3-70b-versatile',
         latencyMs: 120,
         usage: { totalTokens: 45, promptTokens: 20, completionTokens: 25 },
         requestId: 'req-telemetry-1',
@@ -422,8 +454,8 @@ describe('AI Gateway & Task-Based Model Routing', () => {
       expect(requestSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           task: AI_TASK_TYPES.GENERAL_CHAT,
-          provider: 'gemini',
-          model: 'gemini-2.5-flash',
+          provider: 'groq',
+          model: 'llama-3.3-70b-versatile',
           requestId: 'req-telemetry-1',
         })
       );
@@ -431,7 +463,7 @@ describe('AI Gateway & Task-Based Model Routing', () => {
       expect(successSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           task: AI_TASK_TYPES.GENERAL_CHAT,
-          provider: 'gemini',
+          provider: 'groq',
           latencyMs: 120,
         })
       );

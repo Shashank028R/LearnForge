@@ -58,7 +58,7 @@ Every package added to the project must be documented in this registry before th
 | `nodemailer` | `^10.0.14` | `10.0.14` | Real SMTP email transport for delivering 6-digit OTP verification codes | Standard, battle-tested, zero-native-dependency SMTP library for Node.js | `@sendgrid/mail`, `@resend/node`, AWS SES SDK | Runtime |
 | `@google/genai` | `^2.27.0` | `2.27.0` | Official Google GenAI SDK for Gemini models adapter | Current official Google GenAI Node.js SDK with full multimodal & text support | Direct REST API via fetch | Runtime |
 | `openai` | `^7.27.0` | `7.27.0` | Official OpenAI SDK for GPT models adapter | Official, strongly-typed OpenAI Node.js SDK with full chat completion APIs | Direct REST API via fetch | Runtime |
-| `@anthropic-ai/sdk` | `^0.131.0` | `0.131.0` | Official Anthropic SDK for Claude models adapter | Official Anthropic Node.js SDK with standard messages API support | Direct REST API via fetch | Runtime |
+| `groq-sdk` | `^1.6.0` | `1.6.0` | Official Groq Node.js SDK for Groq LPU models adapter | Official Groq SDK with ultra-fast inference and OpenAI-compatible API schemas | Direct REST API via fetch | Runtime |
 
 ### Development & Testing Dependencies
 
@@ -99,7 +99,8 @@ During Phases 04 and 04.1, strict dependency discipline was maintained:
 During Phase 05, official LLM provider SDKs were integrated to power the multi-provider AI Gateway:
 - **`@google/genai` (`^2.27.0` / `2.27.0`)**: Official Google GenAI SDK for Gemini models adapter (`gemini-2.5-flash`).
 - **`openai` (`^7.27.0` / `7.27.0`)**: Official OpenAI Node.js SDK for GPT models adapter (`gpt-4o-mini`).
-- **`@anthropic-ai/sdk` (`^0.131.0` / `0.131.0`)**: Official Anthropic SDK for Claude models adapter (`claude-3-5-sonnet-latest`).
+- **`groq-sdk` (`^1.6.0` / `1.6.0`)**: Official Groq SDK for Groq models adapter (`openai/gpt-oss-120b`).
+- **Anthropic Provider Status**: Removed `@anthropic-ai/sdk` dependency. Anthropic adapter is marked `DISABLED / DEFERRED` and excluded from Phase 05 active provider set.
 - **Zero frontend AI packages added**: All AI interactions, provider routing, and error normalizations are encapsulated exclusively on the backend (`server/src/ai/`).
 
 ---

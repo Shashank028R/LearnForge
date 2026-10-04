@@ -1,7 +1,7 @@
 import { validateAndNormalizeAIRequest } from '../schemas/aiRequest.js';
 import { GeminiProvider } from '../providers/geminiProvider.js';
 import { OpenAIProvider } from '../providers/openaiProvider.js';
-import { AnthropicProvider } from '../providers/anthropicProvider.js';
+import { GroqProvider } from '../providers/groqProvider.js';
 import { ModelRouter } from '../router/modelRouter.js';
 import { aiTelemetry } from '../telemetry/aiTelemetry.js';
 import { AIAllProvidersFailedError, AIError } from '../errors/aiErrors.js';
@@ -17,12 +17,12 @@ export class AIGateway {
     this.providers = {
       gemini: new GeminiProvider({ apiKey: aiConfig.geminiApiKey, model: aiConfig.geminiModel }),
       openai: new OpenAIProvider({ apiKey: aiConfig.openaiApiKey, model: aiConfig.openaiModel }),
-      anthropic: new AnthropicProvider({ apiKey: aiConfig.anthropicApiKey, model: aiConfig.anthropicModel }),
+      groq: new GroqProvider({ apiKey: aiConfig.groqApiKey, model: aiConfig.groqModel }),
       ...(options.customProviders || {}),
     };
 
     this.router = new ModelRouter(this.providers, {
-      priorityOrder: aiConfig.defaultProviderPriority || ['gemini', 'openai', 'anthropic'],
+      priorityOrder: aiConfig.defaultProviderPriority || ['gemini', 'openai', 'groq'],
       ...(options.routerOptions || {}),
     });
 
