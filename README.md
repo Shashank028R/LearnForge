@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase-00%20Foundation-indigo.svg)](docs/phases/phase-00-foundation.md)
+[![Status](https://img.shields.io/badge/Phase-05%20AI%20Gateway-indigo.svg)](docs/phases/phase-05-ai-gateway-and-model-routing.md)
 
 ---
 
@@ -65,10 +65,10 @@ Progress Telemetry & Review Signals
 | **Monorepo Foundation** | **Implemented** | Decoupled client (`/client`) and server (`/server`) with npm workspaces, unified scripts, and strict environment isolation. |
 | **API Health & Observability** | **Implemented** | Correlation IDs (`X-Request-ID`), standardized response envelopes, and runtime database connectivity telemetry. |
 | **Architecture Documentation** | **Implemented** | 18 detailed phase specifications, 8 Architecture Decision Records (ADRs), system diagrams, and continuous interview guide. |
-| **User Authentication** | *Planned (Phase 01)* | Dual-provider identity: Google OAuth 2.0 and passwordless email OTP with secure session lifecycle. |
-| **Professional UI Shell** | *Planned (Phase 02)* | Distraction-free, restrained productivity UI without neon, glassmorphism, or decorative bloat. |
-| **Subject & Topic Hierarchy** | *Planned (Phase 03)* | Hierarchical knowledge organization mapping subjects, topics, and canonical concepts. |
-| **Conversational Engine** | *Planned (Phase 04)* | Streaming-ready message persistence and subject-scoped conversation contexts. |
+| **User Authentication** | **Implemented** | Dual-provider identity: Google OAuth 2.0 and passwordless email OTP with secure session lifecycle. |
+| **Professional UI Shell** | **Implemented** | Distraction-free, restrained productivity UI without neon, glassmorphism, or decorative bloat. |
+| **Subject & Topic Hierarchy** | **Implemented** | Hierarchical knowledge organization mapping subjects, topics, and canonical concepts. |
+| **Conversational Engine** | **Implemented** | Streaming-ready message persistence and subject-scoped conversation contexts. |
 | **AI Gateway & Router** | **Implemented** | Multi-provider abstraction (Gemini, OpenAI, Groq) with automated model routing by task complexity. |
 | **Knowledge Engine** | *Planned (Phase 06)* | Canonical concept extraction, deduplication, confidence scoring, and misconception logging. |
 | **Structured Notes Engine** | *Planned (Phase 07)* | Block-based structured notes with immutable version history and risk-based AI merge proposals. |
@@ -185,12 +185,14 @@ LearnForge/
 | Milestone | Phase | Scope | Status |
 | :--- | :--- | :--- | :--- |
 | **M0** | **Phase 00** | Project Foundation, Workspace Setup, Architecture Verification | **Completed** |
-| **M1** | **Phase 01** | Authentication & User Identity (Google OAuth & Email OTP) | *Up Next* |
-| **M2** | **Phase 02** | Professional UI Shell & Design System | *Planned* |
-| **M3** | **Phase 03** | Subjects, Topics & Canonical Concepts | *Planned* |
-| **M4** | **Phase 04** | Chat Infrastructure & Message Persistence | *Planned* |
-| **M5** | **Phase 05** | AI Gateway & Automatic Model Router | *Planned* |
-| **M6-M17**| **Phases 06–17** | Knowledge Engine through Final Audit | *Planned* |
+| **M1** | **Phase 01** | Authentication & User Identity (Google OAuth & Email OTP) | **Completed** |
+| **M2** | **Phase 02** | Professional UI Shell & Design System | **Completed** |
+| **M3** | **Phase 03** | Subjects, Topics & Canonical Concepts | **Completed** |
+| **M4** | **Phase 04** | Chat Infrastructure & Message Persistence | **Completed** |
+| **—** | **Phase 04.1** | Syllabus & Knowledge Governance Foundation | **Completed** |
+| **M5** | **Phase 05** | AI Gateway & Automatic Model Router | **Completed** |
+| **M6** | **Phase 06** | Concept Extraction & Pedagogical Analysis | *Up Next (Awaiting authorization)* |
+| **M7–M17**| **Phases 07–17** | Structured Notes Engine through Final Production Audit | *Planned* |
 
 ---
 
@@ -261,6 +263,12 @@ Key architectural decisions are documented as immutable Architecture Decision Re
 - **[ADR-006](docs/decisions/ADR-006-api-first-mobile-ready.md)**: API-First, Mobile-Ready Backend Contracts.
 - **[ADR-007](docs/decisions/ADR-007-automatic-vs-review-note-updates.md)**: Risk-Based Note Update Automation Policy.
 - **[ADR-008](docs/decisions/ADR-008-engineering-documentation.md)**: Documentation as an Immutable Build Requirement.
+- **[ADR-009](docs/decisions/ADR-009-session-architecture.md)**: Self-Managed Native MongoDB Session Architecture.
+- **[ADR-010](docs/decisions/ADR-010-account-linking-policy.md)**: Deterministic Account Linking Policy.
+- **[ADR-011](docs/decisions/ADR-011-subject-topic-knowledge-structure.md)**: Subject-Topic Knowledge Structure and Mastery Level Contract.
+- **[ADR-012](docs/decisions/ADR-012-chat-and-message-infrastructure.md)**: Chat and Message Infrastructure with Sequential Ordering.
+- **[ADR-013](docs/decisions/ADR-013-syllabus-governance-and-immutability.md)**: Syllabus and Knowledge Governance Foundation.
+- **[ADR-014](docs/decisions/ADR-014-ai-gateway-and-model-routing.md)**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
 
 ---
 
