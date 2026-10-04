@@ -24,7 +24,8 @@ async function runLiveVerification() {
     throw new Error(`Health check failed with status ${healthRes.status}`);
   }
   const healthData = await healthRes.json();
-  console.log(`✓ Live API is Healthy (Database: ${healthData.data.database.status}, RequestId: ${healthData.meta.requestId})`);
+  const dbStatus = typeof healthData.data.database === 'object' ? healthData.data.database?.status : healthData.data.database;
+  console.log(`✓ Live API is Healthy (Database: ${dbStatus}, RequestId: ${healthData.meta.requestId})`);
 
   // Step 2: Connect to MongoDB
   console.log('\n[2/8] Connecting to MongoDB...');

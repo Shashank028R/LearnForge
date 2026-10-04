@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `syllabus_generation`: `openai` → `gemini` → `groq`
     - `knowledge_relevance_classification`: `groq` → `gemini` → `openai`
   - Resilience engine with deterministic same-provider bounded retries with exponential backoff and jitter on transient failures (`429`, `503`, `ETIMEDOUT`), and fallback across configured providers upon retry exhaustion.
-  - Offline Socratic fallback engine (`model: 'socratic-engine'`) delivering deterministic responses when external API keys are unconfigured.
+  - Application-level offline Socratic fallback in `chatController.js` (`model: 'socratic-engine'`) delivering deterministic responses when external API keys are unconfigured or providers fail.
 - **Centralized Prompt Registry & Curriculum Context Isolation (`promptRegistry.js`)**:
   - `generalLearningPrompt.js`: Socratic, patient, and pedagogically structured guidance.
   - `pedagogicalExplanationPrompt.js`: Deep conceptual breakdowns with intuition, mechanics, misconceptions, and active recall checks.

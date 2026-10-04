@@ -10,8 +10,8 @@
 
 ## 2. Current Phase Status
 
-- **Current Phase**: **Phase 04.1 — Syllabus & Knowledge Governance Foundation (COMPLETED)**
-- **Next Phase**: **Phase 05 — AI Gateway, Model Routing & Pedagogical Engine (Awaiting authorization)**
+- **Current Phase**: **Phase 05 — AI Gateway, Automatic Model Routing & Pedagogical Engine (COMPLETED)**
+- **Next Phase**: **Phase 06 — Concept Extraction & Pedagogical Analysis (Awaiting authorization)**
 - **Repository Remote**: `https://github.com/Shashank028R/LearnForge.git`
 - **Default Branch**: `main`
 
@@ -63,7 +63,8 @@
 - **Interactive UI**: Two-pane workspace with search, status filters, message thread, auto-expanding composer, and topic/subject reassignment.
 
 ### Phase 04.1 (Syllabus & Knowledge Governance Foundation)
-- **Structural Single Approved Version Invariant**: MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` (`partialFilterExpression: { status: 'approved' }`) physically preventing multiple approved versions per subject, with atomic retry on concurrent approval races.
+- **End-to-End Atomic Approval & Structural Invariant**: MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` (`partialFilterExpression: { status: 'approved' }`) physically preventing multiple approved versions per subject, mandatory multi-document ACID transactions on replica sets / Atlas (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`) wrapping superseding, approval, topic reconciliation, and Subject metadata updates in a single isolated transaction with automated retry on transient write conflicts (`WriteConflict` code 112). Standalone MongoDB instances without replica sets return HTTP 503.
+- **Live Atlas Adversarial Interleaving Resistance**: Verified on remote MongoDB Atlas replica set with delayed uncommitted workers failing cleanly with `WriteConflict` and preventing stale mutator state corruption.
 - **Subject `topicsCount` Semantic Contract**: Defined strictly as the count of active syllabus topics (`isActiveInSyllabus: true`). Subjects start with `no_syllabus` and `topicsCount: 0`. Pre-syllabus topics default to `isActiveInSyllabus: false`.
 - **Topic Reconciliation & History Preservation**: Preserves stable `_id` and learning history across revisions; omitted topics become historical (`isActiveInSyllabus: false`) and re-added topics reactivate seamlessly.
 - **Knowledge Semantic Layers & Annotations**: 7 distinct semantic layers; complete `Annotation` model and REST API for user notes and tags.
@@ -74,7 +75,7 @@
 - **Official Provider Adapters**: Concrete adapters for Google Gemini (`@google/genai`), OpenAI (`openai`), and Groq (`groq-sdk`) with uniform error normalization and health monitoring. Anthropic marked `DISABLED / DEFERRED`.
 - **Task & Capability Taxonomy**: Typed task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) mapped to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
 - **Automatic Model Routing**: Server-side deterministic router (`ModelRouter`) selecting optimal models without exposing provider choices to frontend (`general_chat`: Gemini → Groq → OpenAI; `pedagogical_explanation` & `syllabus_generation`: OpenAI → Gemini → Groq; `knowledge_relevance_classification`: Groq → Gemini → OpenAI).
-- **Resilience Engine**: Deterministic same-provider bounded retries with exponential backoff and jitter on transient failures (`429`, `503`, `ETIMEDOUT`), provider fallback chains upon retry exhaustion, and offline Socratic engine fallback.
+- **Resilience Engine**: Deterministic same-provider bounded retries with exponential backoff and jitter on transient failures (`429`, `503`, `ETIMEDOUT`), provider fallback chains upon retry exhaustion, and application-level offline Socratic fallback in `chatController.js`.
 - **Curriculum Context Isolation**: Strict prompt assembly ensuring only approved syllabi (`status: 'approved'`) are treated as authoritative curriculum.
 - **Knowledge Relevance Governance**: Automatic semantic relevance classification (`on_topic`, `off_topic`, `uncertain`) with `excluded` disposition for off-topic queries, preventing canonical note pollution.
 - **Observability & Security**: Request correlation via `X-Request-ID`, token telemetry (`AITelemetry`), rate limiting (`aiMessageRateLimiter`), and strict secret redaction.
@@ -108,6 +109,7 @@
 - **ADR-011**: Subject-Topic Knowledge Structure and Mastery Level Contract.
 - **ADR-012**: Chat and Message Infrastructure with Sequential Ordering.
 - **ADR-013**: Syllabus and Knowledge Governance Foundation.
+- **ADR-014**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
 
 ---
 

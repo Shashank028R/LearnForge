@@ -52,7 +52,7 @@ LearnForge defines a structured task and capability taxonomy:
   - If a provider exhausts its retry budget or encounters a non-retryable error, it is excluded from the current request's routing context.
   - The Gateway then triggers **fallback** to the next healthy provider in the task's preference chain (`this.router.selectRoute(...)`).
   - This progression continues across configured providers until a provider succeeds or all providers are exhausted, emitting `AIAllProvidersFailedError`.
-- **Socratic Engine Fallback**: In development/testing when external credentials are not supplied, the gateway gracefully falls back to a deterministic offline Socratic pedagogical engine.
+- **Application-Level Socratic Fallback**: In development/testing when external credentials are not supplied or all upstream providers fail, `chatController.js` intercepts `AIAllProvidersFailedError` / `AIAuthenticationError` and delivers a deterministic application-level offline Socratic pedagogical fallback response (`model: 'socratic-engine'`).
 
 ### 4. Authoritative Curriculum Context Boundaries
 - **Strict Syllabus Governance**: When assembling context in `promptRegistry.js`, only explicitly approved syllabi (`status: 'approved'`) are included as authoritative curriculum. Draft or superseded versions are never injected as authoritative truth.

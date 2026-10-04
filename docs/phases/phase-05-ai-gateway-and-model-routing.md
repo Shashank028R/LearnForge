@@ -103,7 +103,7 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 ### Bounded Same-Provider Retries with Exponential Jitter & Fallback Chain
 1. **Same-Provider Retry**: If the currently selected provider encounters a retryable error (`429 Rate Limit`, `ETIMEDOUT`, `5xx Unavailable`), the Gateway retries the *same* provider up to `maxRetries` (default 2) with exponential backoff and randomized jitter (`Math.min(1000, 100 * 2^attempt) + jitter`). The provider is NOT excluded after a single transient failure.
 2. **Provider Fallback**: If retries are exhausted on a provider or the provider hits a non-retryable error, the Gateway excludes that provider for the current request and transparently falls back to the next healthy provider in the task preference chain.
-3. **Offline Socratic Fallback**: If no external API keys are configured (or in test environments without credentials), the Gateway automatically delivers an offline Socratic fallback response (`engine: 'socratic-engine'`), preventing chat disruption.
+3. **Application-Level Offline Socratic Fallback**: When external AI API keys are not configured or all upstream providers fail, `chatController.js` catches `AIAllProvidersFailedError` / `AIAuthenticationError` and delivers an application-level offline Socratic fallback response (`model: 'socratic-engine'`), preventing chat disruption.
 
 ---
 
@@ -126,12 +126,13 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 
 ## 6. Verification Summary
 
-- **Unit & Mocked Tests**: 128/128 backend tests passing (`server/tests/aiGateway.test.js`, `server/tests/chats.test.js`, etc.).
+- **Unit & Mocked Tests**: 130/130 backend tests passing (`server/tests/aiGateway.test.js`, `server/tests/chats.test.js`, etc.).
 - **Client Tests**: 46/46 frontend tests passing (`client/src/App.test.jsx`, `client/src/pages/Chats.test.jsx`, etc.).
+- **Total Monorepo Tests**: 176/176 automated tests passing (100%).
 - **Client Production Build**: Passed cleanly with Vite (`dist/` built cleanly).
-- **MongoDB Atlas Live Integration**: `server/scripts/verify_phase05_live.js` verified end-to-end against live Express API and Atlas cluster.
+- **MongoDB Atlas Live Integration & Fail-Closed Provider Verification**: `server/scripts/verify_phase05_live.js` verified end-to-end against live Express API, Atlas cluster, and live Groq API.
 - **External AI Providers**:
-  - Gemini: `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
-  - OpenAI: `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
-  - Groq: `LIVE-VERIFIED` (Tested live with `GROQ_API_KEY` and `openai/gpt-oss-120b`)
-  - Anthropic: `DISABLED / NOT PART OF ACTIVE PHASE 05 PROVIDER SET` (Not required for Phase 05)
+  - Gemini: `CONFIGURED` / `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
+  - OpenAI: `CONFIGURED` / `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
+  - Groq: `LIVE-VERIFIED` (Tested live with `GROQ_API_KEY` and `openai/gpt-oss-120b`, exact marker `"LearnForge Groq Live Verified"` verified)
+  - Anthropic: `DISABLED / DEFERRED` (Not part of active Phase 05 provider set)
