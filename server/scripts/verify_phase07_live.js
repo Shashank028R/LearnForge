@@ -2,22 +2,30 @@
  * Phase 07 Live Verification Script (Fail-Closed, Hardened, Multi-Tenant Proof)
  *
  * Validates Structured Notes Engine against live Express API, MongoDB Atlas replica set, and Groq AI:
+ *
+ * ==============================================================================
+ * CATEGORY 1: LIVE HTTP / REST API INTEGRATION VERIFICATION
+ * ==============================================================================
  * 1. Health & Database Connectivity Check
- * 2. Multi-Document Transaction Support
- * 3. Read-Only Topic Note 404 Assertion (Zero side-effects)
- * 4. Deterministic Real Live Concurrency: Initial Note Creation Race
- * 5. Deterministic Real Live Concurrency: Manual Revision Collision (V2 vs V2)
- * 6. Server-Authoritative Provenance Trust Boundary (Block & Note level)
- * 7. AI vs Fallback Synthesis Provenance Accuracy
- * 8. Strict Block Schema Validation & Unsupported Field Rejection
- * 9. NoteVersion Immutability Invariant & bulkWrite Guard Validation across all 10 mutation paths
- * 10. Version History Inspection & Immutable Version Restore (v3)
- * 11. AI Note Synthesis Proposal with Canonical Concept Attribution
- * 12. Risk Classification & User-Authored Block Protection
- * 13. Atomic Proposal Lifecycle & Concurrent Approval/Rejection Race Guard
- * 14. Stale Proposal Base Protection (HTTP 409 STALE_PROPOSAL_BASE)
- * 15. Cross-Tenant Isolation & Security
+ * 2. MongoDB Atlas Replica Set Connection
+ * 3. Multi-Document Transaction Support
+ * 4. Isolated Test Tenant & Canonical Knowledge Base Setup
+ * 5. Read-Only Topic Note 404 Assertion (Zero side-effects)
+ * 11. Strict Block Schema Validation & Unsupported Field Rejection (PUT /notes/:id)
+ * 12. Version History Inspection & Immutable Restore (POST /restore)
+ * 13. AI Note Synthesis Proposal with Canonical Concept Attribution (POST /synthesize)
+ * 15. Cross-Tenant Isolation & Security (HTTP 404 on unauthorized read/write)
  * 16. Immutability-Safe Native Driver Teardown
+ *
+ * ==============================================================================
+ * CATEGORY 2: LIVE DOMAIN-SERVICE CONCURRENCY VERIFICATION (ATLAS TRANSACTIONS)
+ * ==============================================================================
+ * 6. Deterministic Real Live Concurrency: Initial Note Creation Race
+ * 7. Deterministic Real Live Concurrency: Manual Revision Collision (V2 vs V2)
+ * 8. Server-Authoritative Provenance Trust Boundary (Block & Note level)
+ * 9. AI vs Fallback Synthesis Provenance Accuracy
+ * 10. NoteVersion Immutability Invariant & bulkWrite Guard Validation (all 10 mutation paths)
+ * 14. Deterministic Proposal Approval vs Rejection Concurrency Race (Genuine Current BaseVersion)
  */
 
 import mongoose from 'mongoose';
@@ -82,7 +90,7 @@ async function runLiveVerification() {
 
   try {
     // 1. API Health Check
-    console.log('[1/16] Checking Live API Health...');
+    console.log('[1/16] [HTTP API] Checking Live API Health...');
     const healthRes = await fetch(`${API_BASE}/health`);
     if (!healthRes.ok) {
       throw new Error(`Health check failed with status ${healthRes.status}`);
@@ -95,14 +103,14 @@ async function runLiveVerification() {
     console.log(`✓ Live API is Healthy (Database: ${dbStatus}, RequestId: ${healthData.meta.requestId})`);
 
     // 2. MongoDB Atlas Connection
-    console.log('\n[2/16] Connecting to MongoDB Atlas...');
+    console.log('\n[2/16] [DATABASE] Connecting to MongoDB Atlas...');
     const mongoUri = process.env.MONGODB_URI;
     if (!mongoUri) throw new Error('FAIL-CLOSED: MONGODB_URI is not defined in server/.env');
     await mongoose.connect(mongoUri);
     console.log('✓ Connected to MongoDB Atlas');
 
     // 3. Multi-Document Transaction Verification
-    console.log('\n[3/16] Verifying Multi-Document Transaction Support on Replica Set...');
+    console.log('\n[3/16] [DATABASE] Verifying Multi-Document Transaction Support on Replica Set...');
     const txSession = await mongoose.startSession();
     try {
       txSession.startTransaction();
@@ -115,7 +123,7 @@ async function runLiveVerification() {
     }
 
     // 4. Setup Isolated Test Environment
-    console.log('\n[4/16] Setting up Isolated Test Tenant & Canonical Knowledge Base...');
+    console.log('\n[4/16] [DATABASE] Setting up Isolated Test Tenant & Canonical Knowledge Base...');
     const timestamp = Date.now();
     testUser = await User.create({
       email: `test_notes_${timestamp}@learnforge.ai`,
@@ -225,7 +233,7 @@ async function runLiveVerification() {
     console.log(`✓ Test tenant created (User: ${testUser._id}, Topic: ${topic._id})`);
 
     // 5. Read-Only Topic Note Retrieval Check (Must 404 when nonexistent)
-    console.log('\n[5/16] Verifying Read-Only Topic Note Retrieval (GET /api/v1/topics/:topicId/note)...');
+    console.log('\n[5/16] [HTTP API] Verifying Read-Only Topic Note Retrieval (GET /api/v1/topics/:topicId/note)...');
     const readOnlyRes = await fetch(`${API_BASE}/topics/${topic._id}/note`, {
       headers: { Cookie: cookieHeader },
     });
@@ -243,7 +251,7 @@ async function runLiveVerification() {
     console.log('✓ Read-only GET returns 404 NOTE_NOT_FOUND with zero side-effects');
 
     // 6. REAL LIVE CONCURRENCY PROOF: Initial Note Creation Race
-    console.log('\n[6/16] Proving Real Live Concurrency: Initial Note Creation Race with Synchronization Barrier...');
+    console.log('\n[6/16] [DOMAIN-SERVICE CONCURRENCY] Proving Real Live Concurrency: Initial Note Creation Race with Synchronization Barrier...');
     const freshTopic = await Topic.create({
       userId: testUser._id,
       subjectId: subject._id,
@@ -304,7 +312,7 @@ async function runLiveVerification() {
     console.log(`✓ LIVE CONCURRENCY PROVEN: Winner committed v1 via transaction, Loser recovered via transaction_conflict_recovery, Exactly 1 doc/version persisted, 0 raw E11000`);
 
     // 7. REAL LIVE CONCURRENCY PROOF: Manual Revision Collision (V2 vs V2)
-    console.log('\n[7/16] Proving Real Live Concurrency: Manual Revision Collision with Synchronization Barrier...');
+    console.log('\n[7/16] [DOMAIN-SERVICE CONCURRENCY] Proving Real Live Concurrency: Manual Revision Collision with Synchronization Barrier...');
     const revisionBarrierService = new NotesService();
     const revBarrier = new TestSyncBarrier(2);
     revisionBarrierService.testConcurrencyBarrier = revBarrier;
@@ -366,7 +374,7 @@ async function runLiveVerification() {
     console.log(`✓ REVISION CONCURRENCY PROVEN: Exactly 1 branch committed v2, Losing branch returned 409 STALE_BASE_VERSION, Zero raw E11000, Zero partial state`);
 
     // 8. Server-Authoritative Block & Note Provenance Verification
-    console.log('\n[8/16] Verifying Server-Authoritative Provenance Trust Boundaries...');
+    console.log('\n[8/16] [PROVENANCE] Verifying Server-Authoritative Provenance Trust Boundaries...');
     // 8a. Manual revision cannot spoof AI or system origin
     const spoofedEdit = await revisionBarrierService.createManualRevision({
       userId: testUser._id,
@@ -398,7 +406,7 @@ async function runLiveVerification() {
     console.log('✓ Server-authoritative provenance verified: manual edit origin spoofing normalized strictly to "user"');
 
     // 9. AI vs Fallback Synthesis Provenance Accuracy
-    console.log('\n[9/16] Verifying AI vs Deterministic Fallback Provenance Accuracy...');
+    console.log('\n[9/16] [PROVENANCE] Verifying AI vs Deterministic Fallback Provenance Accuracy...');
     const failingGateway = {
       generate: async () => {
         throw new Error('AI API rate limited');
@@ -419,7 +427,7 @@ async function runLiveVerification() {
     console.log(`✓ AI Fallback provenance verified: source="${fbMeta.source}", provider="${fbMeta.provider}", model="${fbMeta.model}"`);
 
     // 10. NoteVersion Immutability Invariant & bulkWrite Guard Validation across All Mutation Paths
-    console.log('\n[10/16] Rigorously Validating NoteVersion Immutability across All 10 Mutation Paths...');
+    console.log('\n[10/16] [IMMUTABILITY] Rigorously Validating NoteVersion Immutability across All 10 Mutation Paths...');
     const persistedV1 = await NoteVersion.findOne({ noteDocumentId: currentDoc._id, version: 1 });
     if (!persistedV1) throw new Error('FAIL-CLOSED: Persisted v1 version record not found');
 
@@ -473,8 +481,8 @@ async function runLiveVerification() {
     }
     console.log('✓ All 10 NoteVersion mutation/deletion paths successfully blocked by immutability guards');
 
-    // 11. Strict Block Schema Validation & Unsupported Field Rejection
-    console.log('\n[11/16] Testing Strict Block Schema Validation (Rejecting H4, Code Captions, Unknown Keys)...');
+    // 11. Strict Block Schema Validation & Unsupported Field Rejection (HTTP API)
+    console.log('\n[11/16] [HTTP API] Testing Strict Block Schema Validation (Rejecting H4, Code Captions, Unknown Keys)...');
     const badSchemaRes = await fetch(`${API_BASE}/notes/${currentDoc._id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Cookie: cookieHeader },
@@ -510,8 +518,8 @@ async function runLiveVerification() {
     }
     console.log('✓ Strict block schema validation passed: Level 4 headings and unsupported keys rejected');
 
-    // 12. Version History Inspection & Immutable Restore (v4)
-    console.log('\n[12/16] Testing Version History & Immutable Version Restore...');
+    // 12. Version History Inspection & Immutable Restore (v4 via HTTP API)
+    console.log('\n[12/16] [HTTP API] Testing Version History & Immutable Version Restore...');
     const versionsRes = await fetch(`${API_BASE}/notes/${currentDoc._id}/versions`, {
       headers: { Cookie: cookieHeader },
     });
@@ -534,8 +542,8 @@ async function runLiveVerification() {
     }
     console.log('✓ Version restore created new sequential NoteVersion v4 copying v1 content without mutating v1');
 
-    // 13. AI Note Synthesis Proposal with Canonical Concept Attribution
-    console.log('\n[13/16] Triggering AI Note Synthesis Proposal (POST /api/v1/topics/:topicId/notes/synthesize)...');
+    // 13. AI Note Synthesis Proposal with Canonical Concept Attribution (HTTP API)
+    console.log('\n[13/16] [HTTP API] Triggering AI Note Synthesis Proposal (POST /api/v1/topics/:topicId/notes/synthesize)...');
     const synthRes = await fetch(`${API_BASE}/topics/${freshTopic._id}/notes/synthesize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookieHeader },
@@ -553,41 +561,90 @@ async function runLiveVerification() {
     }
     console.log(`✓ NoteProposal created in staging (ProposalId: ${proposal._id}, RiskLevel: ${proposal.riskAssessment.riskLevel})`);
 
-    // 14. Proposal Approval / Rejection Concurrency Guard
-    console.log('\n[14/16] Proving Atomic Proposal Lifecycle (Preventing Simultaneous Approval & Rejection)...');
+    // 14. Proposal Approval / Rejection Concurrency Guard (Exact Current Base Version)
+    console.log('\n[14/16] [DOMAIN-SERVICE CONCURRENCY] Proving Atomic Proposal Approval vs Rejection Race...');
+    const noteBeforeRace = await NoteDocument.findById(currentDoc._id);
+    const currentBaseVer = noteBeforeRace.currentVersionNumber;
+    const currentBaseVerId = noteBeforeRace.currentVersionId;
+
+    // Create a fresh test proposal specifically targeting the note's exact current baseVersion
+    const raceProposal = await NoteProposal.create({
+      noteDocumentId: currentDoc._id,
+      userId: testUser._id,
+      subjectId: subject._id,
+      topicId: freshTopic._id,
+      baseVersion: currentBaseVer,
+      baseVersionId: currentBaseVerId,
+      proposedBlocks: [
+        {
+          id: 'race_b1',
+          type: 'paragraph',
+          content: { text: `State machine safety invariant at v${currentBaseVer}` },
+          order: 0,
+          origin: 'ai',
+        },
+      ],
+      riskAssessment: {
+        riskLevel: 'LOW',
+        reasons: ['Additive explanation'],
+        requiresApproval: true,
+      },
+      status: 'pending',
+      changeSummary: `Concurrent race proposal targeting base v${currentBaseVer}`,
+    });
+
     const notesService = new NotesService();
     const [concurrentApprove, concurrentReject] = await Promise.allSettled([
       notesService.approveProposal({
         userId: testUser._id,
-        proposalId: proposal._id,
-        baseVersion: 1, // Fresh topic note started at v1
+        proposalId: raceProposal._id,
+        baseVersion: currentBaseVer,
       }),
       notesService.rejectProposal({
         userId: testUser._id,
-        proposalId: proposal._id,
+        proposalId: raceProposal._id,
         reason: 'Concurrent rejection test',
       }),
     ]);
 
-    const persistedProp = await NoteProposal.findById(proposal._id);
-    const validStatuses = ['approved', 'rejected'];
-    if (!validStatuses.includes(persistedProp.status)) {
-      throw new Error(`FAIL-CLOSED: Invalid proposal terminal status: ${persistedProp.status}`);
+    const persistedProp = await NoteProposal.findById(raceProposal._id);
+    const noteAfterRace = await NoteDocument.findById(currentDoc._id);
+    const versionsAfterRace = await NoteVersion.find({ noteDocumentId: currentDoc._id }).sort({ version: 1 });
+
+    if (concurrentApprove.status === 'fulfilled' && concurrentReject.status === 'rejected') {
+      // Case A: Approval won
+      if (persistedProp.status !== 'approved') {
+        throw new Error(`FAIL-CLOSED: Approval fulfilled but proposal status is "${persistedProp.status}"`);
+      }
+      if (noteAfterRace.currentVersionNumber !== currentBaseVer + 1) {
+        throw new Error(`FAIL-CLOSED: Expected version to increment to ${currentBaseVer + 1}, got ${noteAfterRace.currentVersionNumber}`);
+      }
+      const newestVer = versionsAfterRace[versionsAfterRace.length - 1];
+      if (newestVer.version !== currentBaseVer + 1) {
+        throw new Error(`FAIL-CLOSED: Expected newest NoteVersion to be v${currentBaseVer + 1}, got v${newestVer.version}`);
+      }
+      console.log(`✓ PROPOSAL CONCURRENCY PROVEN (CASE A): Approval branch won race -> committed NoteVersion v${noteAfterRace.currentVersionNumber}, proposal status="approved", rejection rejected safely`);
+    } else if (concurrentReject.status === 'fulfilled' && concurrentApprove.status === 'rejected') {
+      // Case B: Rejection won
+      if (persistedProp.status !== 'rejected') {
+        throw new Error(`FAIL-CLOSED: Rejection fulfilled but proposal status is "${persistedProp.status}"`);
+      }
+      if (noteAfterRace.currentVersionNumber !== currentBaseVer) {
+        throw new Error(`FAIL-CLOSED: Version incremented on rejection! Expected ${currentBaseVer}, got ${noteAfterRace.currentVersionNumber}`);
+      }
+      const newestVer = versionsAfterRace[versionsAfterRace.length - 1];
+      if (newestVer.version !== currentBaseVer) {
+        throw new Error(`FAIL-CLOSED: Unexpected new NoteVersion created on rejection! Found v${newestVer.version}`);
+      }
+      console.log(`✓ PROPOSAL CONCURRENCY PROVEN (CASE B): Rejection branch won race -> proposal status="rejected", zero versions created (stayed v${currentBaseVer}), approval aborted cleanly`);
+    } else {
+      throw new Error(
+        `FAIL-CLOSED: Invalid race outcome! Both cannot succeed or both fail. Approve: ${concurrentApprove.status}, Reject: ${concurrentReject.status}`
+      );
     }
 
-    if (persistedProp.status === 'approved') {
-      if (concurrentReject.status === 'fulfilled') {
-        throw new Error('FAIL-CLOSED: Proposal was approved but rejectProposal also succeeded!');
-      }
-    } else if (persistedProp.status === 'rejected') {
-      if (concurrentApprove.status === 'fulfilled') {
-        throw new Error('FAIL-CLOSED: Proposal was rejected but approveProposal also committed NoteVersion!');
-      }
-    }
-    console.log(`✓ Proposal lifecycle concurrency guard verified: Terminal state is "${persistedProp.status}" without duplicate/conflicting actions`);
-
-    // 15. Cross-Tenant Isolation & Security Protection
-    console.log('\n[15/16] Verifying Cross-Tenant Security Isolation...');
+    // 15. Cross-Tenant Isolation & Security Protection (HTTP API)
+    console.log('\n[15/16] [HTTP API] Verifying Cross-Tenant Security Isolation...');
     const unauthorizedRes = await fetch(`${API_BASE}/notes/${currentDoc._id}`, {
       headers: { Cookie: otherCookieHeader },
     });
@@ -606,7 +663,7 @@ async function runLiveVerification() {
     console.log('✓ Cross-tenant security isolation strictly verified (returns 404 on unauthorized access)');
 
     // 16. Immutability-Safe Native Driver Teardown
-    console.log('\n[16/16] Executing Clean Immutability-Safe Teardown via Native Collections...');
+    console.log('\n[16/16] [TEARDOWN] Executing Clean Immutability-Safe Teardown via Native Collections...');
     const collections = ['users', 'usersessions', 'subjects', 'topics', 'syllabusversions', 'concepts', 'learningevents', 'notedocuments', 'noteversions', 'noteproposals'];
     for (const coll of collections) {
       if (testUser) {

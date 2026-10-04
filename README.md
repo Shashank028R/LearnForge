@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase-06%20Knowledge%20Engine-indigo.svg)](docs/phases/phase-06-knowledge-extraction-and-pedagogical-analysis.md)
+[![Status](https://img.shields.io/badge/Phase-07%20Structured%20Notes-indigo.svg)](docs/phases/phase-07-structured-notes-engine.md)
 
 ---
 
@@ -71,7 +71,7 @@ Progress Telemetry & Review Signals
 | **Conversational Engine** | **Implemented** | Streaming-ready message persistence and subject-scoped conversation contexts. |
 | **AI Gateway & Router** | **Implemented** | Multi-provider abstraction (Gemini, OpenAI, Groq) with automated model routing by task complexity. |
 | **Knowledge Engine** | **Implemented** | Canonical concept extraction, deduplication, confidence scoring, misconception tracking, and learning event ledgers. |
-| **Structured Notes Engine** | *Planned (Phase 07)* | Block-based structured notes with immutable version history and risk-based AI merge proposals. |
+| **Structured Notes Engine** | **Implemented** | Block-based structured notes with immutable version history, deterministic concurrency, and risk-managed AI merge proposals. |
 | **Strict Study Mode** | *Planned (Phase 08)* | Adaptive teacher loop evaluating answer completeness, reasoning quality, and remediating weak points. |
 | **Progress Engine** | *Planned (Phase 09)* | Verifiable mastery calculations derived from concept states rather than arbitrary percentages. |
 | **Quiz & Assessment System** | *Planned (Phase 10)* | Automated quiz generation from studied concepts with deterministic and AI-evaluated scoring. |
@@ -192,8 +192,9 @@ LearnForge/
 | **—** | **Phase 04.1** | Syllabus & Knowledge Governance Foundation | **Completed** |
 | **M5** | **Phase 05** | AI Gateway & Automatic Model Router | **Completed** |
 | **M6** | **Phase 06** | Concept Extraction & Pedagogical Analysis | **Completed** |
-| **M7** | **Phase 07** | Structured Notes Engine | *Up Next (Awaiting authorization)* |
-| **M8–M17**| **Phases 08–17** | Strict Study Mode through Final Production Audit | *Planned* |
+| **M7** | **Phase 07** | Structured Notes Engine | **Completed** |
+| **M8** | **Phase 08** | Strict Study Mode & Active Recall | *Up Next (Awaiting authorization)* |
+| **M9–M17**| **Phases 09–17** | Verifiable Mastery through Final Production Audit | *Planned* |
 
 ---
 
@@ -271,6 +272,7 @@ Key architectural decisions are documented as immutable Architecture Decision Re
 - **[ADR-013](docs/decisions/ADR-013-syllabus-governance-and-immutability.md)**: Syllabus and Knowledge Governance Foundation.
 - **[ADR-014](docs/decisions/ADR-014-ai-gateway-and-model-routing.md)**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
 - **[ADR-015](docs/decisions/ADR-015-knowledge-extraction-concept-resolution.md)**: Knowledge Extraction, Concept Resolution & Learning State.
+- **[ADR-016](docs/decisions/ADR-016-structured-notes-engine.md)**: Structured Notes Engine & Immutable Versioning Architecture.
 
 ---
 
