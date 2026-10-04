@@ -95,16 +95,23 @@
 - **Concurrency & Transactions**: Optimistic concurrency control using `baseVersion` inside MongoDB multi-document transactions with domain HTTP 409 conflict mapping (`STALE_BASE_VERSION`, `STALE_PROPOSAL_BASE`).
 - **Interactive UI**: `NotesPage.jsx`, `BlockRenderer.jsx`, `BlockEditor.jsx`, `VersionHistoryDrawer.jsx`, and `ProposalReviewModal.jsx`.
 
+### Phase 08 (Strict Study Mode & Active Recall — Checkpoint 2 Backend)
+- **Architectural Principle**: *"Normal Chat = user asks → AI explains. Study Mode = AI teaches → asks active recall → evaluates reasoning → Socratic remediation → advances on demonstrated understanding."*
+- **Domain Persistence**: Normalized `StudySession` with embedded `StudyTurn` subdocuments (`attemptType: INITIAL | FOLLOW_UP`, `parentTurnId` referencing intra-session turn `_id`).
+- **Lease Fencing & Stale Worker Protection**: `evaluationState.operationId` authoritative fencing token with 30s crash leases and atomic lease takeover preventing stale worker state corruption.
+- **Central State Machine**: `server/src/study/stateMachine.js` enforcing legal transitions, `CANNOT_PAUSE_DURING_EVALUATION` invariants, and non-stranding recovery to `QUESTIONING` / `RECHECKING`.
+- **Syllabus Pinning**: Approved `SyllabusVersion` permanently pinned at session creation.
+- **REST APIs**: Complete study session lifecycle, answer submission, continuation, pause/resume, and exit mounted on `/api/v1`.
+
 ---
 
 ## 4. Current Work
-- Phase 07 complete and sealed. Awaiting explicit project-owner authorization before beginning Phase 08.
+- Phase 08 Checkpoint 2 (Backend Implementation) complete and live-verified (18/18 gates, 227 tests passing). Awaiting authorization for Checkpoint 3 (Frontend Implementation).
 
 ---
 
-## 5. Upcoming Work (Phase 08 — Adaptive Study Sessions & Socratic Tutoring)
-- Active retrieval practice sessions and Socratic tutoring dialogue.
-- Flashcard generation and adaptive review queues.
+## 5. Upcoming Work (Phase 08 Checkpoint 3 — Study Mode Frontend Canvas)
+- Restrained, calm study workspace UI (`StudyCanvas.jsx`, `QuestionCard.jsx`, `AnswerComposer.jsx`, `EvaluationFeedback.jsx`, `RemediationPanel.jsx`).
 
 ---
 
@@ -126,6 +133,7 @@
 - **ADR-014**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
 - **ADR-015**: Knowledge Extraction, Concept Resolution & Learning State.
 - **ADR-016**: Structured Notes Engine & Immutable Versioning Architecture.
+- **ADR-017**: Strict Study Mode Domain Aggregate, Lease Fencing & Socratic Pedagogical State Machine.
 
 ---
 

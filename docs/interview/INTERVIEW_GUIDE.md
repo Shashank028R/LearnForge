@@ -655,5 +655,38 @@ If `approveProposal` has already claimed and committed the proposal to `approved
 **Answer**:  
 In LearnForge, historical versions are immutable audit points. Restoring version $k$ creates a brand-new sequential `NoteVersion` (e.g., $v_{N+1}$) copying the blocks from $v_k$, setting `sourceType: 'version_restore'`, and pointing `NoteDocument.currentVersionId` to the newly created version. The historical $v_k$ version is preserved unmodified.
 
+---
+
+## 11. Phase 08 — Strict Study Mode & Active Recall
+
+### Q91: What is the core pedagogical invariant of LearnForge Strict Study Mode?
+**Answer**:  
+In normal chat, the student asks questions and the AI provides passive explanations. In Study Mode, the relationship reverses: the AI acts as a rigorous teacher. The AI presents free-response active recall questions, evaluates multi-criteria reasoning depth (correctness, completeness, reasoning quality, misconceptions), provides Socratic remediation when answers are incomplete, and only advances upon demonstrated conceptual understanding.
+
+### Q92: How are initial and follow-up student turns persisted in StudySession?
+**Answer**:  
+`StudyTurn` is an embedded subdocument in `StudySession.turns` (not a registered Mongoose model). When a student answers an initial question, it is stored as `attemptType: 'INITIAL'` with `parentTurnId: null`. If remediation triggers a follow-up attempt, the follow-up is persisted as `attemptType: 'FOLLOW_UP'` with `parentTurnId` referencing the initial turn's `_id` within the same session. This guarantees historical attempt preservation without overwriting.
+
+### Q93: How does lease fencing with `operationId` prevent stale evaluator worker corruption?
+**Answer**:  
+Every evaluation operation generates a cryptographically random UUID v4 `operationId` and sets a 30-second crash lease. If Worker A's evaluation lags and the lease expires, Worker B takes over and updates the document with `operationId_B`. When Worker A finally returns, its final write conditions on `operationState.operationId: operationId_A`. The write matches 0 documents and fails harmlessly, discarding Worker A's stale result.
+
+### Q94: How is historical idempotency resolved in Study Mode?
+**Answer**:  
+`evaluationState` is a single-slot tracker for active in-flight operations only. Completed historical turn idempotency is resolved by searching `StudySession.turns.find(t => t.clientTurnId === clientTurnId)`. If the payload matches, it safely returns the stored turn (HTTP 200). If the payload conflicts, it returns HTTP 409 `IDEMPOTENCY_KEY_REUSE_CONFLICT`. If older turns are replayed after subsequent turns exist, the stored turn is returned without rewinding session state.
+
+### Q95: What happens when an evaluation fails catastrophically?
+**Answer**:  
+The session is never stranded in `EVALUATING`. If primary AI, secondary model, and deterministic fallback all fail, `evaluationState.status` transitions to `'FAILED'`, records `lastError`, and safely restores the session to `QUESTIONING` (for initial question) or `RECHECKING` (for follow-up), preserving question context for safe student retry.
+
+### Q96: Why is pausing prohibited during active evaluation?
+**Answer**:  
+Pausing during `ANSWER_PENDING` or `EVALUATING` would introduce non-deterministic state races while an asynchronous AI evaluation is in flight. The central state machine strictly enforces that pausing from `EVALUATING` throws HTTP 409 `CANNOT_PAUSE_DURING_EVALUATION`. Pausing is permitted only from stable waiting states: `QUESTIONING`, `REMEDIATING`, and `RECHECKING`.
+
+### Q97: How does Curriculum Pinning guarantee consistency in Study Sessions?
+**Answer**:  
+When a study session is initialized, if an approved `SyllabusVersion` exists, `syllabusVersionId` and `syllabusVersionNumber` are permanently pinned on the `StudySession` document. Subsequent revisions or new syllabus approvals for that subject do not mutate or re-scope active study sessions.
+
+
 
 

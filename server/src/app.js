@@ -14,6 +14,7 @@ import syllabusRouter from './routes/syllabus.js';
 import annotationsRouter from './routes/annotations.js';
 import knowledgeRouter from './routes/knowledgeRoutes.js';
 import notesRouter from './routes/notesRoutes.js';
+import studyRouter from './routes/studyRoutes.js';
 
 export function createApp() {
   const app = express();
@@ -44,6 +45,7 @@ export function createApp() {
   apiRouter.use(annotationsRouter);
   apiRouter.use(knowledgeRouter);
   apiRouter.use(notesRouter);
+  apiRouter.use(studyRouter);
 
   app.use(config.apiPrefix, apiRouter);
 

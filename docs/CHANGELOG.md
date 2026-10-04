@@ -5,6 +5,36 @@ All notable changes to the LearnForge project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-05
+
+### Phase 08 — Strict Study Mode & Active Recall (Checkpoint 2 Backend)
+
+#### Added
+- **Domain Models**:
+  - `StudySession.js`: Topic-anchored aggregate root tracking pedagogical lifecycle (`ORIENTING`, `QUESTIONING`, `ANSWER_PENDING`, `EVALUATING`, `REMEDIATING`, `RECHECKING`, `ADVANCING`, `COMPLETED`, `PAUSED`, `EXITED`), monotonic turn sequences, curriculum pinning, and optimistic locking (`sessionVersion`).
+  - `studyTurnSchema`: Embedded subdocument storing hierarchical initial and follow-up turns (`attemptType: INITIAL | FOLLOW_UP`, `parentTurnId` referencing intra-session turn `_id`).
+  - `evaluationStateSchema`: Single-slot active operation tracker with `operationId` fencing token, crash lease timeouts (30s), and SHA-256 answer fingerprinting.
+- **Pedagogical State Machine (`server/src/study/stateMachine.js`)**:
+  - Centralized legal state transition mapping with `CANNOT_PAUSE_DURING_EVALUATION` invariants and non-stranding recovery to `QUESTIONING` / `RECHECKING`.
+- **AI Task Registration & Gateway Integration**:
+  - Registered `STUDY_QUESTION_GENERATION`, `STUDY_ANSWER_EVALUATION`, and `STUDY_REMEDIATION` in `tasks.js` with preference chains in `modelRouter.js`.
+  - `studyAiService.js`: Concept whitelist filtering, structured schema parsing, and deterministic rule-based fallbacks.
+  - `studyPrompts.js`: Socratic prompt builders enforcing evidence-based evaluation without superficial praise.
+- **Domain Service & Lease Fencing (`server/src/study/services/studyService.js`)**:
+  - Optimistic concurrency control via `sessionVersion`.
+  - Authoritative lease takeover and stale worker rejection (`STALE_EVALUATION_WORKER_DISCARDED`).
+  - Historical idempotency via persisted `turns` (`IDEMPOTENCY_KEY_REUSE_CONFLICT` on mismatched payloads).
+  - Curriculum pinning: permanently bounds session scope to approved `SyllabusVersion`.
+- **REST APIs**:
+  - Authenticated study routes mounted under `/api/v1/study-sessions` and `/api/v1/topics/:topicId/study/sessions`.
+- **Automated & Live Verification**:
+  - 22 unit/integration tests in `server/tests/studySession.test.js` (total 227 backend tests passing).
+  - 18-gate fail-closed live verification script `server/scripts/verify_phase08_live.js` against MongoDB Atlas replica set transactions and live AI inference.
+- **Gmail OTP Investigation**: Detailed diagnostic report identifying Google SMTP `EAUTH / BadCredentials` authentication state.
+- **Architecture Record**: Documented in `docs/decisions/ADR-017-strict-study-mode-and-active-recall.md`.
+
+---
+
 ## [0.8.0] - 2026-10-05
 
 ### Phase 07 — Structured Notes Engine & Immutable Versioning

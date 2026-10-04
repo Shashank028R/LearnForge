@@ -17,6 +17,9 @@ export class ModelRouter {
       [AI_TASK_TYPES.KNOWLEDGE_RELEVANCE_CLASSIFICATION]: ['groq', 'gemini', 'openai'],
       [AI_TASK_TYPES.KNOWLEDGE_EVENT_EXTRACTION]: ['groq', 'openai', 'gemini'],
       [AI_TASK_TYPES.NOTE_SYNTHESIS]: ['groq', 'openai', 'gemini'],
+      [AI_TASK_TYPES.STUDY_QUESTION_GENERATION]: ['groq', 'openai', 'gemini'],
+      [AI_TASK_TYPES.STUDY_ANSWER_EVALUATION]: ['openai', 'gemini', 'groq'],
+      [AI_TASK_TYPES.STUDY_REMEDIATION]: ['openai', 'gemini', 'groq'],
       ...(options.taskPreferences || {}),
     };
   }
