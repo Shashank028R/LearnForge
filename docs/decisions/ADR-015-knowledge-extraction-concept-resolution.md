@@ -25,7 +25,7 @@ The engine must solve five core architectural challenges:
 
 2. **`LearningEvent` (`server/src/models/LearningEvent.js`)**:
    - Immutable, tenant-scoped ledger entry recording each discrete learning observation.
-   - Indexed via compound unique index `{ userId: 1, idempotencyKey: 1 }` where `idempotencyKey = \`${userId}:${sourceMessageId}:${extractionVersion}\``.
+   - Indexed via compound unique index `{ userId: 1, idempotencyKey: 1 }` where base `idempotencyKey = \`${userId}:${sourceMessageId}:${extractionVersion}\`` (with `:e${i}` suffixes for multi-event exchanges), ensuring strict exchange-level idempotency.
    - Stores `sourceMessageId`, `chatId`, `topicId`, `subjectId`, `conceptId`, `conceptName`, `eventType` (`concept_introduced`, `concept_explained`, `concept_recalled`, `concept_misunderstood`, `misconception_detected`, `concept_corrected`, `concept_reinforced`, `concept_conflict`, `learning_signal`), `classificationOutcome` (`NEW`, `EXISTING`, `DUPLICATE`, `COMPLEMENTARY`, `CORRECTION`, `CONFLICT`), `evidenceText`, and `confidenceScore`.
 
 ### B. Deterministic Hierarchy Matching & Concept Identity Resolution
@@ -36,20 +36,20 @@ When a candidate concept is extracted from an exchange:
 4. **Classification Assignment**:
    - `NEW`: Concept not previously found in topic.
    - `EXISTING` / `COMPLEMENTARY`: Continuation or nuance added to existing concept.
-   - `DUPLICATE`: Repeated semantic fact; attached to concept with minimal confidence increment (+2) to prevent score inflation.
-   - `CORRECTION`: Resolves previous active misconception.
+   - `DUPLICATE`: Repeated semantic fact; attached to concept with bounded confidence increment (+1% to +5%, formula $\Delta = \text{round}\left(5 \times \max\left(0.1, 1 - \frac{S_{\text{current}}}{125}\right)\right)$) to prevent score inflation.
+   - `CORRECTION`: Resolves previous active misconception and recovers state from `NEEDS_REVIEW` to `LEARNING` / `UNDERSTOOD`.
    - `CONFLICT`: Evidence contradicts established canonical definition; flags `concept.conflictState` without overwriting existing data.
 
 ### C. State Machine & Bounded Confidence Rules
 State transitions are governed by deterministic domain rules in `LearningStateMachine`:
+- **Correction Precedence (`concept_corrected`, `CORRECTION`)**: Evaluated first; recovers from `NEEDS_REVIEW` to `LEARNING` (+15 points, or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`).
 - **First Encounter (`concept_introduced`)**: `NOT_STARTED` → `INTRODUCED` (`confidenceScore = 25`, `evidenceCount = 1`).
 - **Explanation / Nuance (`concept_explained`, `COMPLEMENTARY`)**: `INTRODUCED` → `LEARNING` (requires `evidenceCount >= 2` and `confidenceScore >= 40`).
 - **Active Recall (`concept_recalled`)**: `LEARNING` → `UNDERSTOOD` (requires `evidenceCount >= 3` and `confidenceScore >= 70`).
 - **Repeated Reinforcement (`concept_reinforced`)**: `UNDERSTOOD` → `STRONG` (requires `evidenceCount >= 5` and `confidenceScore >= 90`).
 - **Misconception / Conflict (`misconception_detected`, `concept_misunderstood`, `CONFLICT`)**: Immediate regression to `NEEDS_REVIEW` with deterministic score penalty (-15 to -30).
-- **Correction (`concept_corrected`)**: Recovers from `NEEDS_REVIEW` to `LEARNING` (+15 points, or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`).
 - **Diminishing Returns Formula**: $\Delta = \text{round}\left(\text{delta} \times \max\left(0.1, 1 - \frac{S_{\text{current}}}{125}\right)\right)$.
-- **Ledger Immutability**: `LearningEvent` is an append-only audit ledger with `{ createdAt: true, updatedAt: false }` and pre-hook guards preventing mutations or replacements.
+- **Ledger Immutability**: `LearningEvent` is an append-only audit ledger with `{ createdAt: true, updatedAt: false }` and pre-hook guards preventing mutations, updates, replacements, or deletions (`save` if !isNew, `updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace`, `deleteOne`, `deleteMany`, `findOneAndDelete`).
 - **Topic Aggregate**: `Topic.knowledgeState.masteryScore` is the average confidence of active concepts; `Topic.status` is `mastered` only when all concepts are `UNDERSTOOD` or `STRONG` and `masteryScore >= 80`.
 
 ### D. Multi-Document Transaction Boundary

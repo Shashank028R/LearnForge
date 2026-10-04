@@ -49,7 +49,14 @@ export class KnowledgeEngineService {
 
     // 2. Idempotency Check: Prevent duplicate event processing from same message
     const idempotencyKey = `${userId}:${sourceMessageId}:${this.version}`;
-    const existingEvent = await LearningEvent.findOne({ userId, idempotencyKey });
+    const existingEvent = await LearningEvent.findOne({
+      userId,
+      $or: [
+        { idempotencyKey },
+        { idempotencyKey: `${idempotencyKey}:e0` },
+        { sourceMessageId, 'metadata.extractionVersion': this.version },
+      ],
+    });
     if (existingEvent) {
       return {
         skipped: true,
@@ -180,7 +187,8 @@ export class KnowledgeEngineService {
 
     for (let i = 0; i < rawEvents.length; i++) {
       const eventData = rawEvents[i];
-      const eventIdempotencyKey = rawEvents.length > 1 ? `${idempotencyKey}:e${i}` : idempotencyKey;
+      // Exchange-level base key for the primary event (i=0), keyed suffix for subsequent events
+      const eventIdempotencyKey = i === 0 ? idempotencyKey : `${idempotencyKey}:e${i}`;
 
       // A. Concept Resolution
       const resolution = await this.resolver.resolveConcept({
@@ -200,6 +208,8 @@ export class KnowledgeEngineService {
         currentConcept: conceptDoc,
         eventData,
       });
+
+      const isCorrection = eventData.classificationOutcome === 'CORRECTION' || eventData.eventType === 'concept_corrected';
 
       // C. Concept Persistence
       if (!conceptDoc) {
@@ -222,7 +232,8 @@ export class KnowledgeEngineService {
                   misconceptionText: eventData.misconception.misconceptionText,
                   correctionText: eventData.misconception.correctionText,
                   detectedAt: new Date(),
-                  isActive: true,
+                  resolvedAt: isCorrection ? new Date() : null,
+                  isActive: !isCorrection,
                 },
               ]
             : [],
@@ -243,21 +254,31 @@ export class KnowledgeEngineService {
         conceptDoc.evidenceCount = (conceptDoc.evidenceCount || 0) + 1;
         conceptDoc.lastStudiedAt = new Date();
 
-        if (eventData.misconception?.misconceptionText) {
-          conceptDoc.misconceptions.push({
-            misconceptionText: eventData.misconception.misconceptionText,
-            correctionText: eventData.misconception.correctionText,
-            detectedAt: new Date(),
-            isActive: true,
-          });
-        } else if (eventData.classificationOutcome === 'CORRECTION') {
-          // Resolve any active misconceptions
+        if (isCorrection) {
+          // Resolve any existing active misconceptions
           for (const m of conceptDoc.misconceptions) {
             if (m.isActive) {
               m.isActive = false;
               m.resolvedAt = new Date();
             }
           }
+          // If a corrected misconception is attached, record it as resolved
+          if (eventData.misconception?.misconceptionText) {
+            conceptDoc.misconceptions.push({
+              misconceptionText: eventData.misconception.misconceptionText,
+              correctionText: eventData.misconception.correctionText || '',
+              detectedAt: new Date(),
+              resolvedAt: new Date(),
+              isActive: false,
+            });
+          }
+        } else if (eventData.misconception?.misconceptionText) {
+          conceptDoc.misconceptions.push({
+            misconceptionText: eventData.misconception.misconceptionText,
+            correctionText: eventData.misconception.correctionText,
+            detectedAt: new Date(),
+            isActive: true,
+          });
         }
 
         if (eventData.classificationOutcome === 'CONFLICT') {

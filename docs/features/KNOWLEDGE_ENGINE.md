@@ -53,11 +53,11 @@ When candidate concepts are extracted:
 2. **Normalized Alias Match**: Matches candidate name against existing concepts' `normalizedAliases` array.
 3. **Alias Reconciliation**: Appends new discovered aliases/acronyms to the existing canonical `Concept`.
 4. **Relationship Classification**:
-   - `NEW`: Creates a new `Concept` in `INTRODUCED` status with baseline confidence (20%).
+   - `NEW`: Creates a new `Concept` in `INTRODUCED` status with baseline confidence (25%).
    - `EXISTING`: Continues work on established concept.
-   - `DUPLICATE`: Same semantic fact restated; awards nominal increment (+2%) to prevent score inflation.
+   - `DUPLICATE`: Same semantic fact restated; awards bounded increment (+1% to +5%, base delta = 5 with diminishing returns formula $\Delta = \text{round}\left(5 \times \max\left(0.1, 1 - \frac{S_{\text{current}}}{125}\right)\right)$) to prevent score inflation.
    - `COMPLEMENTARY`: Adds new properties or edge cases to concept.
-   - `CORRECTION`: Resolves active misconceptions and transitions from `NEEDS_REVIEW` to `LEARNING`.
+   - `CORRECTION`: Resolves active misconceptions and transitions from `NEEDS_REVIEW` to `LEARNING` (or `UNDERSTOOD` if evidence and score thresholds are met).
    - `CONFLICT`: Evidence contradicts established definition; sets `conflictState.hasConflict = true` without deleting existing knowledge.
 
 ---

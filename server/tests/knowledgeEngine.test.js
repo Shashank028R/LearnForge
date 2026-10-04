@@ -219,8 +219,18 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
 
     vi.spyOn(LearningEvent, 'findOne').mockImplementation(async (query) => {
       for (const ev of learningEventsStore.values()) {
-        if (ev.userId.toString() === query.userId?.toString() && ev.idempotencyKey === query.idempotencyKey) {
-          return ev;
+        if (ev.userId.toString() === query.userId?.toString()) {
+          if (query.idempotencyKey && ev.idempotencyKey === query.idempotencyKey) {
+            return ev;
+          }
+          if (query.$or && Array.isArray(query.$or)) {
+            const matchesOr = query.$or.some((clause) => {
+              if (clause.idempotencyKey && ev.idempotencyKey === clause.idempotencyKey) return true;
+              if (clause.sourceMessageId && ev.sourceMessageId?.toString() === clause.sourceMessageId?.toString()) return true;
+              return false;
+            });
+            if (matchesOr) return ev;
+          }
         }
       }
       return null;
@@ -245,6 +255,26 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
         }),
       }),
     }));
+
+    vi.spyOn(mongoose, 'startSession').mockImplementation(async () => ({
+      startTransaction: vi.fn(),
+      commitTransaction: vi.fn(),
+      abortTransaction: vi.fn(),
+      endSession: vi.fn(),
+    }));
+
+    vi.spyOn(Concept.prototype, 'save').mockImplementation(async function () {
+      conceptsStore.set(this._id.toString(), this);
+      return this;
+    });
+
+    vi.spyOn(LearningEvent.prototype, 'save').mockImplementation(async function () {
+      if (!this.isNew && this.isNew !== undefined) {
+        throw new Error('LearningEvent is an immutable append-only audit ledger and cannot be updated, replaced, or modified.');
+      }
+      learningEventsStore.set(this.idempotencyKey, this);
+      return this;
+    });
   });
 
   describe('1. Concept Identity & Resolution Layer', () => {
@@ -836,6 +866,118 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       // Mark as not new to test save mutation rejection
       event.isNew = false;
       await expect(event.save()).rejects.toThrow('LearningEvent is an immutable append-only audit ledger');
+
+      // Test all query-level mutation hooks on LearningEvent schema
+      const schema = LearningEvent.schema;
+      expect(schema.s.hooks._pres.has('updateOne')).toBe(true);
+      expect(schema.s.hooks._pres.has('updateMany')).toBe(true);
+      expect(schema.s.hooks._pres.has('findOneAndUpdate')).toBe(true);
+      expect(schema.s.hooks._pres.has('replaceOne')).toBe(true);
+      expect(schema.s.hooks._pres.has('findOneAndReplace')).toBe(true);
+      expect(schema.s.hooks._pres.has('deleteOne')).toBe(true);
+      expect(schema.s.hooks._pres.has('deleteMany')).toBe(true);
+      expect(schema.s.hooks._pres.has('findOneAndDelete')).toBe(true);
+    });
+
+    it('P1-MultiEvent: Enforces exchange-level idempotency for 1, 3, and 10 events', async () => {
+      const fakeGateway = {
+        generate: vi.fn(),
+      };
+      const engine = new KnowledgeEngineService(fakeGateway);
+      const sourceMsgId = new mongoose.Types.ObjectId();
+      const chatId = new mongoose.Types.ObjectId();
+
+      // Test 3 events extracted from single exchange
+      fakeGateway.generate.mockResolvedValueOnce({
+        text: JSON.stringify({
+          events: [
+            { conceptName: 'Event 1 Concept', eventType: 'concept_introduced', classificationOutcome: 'NEW' },
+            { conceptName: 'Event 2 Concept', eventType: 'concept_introduced', classificationOutcome: 'NEW' },
+            { conceptName: 'Event 3 Concept', eventType: 'concept_introduced', classificationOutcome: 'NEW' },
+          ],
+        }),
+        provider: 'groq',
+        model: 'openai/gpt-oss-120b',
+      });
+
+      const firstRes = await engine.processExchangeEvidence({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'Explain 3 concepts.' },
+        assistantMessage: { content: 'Here are 3 concepts.' },
+      });
+
+      expect(firstRes.success).toBe(true);
+      expect(firstRes.learningEvents.length).toBe(3);
+      expect(firstRes.learningEvents[0].idempotencyKey).toBe(`${userA._id}:${sourceMsgId}:v1.0`);
+      expect(firstRes.learningEvents[1].idempotencyKey).toBe(`${userA._id}:${sourceMsgId}:v1.0:e1`);
+      expect(firstRes.learningEvents[2].idempotencyKey).toBe(`${userA._id}:${sourceMsgId}:v1.0:e2`);
+
+      // Repeated processing attempt for same exchange must be deduplicated
+      const repeatRes = await engine.processExchangeEvidence({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'Explain 3 concepts.' },
+        assistantMessage: { content: 'Here are 3 concepts.' },
+      });
+
+      expect(repeatRes.skipped).toBe(true);
+      expect(repeatRes.duplicate).toBe(true);
+      expect(repeatRes.reason).toBe('already_processed');
+    });
+
+    it('P1-CorrectionPrecedence: Recovers from NEEDS_REVIEW when extractor output contains misconception payload', () => {
+      const sm = new LearningStateMachine();
+
+      // Given a concept in NEEDS_REVIEW
+      const currentConcept = {
+        status: LEARNING_STATES.NEEDS_REVIEW,
+        confidenceScore: 30,
+        evidenceCount: 1,
+      };
+
+      // When an extractor emits concept_corrected with misconception details attached
+      const eventData = {
+        eventType: 'concept_corrected',
+        classificationOutcome: 'CORRECTION',
+        misconception: {
+          misconceptionText: 'Learner thought AST retains punctuation',
+          correctionText: 'AST discards redundant punctuation',
+          severity: 'medium',
+        },
+      };
+
+      const transition = sm.evaluateTransition({ currentConcept, eventData });
+
+      // Then correction precedence takes effect and status recovers to LEARNING
+      expect(transition.newStatus).toBe(LEARNING_STATES.LEARNING);
+      expect(transition.confidenceScore).toBe(45); // 30 + 15
+      expect(transition.evidenceCount).toBe(2);
+    });
+
+    it('P1-DuplicateFormula: Applies authoritative bounded increase formula for duplicate evidence', () => {
+      const sm = new LearningStateMachine();
+
+      // At score 0 -> increase is 5
+      expect(sm._applyBoundedIncrease(0, 5)).toBe(5);
+
+      // At score 50 -> factor = 1 - 50/125 = 0.6 -> increase = round(5 * 0.6) = 3 -> score 53
+      expect(sm._applyBoundedIncrease(50, 5)).toBe(53);
+
+      // At score 80 -> factor = 1 - 80/125 = 0.36 -> increase = round(5 * 0.36) = 2 -> score 82
+      expect(sm._applyBoundedIncrease(80, 5)).toBe(82);
+
+      // At score 95 -> factor = 1 - 95/125 = 0.24 -> increase = round(5 * 0.24) = 1 -> score 96
+      expect(sm._applyBoundedIncrease(95, 5)).toBe(96);
+
+      // At score 100 -> stays 100
+      expect(sm._applyBoundedIncrease(100, 5)).toBe(100);
     });
 
     it('P1-1 & P1-2: Verifies all state transition boundaries and confidence formula invariants', () => {

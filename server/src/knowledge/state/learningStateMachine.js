@@ -32,29 +32,13 @@ export class LearningStateMachine {
 
     let newStatus = currentStatus;
     let newScore = currentScore;
+    const isMisconception = eventType === 'misconception_detected' || eventType === 'concept_misunderstood';
+    const isCorrection = (eventType === 'concept_corrected' || classificationOutcome === 'CORRECTION') && !isMisconception;
     const hasActiveMisconception = Boolean(misconception && misconception.misconceptionText);
     const isConflict = classificationOutcome === 'CONFLICT' || eventType === 'concept_conflict';
 
-    // 1. Misconception / Confusion / Conflict -> Immediate regression to NEEDS_REVIEW
-    if (
-      hasActiveMisconception ||
-      isConflict ||
-      eventType === 'misconception_detected' ||
-      eventType === 'concept_misunderstood'
-    ) {
-      newStatus = LEARNING_STATES.NEEDS_REVIEW;
-      const penalty = misconception?.severity === 'high' ? 30 : misconception?.severity === 'low' ? 15 : 20;
-      newScore = Math.max(0, Math.round(currentScore - penalty));
-      return {
-        previousStatus: isNew ? null : currentStatus,
-        newStatus,
-        confidenceScore: newScore,
-        evidenceCount: nextEvidenceCount,
-      };
-    }
-
-    // 2. Correction of Previous Misconception -> Recovery
-    if (eventType === 'concept_corrected' || classificationOutcome === 'CORRECTION') {
+    // 1. Correction of Previous Misconception -> Explicit Precedence Recovery (Evaluated First)
+    if (isCorrection) {
       newScore = Math.min(100, currentScore + 15);
       if (currentStatus === LEARNING_STATES.NEEDS_REVIEW || currentStatus === LEARNING_STATES.NOT_STARTED) {
         if (nextEvidenceCount >= 3 && newScore >= 70) {
@@ -66,6 +50,24 @@ export class LearningStateMachine {
         newStatus = this._evaluateStatusFromMetrics(nextEvidenceCount, newScore);
       }
 
+      return {
+        previousStatus: isNew ? null : currentStatus,
+        newStatus,
+        confidenceScore: newScore,
+        evidenceCount: nextEvidenceCount,
+      };
+    }
+
+    // 2. Misconception / Confusion / Conflict -> Immediate regression to NEEDS_REVIEW
+    if (
+      hasActiveMisconception ||
+      isConflict ||
+      eventType === 'misconception_detected' ||
+      eventType === 'concept_misunderstood'
+    ) {
+      newStatus = LEARNING_STATES.NEEDS_REVIEW;
+      const penalty = misconception?.severity === 'high' ? 30 : misconception?.severity === 'low' ? 15 : 20;
+      newScore = Math.max(0, Math.round(currentScore - penalty));
       return {
         previousStatus: isNew ? null : currentStatus,
         newStatus,

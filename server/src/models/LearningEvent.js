@@ -154,6 +154,8 @@ learningEventSchema.index({ userId: 1, sourceMessageId: 1 });
 // Defense in Depth: Enforce Append-Only Immutability on LearningEvent
 const immutableLedgerError = () =>
   new Error('LearningEvent is an immutable append-only audit ledger and cannot be updated, replaced, or modified.');
+const immutableLedgerDeleteError = () =>
+  new Error('LearningEvent is an immutable append-only audit ledger and cannot be deleted.');
 
 learningEventSchema.pre('save', function (next) {
   if (!this.isNew) {
@@ -180,6 +182,18 @@ learningEventSchema.pre('replaceOne', function (next) {
 
 learningEventSchema.pre('findOneAndReplace', function (next) {
   next(immutableLedgerError());
+});
+
+learningEventSchema.pre('deleteOne', function (next) {
+  next(immutableLedgerDeleteError());
+});
+
+learningEventSchema.pre('deleteMany', function (next) {
+  next(immutableLedgerDeleteError());
+});
+
+learningEventSchema.pre('findOneAndDelete', function (next) {
+  next(immutableLedgerDeleteError());
 });
 
 export const LearningEvent = mongoose.models.LearningEvent || mongoose.model('LearningEvent', learningEventSchema);

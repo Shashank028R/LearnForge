@@ -44,11 +44,14 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
           syllabusContext,
           topicContext,
           temperature: 0.1,
-          maxTokens: 1000,
+          maxTokens: 3000,
         });
       }
     } catch (err) {
       // AI Gateway failed or threw error - fallback to deterministic heuristic
+      if (!process.env.VITEST) {
+        console.error('[EventExtractor AI Error]', err?.message || err);
+      }
       extractionSource = 'deterministic_fallback';
     }
 
@@ -74,6 +77,9 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
           };
         }
       } catch (parseErr) {
+        if (!process.env.VITEST) {
+          console.error('[EventExtractor JSON Parse Error]', parseErr?.message || parseErr);
+        }
         // Fallback to deterministic extraction on invalid JSON
       }
     }
@@ -89,7 +95,11 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
 
   _cleanAndParseJSON(rawContent) {
     if (!rawContent || typeof rawContent !== 'string') return null;
-    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+    // Strip reasoning / think tags if emitted by reasoning models
+    let cleaned = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    // Strip markdown JSON code fences
+    cleaned = cleaned.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     return JSON.parse(jsonMatch[0]);
   }
