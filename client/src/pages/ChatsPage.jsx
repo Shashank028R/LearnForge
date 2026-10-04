@@ -774,7 +774,9 @@ export function ChatsPage() {
                         <div
                           className={`rounded-2xl p-3.5 text-xs relative group ${
                             isUser
-                              ? 'bg-app-accent text-white rounded-tr-xs'
+                              ? msg.status === 'error'
+                                ? 'bg-status-danger/20 border border-status-danger/40 text-app-text-primary rounded-tr-xs'
+                                : 'bg-app-accent text-white rounded-tr-xs'
                               : 'bg-app-bg-secondary border border-app-border text-app-text-primary rounded-tl-xs'
                           }`}
                         >
@@ -782,19 +784,49 @@ export function ChatsPage() {
                             {msg.content}
                           </div>
 
+                          {/* Error Banner & Retry inside failed message */}
+                          {msg.status === 'error' && (
+                            <div className="mt-2 pt-1.5 border-t border-status-danger/30 flex items-center justify-between gap-2 text-[11px] text-status-danger">
+                              <span>{msg.errorMessage || 'Failed to deliver message'}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMessageInput(msg.content);
+                                  setMessages((prev) => prev.filter((m) => (m.id || m._id) !== msgId));
+                                  if (textareaRef.current) textareaRef.current.focus();
+                                }}
+                                className="underline font-semibold hover:text-status-danger/80"
+                              >
+                                Retry
+                              </button>
+                            </div>
+                          )}
+
                           {/* Footer / Time / Annotate / Copy */}
                           <div
                             className={`flex items-center justify-between gap-2 mt-2 pt-1 border-t ${
-                              isUser ? 'border-white/20 text-white/75' : 'border-app-border/40 text-app-text-muted'
+                              isUser
+                                ? msg.status === 'error'
+                                  ? 'border-status-danger/20 text-app-text-muted'
+                                  : 'border-white/20 text-white/75'
+                                : 'border-app-border/40 text-app-text-muted'
                             } text-[10px]`}
                           >
-                            <span>
+                            <span className="flex items-center gap-1.5">
                               {msg.createdAt
                                 ? new Date(msg.createdAt).toLocaleTimeString([], {
                                     hour: '2-digit',
                                     minute: '2-digit',
                                   })
                                 : ''}
+                              {msg.status === 'sending' && (
+                                <span className="italic opacity-80">(sending...)</span>
+                              )}
+                              {!isUser && msg.aiMetadata?.task && (
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-app-surface border border-app-border text-app-text-muted">
+                                  {msg.aiMetadata.task.replace('_', ' ')}
+                                </span>
+                              )}
                             </span>
 
                             <div className="flex items-center gap-2">
@@ -862,6 +894,23 @@ export function ChatsPage() {
                     </div>
                   );
                 })
+              )}
+
+              {/* Live Assistant Generating / Thinking Skeleton */}
+              {isSending && (
+                <div className="flex items-start gap-3 justify-start animate-pulse" data-testid="ai-thinking-indicator">
+                  <div className="w-7 h-7 rounded-full bg-app-accent/15 border border-app-accent/30 flex items-center justify-center text-app-accent shrink-0 mt-0.5">
+                    <Icon name="sparkles" size={14} />
+                  </div>
+                  <div className="bg-app-bg-secondary border border-app-border rounded-2xl rounded-tl-xs p-3 space-y-1.5 min-w-[180px]">
+                    <div className="flex items-center gap-1.5 text-[11px] text-app-text-muted">
+                      <span className="w-1.5 h-1.5 rounded-full bg-app-accent animate-ping" />
+                      <span>Formulating pedagogical response...</span>
+                    </div>
+                    <div className="h-2 bg-app-border/40 rounded w-3/4" />
+                    <div className="h-2 bg-app-border/30 rounded w-1/2" />
+                  </div>
+                </div>
               )}
               <div ref={messagesEndRef} />
             </div>

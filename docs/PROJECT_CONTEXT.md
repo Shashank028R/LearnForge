@@ -10,8 +10,8 @@
 
 ## 2. Current Phase Status
 
-- **Current Phase**: **Phase 04.1 — Syllabus & Knowledge Governance Foundation (COMPLETED)**
-- **Next Phase**: **Phase 05 — AI Gateway, Model Routing & Pedagogical Engine (Awaiting authorization)**
+- **Current Phase**: **Phase 05 — AI Gateway, Automatic Model Routing & Pedagogical Engine (COMPLETED)**
+- **Next Phase**: **Phase 06 — Concept Extraction & Pedagogical Analysis (Awaiting authorization)**
 - **Repository Remote**: `https://github.com/Shashank028R/LearnForge.git`
 - **Default Branch**: `main`
 
@@ -70,17 +70,27 @@
 - **Knowledge Semantic Layers & Annotations**: 7 distinct semantic layers; complete `Annotation` model and REST API for user notes and tags.
 - **Interactive UI**: Syllabus governance panel, version history viewer, approval confirmation modal, and inline annotations.
 
+### Phase 05 (AI Gateway, Automatic Model Routing & Pedagogical Engine)
+- **Centralized AI Gateway**: Provider-neutral gateway (`server/src/ai/gateway/aiGateway.js`) implementing `generate(request)` with normalized envelopes (`AIResponse`).
+- **Official Provider Adapters**: Concrete adapters for Google Gemini (`@google/genai`), OpenAI (`openai`), and Anthropic Claude (`@anthropic-ai/sdk`) with uniform error normalization and health monitoring.
+- **Task & Capability Taxonomy**: Typed task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) mapped to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
+- **Automatic Model Routing**: Server-side deterministic router (`ModelRouter`) selecting optimal models without exposing provider choices to frontend.
+- **Resilience Engine**: Bounded exponential backoff with jitter on transient failures (`429`, `503`, `ETIMEDOUT`), provider fallback chains, and offline Socratic engine fallback.
+- **Curriculum Context Isolation**: Strict prompt assembly ensuring only approved syllabi (`status: 'approved'`) are treated as authoritative curriculum.
+- **Knowledge Relevance Governance**: Automatic semantic relevance classification (`on_topic`, `off_topic`, `uncertain`) with `excluded` disposition for off-topic queries, preventing canonical note pollution.
+- **Observability & Security**: Request correlation via `X-Request-ID`, token telemetry (`AITelemetry`), rate limiting (`aiMessageRateLimiter`), and strict secret redaction.
+
 ---
 
 ## 4. Current Work
-- Phase 04.1 complete. Awaiting explicit project-owner authorization before beginning Phase 05.
+- Phase 05 complete. Awaiting explicit project-owner authorization before beginning Phase 06.
 
 ---
 
-## 5. Upcoming Work (Phase 03 — Subjects, Topics & Knowledge Structure)
-- Design and implement Subjects & Topics schema and knowledge hierarchies.
-- Curriculum modules and topic taxonomy modeling.
-- CRUD operations and subject workspace interaction.
+## 5. Upcoming Work (Phase 06 — Concept Extraction & Pedagogical Analysis)
+- Automatic concept and key insight extraction from conversational evidence.
+- Concept confidence scoring and misconception detection.
+- Learning event stream and mastery progression evaluation.
 
 ---
 
@@ -96,6 +106,10 @@
 - **ADR-008**: Documentation as an immutable build requirement.
 - **ADR-009**: Self-Managed Native MongoDB Session Architecture for authentication.
 - **ADR-010**: Deterministic Account Linking Policy for Google OAuth and Email OTP.
+- **ADR-011**: Subject and Topic Knowledge Hierarchy Domain Design.
+- **ADR-012**: Chat and Message Infrastructure Sequencing and Concurrency Design.
+- **ADR-013**: Syllabus Governance, Immutability and Topic Reconciliation.
+- **ADR-014**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
 
 ---
 

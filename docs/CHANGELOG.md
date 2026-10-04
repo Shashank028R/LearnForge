@@ -5,6 +5,48 @@ All notable changes to the LearnForge project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-04
+
+### Phase 05 — AI Gateway, Automatic Model Routing & Pedagogical Engine
+
+#### Added
+- **Centralized AI Gateway Subsystem (`server/src/ai/`)**:
+  - `AIGateway.js`: Central provider-neutral gateway orchestrating request validation, automatic model routing, execution, bounded retries with jitter, provider fallback chains, and telemetry recording.
+  - `aiRequest.js` & `aiResponse.js`: Request/response normalizers producing immutable, provider-agnostic payloads (`AIResponse`) with routing metadata, token usage, latency, and request IDs.
+  - `BaseProvider.js`: Abstract provider adapter with health state tracking, failure counters, and standardized error normalization (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
+  - `GeminiProvider.js`: Concrete adapter for Google Gemini models using official `@google/genai` (v2.27.0).
+  - `OpenAIProvider.js`: Concrete adapter for OpenAI models using official `openai` (v7.27.0).
+  - `AnthropicProvider.js`: Concrete adapter for Anthropic Claude models using official `@anthropic-ai/sdk` (v0.131.0).
+- **Task-Based Automatic Model Router (`ModelRouter.js`)**:
+  - Defined task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) and mapped each to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
+  - Automatic, deterministic provider selection without exposing model or provider options to the frontend.
+  - Resilience engine with bounded exponential backoff with jitter on transient failures (`429`, `503`, `ETIMEDOUT`) and provider fallback chains.
+  - Offline Socratic fallback engine (`model: 'socratic-engine'`) delivering deterministic responses when external API keys are unconfigured.
+- **Centralized Prompt Registry & Curriculum Context Isolation (`promptRegistry.js`)**:
+  - `generalLearningPrompt.js`: Socratic, patient, and pedagogically structured guidance.
+  - `pedagogicalExplanationPrompt.js`: Deep conceptual breakdowns with intuition, mechanics, misconceptions, and active recall checks.
+  - `syllabusGenerationPrompt.js`: Structured curriculum JSON generation.
+  - `knowledgeRelevanceClassificationPrompt.js`: Fast semantic relevance evaluation against active curriculum.
+  - **Curriculum Context Isolation**: Prompt assembly strictly queries approved syllabi (`status: 'approved'`). Draft and superseded versions are never injected as authoritative context.
+- **Chat Integration & Knowledge Relevance Governance (`chatController.js`)**:
+  - `sendMessage` and `createChat` invoke `generateAIExchange` through the AI Gateway.
+  - Populates `knowledgeContext: { relevance, disposition, subjectId, topicId }` on assistant messages.
+  - Off-topic inquiries receive helpful answers, but their `knowledgeContext.relevance` is marked `off_topic` and `disposition` is set to `excluded`, preserving conversational evidence while strictly preventing canonical note or topic knowledge pollution.
+  - Mounted `aiMessageRateLimiter` (30 req/min per IP) on chat endpoints.
+- **Frontend Polish (`ChatsPage.jsx`)**:
+  - Added assistant thinking skeleton during generation (`isSending`).
+  - Added retry affordance on failed user messages.
+  - Rendered off-topic warning banner strictly from backend metadata (`knowledgeContext.relevance === 'off_topic'`).
+  - Displayed calm pedagogical task metadata on assistant message bubbles.
+- **Testing & Verification**:
+  - 14 comprehensive unit and integration tests in `server/tests/aiGateway.test.js` (total 127 server tests passing 100%).
+  - 46 frontend tests passing in `client/` (total 46 client tests passing 100%).
+  - Total automated monorepo tests increased to 173 tests (100% passing).
+  - Clean Vite production build (`dist/` generated in 12.89s with 0 errors).
+  - Live Atlas API verification script (`verify_phase05_live.js`) exercising real Express HTTP APIs and Atlas database invariants across 8 stages.
+
+---
+
 ## [0.5.1] - 2026-10-04
 
 ### Phase 04.1 — Syllabus & Knowledge Governance Foundation

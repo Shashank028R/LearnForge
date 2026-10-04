@@ -1,0 +1,135 @@
+# Phase 05 — AI Gateway, Automatic Model Routing & Pedagogical Engine
+
+## Overview
+Phase 05 establishes the first production-grade, multi-provider AI architecture for LearnForge.
+
+### Core Architectural Principle
+> **Chat is the interaction layer. Knowledge is the product. AI is the pedagogical engine.**
+
+The AI subsystem is fully decoupled from Express controllers, React components, and database models. The application interfaces with AI purely in terms of **tasks** and **capabilities**, not vendor names.
+
+---
+
+## 1. Architecture & Flow
+
+```
+Client (Web UI)
+      ↓
+Chat API Controller (`chatController.js`)
+      ↓
+AI Gateway (`AIGateway.js`)
+      ↓
+Automatic Task-Based Model Router (`ModelRouter.js`)
+      ↓
+Provider Adapter (`BaseProvider.js` → `GeminiProvider` | `OpenAIProvider` | `AnthropicProvider`)
+      ↓
+Upstream AI Provider (Google Gemini / OpenAI / Anthropic Claude)
+```
+
+1. **Client Sends Message**: Client dispatches user prompt (`role: "user"`). Client never selects a provider or model.
+2. **User Message Persistence**: User message is atomically assigned a sequential sequence index (`sequenceIndex`) and saved to MongoDB.
+3. **Authoritative Context Assembly**: Server queries authenticated domain boundaries:
+   - `Subject` (`name`, `description`, `targetMasteryLevel`)
+   - `SyllabusVersion` (**Active Approved version only**; draft/superseded versions are never authoritative)
+   - `Topic` (`title`, `description`)
+   - Recent message conversation history
+4. **Task Classification & Routing**:
+   - Classifies relevance of input (`on_topic`, `off_topic`, `uncertain`).
+   - Dispatches `general_chat` or `pedagogical_explanation` through the `ModelRouter`.
+5. **Provider Execution & Normalization**: Adapter executes the model call and normalizes the response into an immutable `AIResponse` envelope.
+6. **Persistence & Knowledge Governance**:
+   - Assistant message is persisted with incremental `sequenceIndex`.
+   - Populates `knowledgeContext: { relevance, disposition, subjectId, topicId }`.
+   - Attaches sanitized `metadata: { provider, model, task, latencyMs, usage, routingDecision }`.
+   - If off-topic, disposition is set to `excluded` (preserving conversation evidence without creating canonical topic notes).
+
+---
+
+## 2. Task & Capability Taxonomy
+
+| Task Type | Required Capabilities | Default Preference Chain | Purpose |
+| :--- | :--- | :--- | :--- |
+| `general_chat` | `text_generation` | Gemini → OpenAI → Anthropic | Free-form learning dialogues, Q&A, and exploration. |
+| `pedagogical_explanation` | `text_generation`, `complex_reasoning` | OpenAI → Anthropic → Gemini | Structured conceptual deep-dives (intuition, mechanics, edge cases, active recall checks). |
+| `syllabus_generation` | `structured_output`, `complex_reasoning` | Anthropic → OpenAI → Gemini | Comprehensive curriculum planning and hierarchical topic structuring. |
+| `knowledge_relevance_classification` | `fast_classification`, `structured_output` | Gemini → OpenAI → Anthropic | Fast semantic evaluation of message alignment with active syllabus scope. |
+
+---
+
+## 3. Provider Adapters & Normalization
+
+All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) and implement uniform execution, error normalization, and health monitoring:
+
+1. **`GeminiProvider`** (`server/src/ai/providers/geminiProvider.js`): Uses official `@google/genai` (v2.27.0). Defaults to `gemini-2.5-flash`.
+2. **`OpenAIProvider`** (`server/src/ai/providers/openaiProvider.js`): Uses official `openai` (v7.27.0). Defaults to `gpt-4o-mini`.
+3. **`AnthropicProvider`** (`server/src/ai/providers/anthropicProvider.js`): Uses official `@anthropic-ai/sdk` (v0.131.0). Defaults to `claude-3-5-sonnet-latest`.
+
+### Normalized Response Envelope
+```json
+{
+  "text": "Socratic explanation...",
+  "provider": "gemini",
+  "model": "gemini-2.5-flash",
+  "task": "pedagogical_explanation",
+  "usage": {
+    "promptTokens": 120,
+    "completionTokens": 240,
+    "totalTokens": 360
+  },
+  "finishReason": "stop",
+  "latencyMs": 412,
+  "routingMetadata": {
+    "selectedProvider": "gemini",
+    "selectedModel": "gemini-2.5-flash",
+    "reason": "task_policy_pedagogical_explanation",
+    "attempts": 1
+  },
+  "requestId": "req_1728020000000_abc123"
+}
+```
+
+---
+
+## 4. Error Normalization & Resilience Strategy
+
+- **`AIAuthenticationError`** (HTTP 401/403, invalid keys) → **Permanent / Non-Retryable**.
+- **`AIInvalidRequestError`** (HTTP 400, malformed prompts) → **Permanent / Non-Retryable**.
+- **`AIRateLimitedError`** (HTTP 429, resource exhausted) → **Transient / Retryable**.
+- **`AITimeoutError`** (ETIMEDOUT, network abort) → **Transient / Retryable**.
+- **`AIProviderUnavailableError`** (HTTP 500/502/503/504) → **Transient / Retryable**.
+- **`AIAllProvidersFailedError`** → Terminal error when all configured providers are exhausted.
+
+### Bounded Retries with Exponential Jitter & Fallback
+1. If a primary provider encounters a retryable error, the Gateway retries up to `maxRetries` (default 2) with exponential backoff and randomized jitter.
+2. If retries are exhausted on a provider or the provider is marked degraded (≥3 consecutive failures), the Gateway dynamically falls back to the next provider in the preference chain.
+3. If no external API keys are configured (or in test environments), the Gateway automatically delivers an offline Socratic fallback response (`engine: 'socratic-engine'`), preventing chat disruption.
+
+---
+
+## 5. Security & Knowledge Boundaries
+
+1. **Credential Gate**:
+   - Zero hardcoded keys or fake test keys in codebase or test fixtures.
+   - Credentials read exclusively from environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+   - `.env.example` contains placeholders only.
+2. **Tenant Isolation**:
+   - Server validates that `chatId`, `subjectId`, and `topicId` strictly belong to `req.user._id`.
+   - Cross-tenant context leakage is structurally impossible.
+3. **Role Trust Boundary**:
+   - Frontend cannot submit assistant or system messages directly. Server assigns sequence indexes and creates assistant messages.
+4. **Knowledge Governance Invariants**:
+   - **Approved Syllabus Context Only**: Draft and superseded syllabi are never presented to the AI as authoritative curriculum context.
+   - **Off-Topic Protection**: Off-topic user questions are answered politely, but `knowledgeContext.disposition` is set to `excluded` and never automatically converted to canonical notes or topic knowledge.
+
+---
+
+## 6. Verification Summary
+
+- **Unit & Mocked Tests**: 127/127 backend tests passing (`server/tests/aiGateway.test.js`, `server/tests/chats.test.js`, etc.).
+- **Client Tests**: 46/46 frontend tests passing (`client/src/App.test.jsx`, `client/src/pages/Chats.test.jsx`, etc.).
+- **Client Production Build**: Passed cleanly with Vite (`dist/` built in 12.89s).
+- **MongoDB Atlas Live Integration**: `server/scripts/verify_phase05_live.js` verified end-to-end against live Express API and Atlas cluster.
+- **External AI Providers**:
+  - Gemini: `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
+  - OpenAI: `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)
+  - Anthropic: `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED` (No live external API key in local `.env`)

@@ -10,6 +10,7 @@ import {
 } from '../controllers/chatController.js';
 import { authenticateUser } from '../middleware/auth.js';
 import { requireDatabase } from '../middleware/databaseCheck.js';
+import { aiMessageRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ router.use('/chats', requireDatabase, authenticateUser);
 
 // Chats CRUD Endpoints
 router.get('/chats', listChats);
-router.post('/chats', createChat);
+router.post('/chats', aiMessageRateLimiter, createChat);
 router.get('/chats/:chatId', getChat);
 router.put('/chats/:chatId', updateChat);
 router.patch('/chats/:chatId', updateChat);
@@ -26,6 +27,6 @@ router.delete('/chats/:chatId', deleteChat);
 
 // Chat Messages Endpoints
 router.get('/chats/:chatId/messages', listMessages);
-router.post('/chats/:chatId/messages', sendMessage);
+router.post('/chats/:chatId/messages', aiMessageRateLimiter, sendMessage);
 
 export default router;

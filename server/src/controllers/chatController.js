@@ -4,6 +4,8 @@ import { Message } from '../models/Message.js';
 import { Subject } from '../models/Subject.js';
 import { Topic } from '../models/Topic.js';
 import { Annotation } from '../models/Annotation.js';
+import { SyllabusVersion } from '../models/SyllabusVersion.js';
+import { aiGateway, AI_TASK_TYPES, AIError } from '../ai/index.js';
 
 /**
  * Formats a chat document for standard API response envelopes.
@@ -98,6 +100,103 @@ function generateAssistantPrompt(userContent, subjectName = null, topicTitle = n
   }
 
   return `${contextPrefix}That is an intriguing question. To break this down Socratically: what is the fundamental principle behind "${userContent.trim().slice(0, 60)}${userContent.trim().length > 60 ? '...' : ''}", and how does it relate to what you already understand?`;
+}
+
+/**
+ * Executes AI generation with contextual knowledge governance and relevance classification (Phase 05)
+ */
+async function generateAIExchange({
+  chat,
+  userContent,
+  subjectDoc = null,
+  topicDoc = null,
+  activeSyllabusDoc = null,
+  recentMessages = [],
+  requestId = 'unknown',
+}) {
+  let relevanceClassification = 'unclassified';
+  let disposition = 'unclassified';
+
+  // 1. Run Knowledge Relevance Classification if subject context and active approved syllabus are available
+  if (subjectDoc && activeSyllabusDoc) {
+    try {
+      const classRes = await aiGateway.generate({
+        task: AI_TASK_TYPES.KNOWLEDGE_RELEVANCE_CLASSIFICATION,
+        messages: [{ role: 'user', content: userContent.trim() }],
+        subjectContext: subjectDoc,
+        syllabusContext: activeSyllabusDoc,
+        topicContext: topicDoc,
+        requestId,
+        timeoutMs: 10000,
+      });
+
+      if (classRes?.classification?.relevance) {
+        relevanceClassification = classRes.classification.relevance;
+      }
+    } catch (_) {
+      relevanceClassification = 'uncertain';
+    }
+  }
+
+  // Set disposition based on relevance
+  if (relevanceClassification === 'off_topic') {
+    disposition = 'excluded';
+  } else if (relevanceClassification === 'on_topic') {
+    disposition = 'candidate';
+  } else {
+    disposition = 'unclassified';
+  }
+
+  // 2. Generate Assistant Response via AI Gateway
+  let aiResponse;
+  try {
+    aiResponse = await aiGateway.generate({
+      task: AI_TASK_TYPES.GENERAL_CHAT,
+      messages: [
+        ...recentMessages.map((m) => ({ role: m.role, content: m.content })),
+        { role: 'user', content: userContent.trim() },
+      ],
+      subjectContext: subjectDoc,
+      syllabusContext: activeSyllabusDoc,
+      topicContext: topicDoc,
+      requestId,
+    });
+  } catch (err) {
+    // If AI providers are unconfigured or failed with authentication/all-providers-failed error, fallback gracefully
+    if (err.code === 'AI_ALL_PROVIDERS_FAILED' || err.code === 'AI_AUTHENTICATION_FAILED') {
+      const fallbackText = generateAssistantPrompt(userContent.trim(), subjectDoc?.name, topicDoc?.title);
+      aiResponse = {
+        text: fallbackText,
+        provider: 'fallback',
+        model: 'socratic-engine',
+        task: AI_TASK_TYPES.GENERAL_CHAT,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        finishReason: 'fallback',
+        latencyMs: 5,
+        routingMetadata: { selectedProvider: 'fallback', selectedModel: 'socratic-engine', reason: 'unconfigured_fallback', attempts: 1 },
+      };
+    } else {
+      throw err;
+    }
+  }
+
+  return {
+    assistantContent: aiResponse.text,
+    knowledgeContext: {
+      relevance: relevanceClassification,
+      subjectId: chat.subjectId || null,
+      topicId: chat.topicId || null,
+      disposition,
+    },
+    metadata: {
+      provider: aiResponse.provider,
+      model: aiResponse.model,
+      task: aiResponse.task,
+      latencyMs: aiResponse.latencyMs,
+      usage: aiResponse.usage,
+      routingDecision: aiResponse.routingMetadata,
+    },
+  };
 }
 
 /**
@@ -306,6 +405,15 @@ export async function createChat(req, res, next) {
 
     // Process initial message if provided
     if (initialMessage && typeof initialMessage === 'string' && initialMessage.trim().length > 0) {
+      let activeSyllabusDoc = null;
+      if (subjectDoc) {
+        activeSyllabusDoc = await SyllabusVersion.findOne({
+          subjectId: subjectDoc._id,
+          userId: req.user._id,
+          status: 'approved',
+        });
+      }
+
       const userMessage = await Message.create({
         chatId: chat._id,
         userId: req.user._id,
@@ -316,11 +424,15 @@ export async function createChat(req, res, next) {
       });
       messages.push(formatMessageResponse(userMessage));
 
-      const assistantContent = generateAssistantPrompt(
-        initialMessage,
-        subjectDoc?.name,
-        topicDoc?.title
-      );
+      const { assistantContent, knowledgeContext, metadata: aiMeta } = await generateAIExchange({
+        chat,
+        userContent: initialMessage.trim(),
+        subjectDoc,
+        topicDoc,
+        activeSyllabusDoc,
+        recentMessages: [],
+        requestId: req.id,
+      });
 
       const assistantMessage = await Message.create({
         chatId: chat._id,
@@ -329,7 +441,8 @@ export async function createChat(req, res, next) {
         content: assistantContent,
         sequenceIndex: 1,
         status: 'sent',
-        metadata: { engine: 'phase-04-socratic-preview' },
+        knowledgeContext,
+        metadata: aiMeta,
       });
       messages.push(formatMessageResponse(assistantMessage));
 
@@ -918,11 +1031,35 @@ export async function sendMessage(req, res, next) {
       });
     }
 
-    const subjectName = chat.subjectId && typeof chat.subjectId === 'object' ? chat.subjectId.name : null;
-    const topicTitle = chat.topicId && typeof chat.topicId === 'object' ? chat.topicId.title : null;
+    const subjectDoc = chat.subjectId && typeof chat.subjectId === 'object' ? chat.subjectId : null;
+    const topicDoc = chat.topicId && typeof chat.topicId === 'object' ? chat.topicId : null;
 
-    // Phase 04 Deterministic Socratic Preview (NOT an external AI model integration)
-    const assistantContent = generateAssistantPrompt(content.trim(), subjectName, topicTitle);
+    let activeSyllabusDoc = null;
+    if (chat.subjectId) {
+      activeSyllabusDoc = await SyllabusVersion.findOne({
+        subjectId: subjectDoc ? subjectDoc._id : chat.subjectId,
+        userId: req.user._id,
+        status: 'approved',
+      });
+    }
+
+    // Load recent message history for conversational context
+    const recentMessagesDocs = await Message.find({ chatId: chat._id, userId: req.user._id })
+      .sort({ sequenceIndex: -1 })
+      .limit(10)
+      .lean();
+    recentMessagesDocs.reverse();
+
+    // Generate AI exchange with automatic task routing and relevance classification
+    const { assistantContent, knowledgeContext, metadata: aiMeta } = await generateAIExchange({
+      chat,
+      userContent: content.trim(),
+      subjectDoc,
+      topicDoc,
+      activeSyllabusDoc,
+      recentMessages: recentMessagesDocs,
+      requestId: req.id || 'unknown',
+    });
 
     const countToReserve = 2;
     let formattedUser = null;
@@ -963,7 +1100,7 @@ export async function sendMessage(req, res, next) {
         : (reservedChat.messagesCount || 0);
 
       try {
-        // 2. Insert user message and assistant preview message with reserved sequence numbers
+        // 2. Insert user message and assistant message with reserved sequence numbers
         const userMessage = await Message.create({
           chatId: chat._id,
           userId: req.user._id,
@@ -981,7 +1118,8 @@ export async function sendMessage(req, res, next) {
           content: assistantContent,
           sequenceIndex: baseSequenceIndex + 1,
           status: 'sent',
-          metadata: { engine: 'phase-04-socratic-preview' },
+          knowledgeContext,
+          metadata: aiMeta,
         });
 
         formattedUser = formatMessageResponse(userMessage);

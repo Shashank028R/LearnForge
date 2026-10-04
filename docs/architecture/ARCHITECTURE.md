@@ -217,7 +217,47 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
   5. Canonical topic knowledge (`Topic.knowledgeState`)
   6. Off-topic conversation (`Message.knowledgeContext.relevance: 'off_topic'`)
   7. User-created comments/tags (`Annotation`)
-- `Annotation` model allows users to attach subjective commentary and semantic tags to messages and chats without polluting authoritative conversation evidence or canonical topic knowledge.
+### 6.5 AI Gateway & Automatic Model Routing Architecture (Phase 05)
+
+```text
+Client (Web UI)
+      │ (POST /chats or POST /chats/:chatId/messages)
+      ▼
+Chat Controller (`chatController.js`)
+      │
+      ▼
+Authoritative Context Boundary Construction
+ (Queries Authenticated User's Subject + Active Approved Syllabus + Focal Topic)
+      │
+      ▼
+AI Gateway (`server/src/ai/gateway/aiGateway.js`)
+      │
+      ▼
+Automatic Model Router (`server/src/ai/router/modelRouter.js`)
+ (Routes by Task Capability: general_chat, pedagogical_explanation, syllabus_generation, knowledge_relevance_classification)
+      │
+      ├── Gemini Adapter (`GeminiProvider.js` → @google/genai)
+      ├── OpenAI Adapter (`OpenAIProvider.js` → openai)
+      └── Anthropic Adapter (`AnthropicProvider.js` → @anthropic-ai/sdk)
+      │
+      ▼
+Normalized AI Response (`AIResponse`) & Error Normalization
+ (Bounded Retries with Jitter → Provider Fallback Chain → Socratic Engine Fallback)
+      │
+      ▼
+Message Persistence with Knowledge Relevance Classification
+ (Assistant Message with sequenceIndex, knowledgeContext, metadata, and zero canonical note mutation)
+```
+
+- **Core Principle**: "Chat is the interaction layer. Knowledge is the product. AI is the pedagogical engine."
+- **Task & Capability Taxonomy**:
+  - `general_chat`: Multi-turn conversational learning (`text_generation`).
+  - `pedagogical_explanation`: Conceptual breakdowns with intuition, mechanics, misconceptions, and active recall checks (`text_generation`, `complex_reasoning`).
+  - `syllabus_generation`: Structured curriculum planning (`structured_output`, `complex_reasoning`).
+  - `knowledge_relevance_classification`: Fast semantic classification of whether user input is `on_topic`, `off_topic`, or `uncertain` (`fast_classification`).
+- **Server Trust Boundary**: Zero frontend provider or model dropdowns. The server selects the optimal provider based on task capabilities, configured priorities (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), and provider health.
+- **Resilience Strategy**: Bounded retries with exponential jitter on transient failures (`429`, `503`, `ETIMEDOUT`), provider fallback on failure, and immediate offline Socratic engine fallback when external credentials are not configured.
+- **Authoritative Syllabus Context**: In prompt construction (`promptRegistry.js`), only explicitly approved syllabus versions (`status: 'approved'`) are treated as authoritative curriculum. Draft and superseded versions are never injected as authoritative context.
 
 ---
 
@@ -228,7 +268,7 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - **Knowledge Hierarchy Domain (Phase 03 - Implemented)**: Subjects, topics, sequential ordering, and embedded knowledge state foundation.
 - **Conversation Domain (Phase 04 - Implemented)**: Chat sessions, chronological message sequencing (`sequenceIndex`), topic/subject context linking, and responsive two-pane workspace.
 - **Syllabus & Knowledge Governance Domain (Phase 04.1 - Implemented)**: Multi-version syllabus lifecycle, draft reconciliation, topic ID stability, off-topic data contract, and user annotations.
-- **AI Domain (Phase 05 - Planned)**: AI Gateway, task classification, and provider adapters (Gemini, OpenAI, Anthropic).
+- **AI Domain (Phase 05 - Implemented)**: Centralized AI Gateway, task-based model router, provider adapters (Gemini, OpenAI, Anthropic), normalized envelopes, retry/fallback engine, and knowledge relevance governance.
 - **Knowledge Extraction Domain (Phase 06 - Planned)**: Concept extraction, confidence tracking, and misconception detection.
 - **Notes Domain (Phase 07 - Planned)**: Structured block notes, versioning, and diff proposals.
 - **Study Mode Domain (Phase 08 - Planned)**: Socratic teacher logic, session objectives, and mastery pacing.

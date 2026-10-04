@@ -2,6 +2,59 @@
 
 This log is the permanent chronological engineering journal for the LearnForge project. Every phase records its objective, work performed, architectural decisions, testing, problems, and solutions.
 
+## [Phase 05] AI Gateway, Automatic Model Routing & Pedagogical Engine
+
+- **Date**: October 4, 2026
+- **Status**: Completed
+- **Phase**: Phase 05 — AI Gateway, Automatic Model Routing & Pedagogical Engine
+- **Core Principle**: *"Chat is the interaction layer. Knowledge is the product. AI is the pedagogical engine."*
+- **Objective**: Build the first production-grade multi-provider AI architecture for LearnForge, featuring a centralized provider-neutral AI Gateway abstraction, official concrete provider adapters (Google Gemini, OpenAI, Anthropic Claude), task-based automatic model routing with zero client-side provider selection, bounded exponential backoff with jitter and fallback chains, curriculum context boundary enforcement, knowledge relevance classification without canonical knowledge pollution, safe redacted telemetry, and complete integration with the Phase 04 chat messaging pipeline.
+
+### Work Performed
+1. **Architectural Foundations & ADR-014**:
+   - Decoupled all AI provider logic from controllers, domain models, and frontend components into a centralized subsystem (`server/src/ai/`).
+   - Defined structured task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) and mapped each to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
+   - Established server-as-sole-trust-boundary: client never chooses models or providers; routing is governed automatically and deterministically by the `ModelRouter`.
+   - Codified ADR-014 explaining the centralized gateway, provider adapters, task taxonomy, error normalization, and strict separation between conversational evidence and canonical topic knowledge.
+2. **AI Gateway & Provider Adapters**:
+   - `server/src/ai/gateway/aiGateway.js`: Central gateway coordinating schema validation, route selection, request execution, bounded retries with jitter, provider fallback chains, and telemetry recording.
+   - `server/src/ai/schemas/aiRequest.js`: Validates and normalizes incoming requests into standard schema envelopes.
+   - `server/src/ai/schemas/aiResponse.js`: Formats uniform, provider-agnostic response objects with routing metadata, token usage, latency, and request IDs.
+   - `server/src/ai/providers/baseProvider.js`: Base adapter class with health state tracking (healthy/degraded), failure counters, and standardized error normalization (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
+   - `server/src/ai/providers/geminiProvider.js`: Adapter for Google Gemini models using official `@google/genai` (v2.27.0).
+   - `server/src/ai/providers/openaiProvider.js`: Adapter for OpenAI models using official `openai` (v7.27.0).
+   - `server/src/ai/providers/anthropicProvider.js`: Adapter for Anthropic Claude models using official `@anthropic-ai/sdk` (v0.131.0).
+   - `server/src/ai/router/modelRouter.js`: Automatic task-based router selecting optimal providers by capability matching, health status, and fallback chains.
+   - `server/src/ai/telemetry/aiTelemetry.js`: Structured request logging and token metrics tracking with strict redaction of API keys, authorization headers, and raw user conversation bodies.
+3. **Prompt Architecture & Curriculum Context Isolation**:
+   - Centralized prompt registry in `server/src/ai/prompts/promptRegistry.js`:
+     - `generalLearningPrompt.js`: Socratic, patient, and pedagogically structured guidance.
+     - `pedagogicalExplanationPrompt.js`: Deep explanations with intuition, mechanics, misconceptions, and active recall checks.
+     - `syllabusGenerationPrompt.js`: Structured curriculum JSON generation.
+     - `knowledgeRelevanceClassificationPrompt.js`: Fast semantic classification of relevance against active curriculum.
+   - **Curriculum Context Isolation**: Prompt assembly strictly queries approved syllabi (`status: 'approved'`). Draft and superseded versions are never injected as authoritative context.
+4. **Chat Integration & Knowledge Relevance Governance**:
+   - Updated `server/src/controllers/chatController.js`:
+     - `sendMessage` and `createChat` invoke `generateAIExchange` through the AI Gateway.
+     - Populates `knowledgeContext: { relevance, disposition, subjectId, topicId }` on assistant messages.
+     - Off-topic inquiries receive helpful answers, but their `knowledgeContext.relevance` is marked `off_topic` and `disposition` is set to `excluded`, preserving conversational evidence while strictly preventing canonical note or topic knowledge pollution.
+     - Implemented graceful offline Socratic engine fallback when external API keys are unconfigured or providers fail.
+   - Mounted `aiMessageRateLimiter` (30 req/min per IP) on chat message generation endpoints.
+5. **Frontend Polish (`client/src/pages/ChatsPage.jsx`)**:
+   - Added assistant thinking skeleton during AI generation (`isSending`).
+   - Added retry affordance on failed user messages.
+   - Rendered off-topic warning banner strictly from backend metadata (`knowledgeContext.relevance === 'off_topic'`).
+   - Displayed calm pedagogical task metadata on assistant message bubbles.
+6. **Testing & Verification**:
+   - Added 14 comprehensive unit and integration tests in `server/tests/aiGateway.test.js` covering schema normalization, provider adapters, task-based routing, retry/fallback behavior, prompt assembly, and telemetry (server total: 127 tests passing 100%).
+   - All 46 frontend tests in `client/` passing (client total: 46 tests passing 100%).
+   - Total Monorepo Tests: 173 automated tests passing.
+   - Clean Vite production build (`dist/` generated in 12.89s with 0 errors).
+   - Live integration script `verify_phase05_live.js` fully verified against running backend (`http://localhost:5000`) and MongoDB Atlas cluster.
+   - External Live Provider Status: Reported unconfigured external keys as `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`.
+
+---
+
 ## [Phase 04.1] Syllabus & Knowledge Governance Foundation
 
 - **Date**: October 4, 2026

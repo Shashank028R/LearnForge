@@ -465,3 +465,93 @@ LearnForge enforces that `Subject.topicsCount` strictly reflects the count of **
 2. If a user manually creates topics before a syllabus is approved, those topics are persisted with `isActiveInSyllabus: false` so that free-form conversation and notes can reference them, but `Subject.topicsCount` remains `0`.
 3. When a syllabus is later drafted and approved containing those topics, matching topics transition to `isActiveInSyllabus: true` with their stable `_id` and learning history preserved, and `Subject.topicsCount` updates to match the count of active syllabus topics.
 
+---
+
+## 9. Phase 05 — AI Gateway, Automatic Model Routing & Pedagogical Engine
+
+### Q63: What is the core architectural principle of Phase 05?
+**Answer**:  
+> **"Chat is the interaction layer. Knowledge is the product. AI is the pedagogical engine."**  
+The AI provider is never coupled directly to controllers, React components, or domain models. The application thinks strictly in terms of **tasks** and **capabilities**, not provider names.
+
+### Q64: Why does LearnForge use an AI Gateway rather than directly invoking provider SDKs in controllers?
+**Answer**:  
+Directly calling provider SDKs inside Express controllers creates severe architectural liabilities:
+1. **Vendor Lock-in**: Upstream API changes or SDK breaking upgrades break controllers.
+2. **Scattered Prompts & Policies**: Prompts become fragmented and unversioned across endpoints.
+3. **No Centralized Reliability**: Implementing retries, exponential backoff, and fallback across multiple endpoints leads to duplicated or inconsistent error handling.
+4. **Poor Observability**: Lack of unified token telemetry, latency measurement, and correlation ID tracing.  
+The centralized `AIGateway` (`server/src/ai/gateway/aiGateway.js`) abstracts all LLM calls behind a uniform interface (`generate(request)`), emitting normalized responses (`AIResponse`) regardless of the underlying vendor.
+
+### Q65: Why does LearnForge use automatic model routing rather than frontend model selection dropdowns?
+**Answer**:  
+1. **User Focus & Calm Workspace**: Students and developers come to LearnForge to master technical subjects, not to configure machine learning infrastructure or evaluate model trade-offs.
+2. **Optimization by Task**: Different tasks demand different capabilities (e.g. `pedagogical_explanation` requires complex multi-step reasoning, whereas `knowledge_relevance_classification` requires ultra-fast, low-latency semantic categorization).
+3. **Dynamic Health & Availability**: If OpenAI or Gemini experiences an outage or rate limit spike, the server automatically routes around degraded providers. A static client-selected model would simply fail.
+4. **Security & Cost Governance**: The server remains the sole trust boundary, preventing malicious clients from forcing expensive models on trivial tasks.
+
+### Q66: How does LearnForge define its task taxonomy and capability requirements?
+**Answer**:  
+LearnForge establishes a typed task taxonomy in `server/src/ai/schemas/tasks.js`:
+- `general_chat` → Requires `text_generation` (Default preference: Gemini → OpenAI → Anthropic).
+- `pedagogical_explanation` → Requires `text_generation`, `complex_reasoning` (Default preference: OpenAI → Anthropic → Gemini).
+- `syllabus_generation` → Requires `structured_output`, `complex_reasoning` (Default preference: Anthropic → OpenAI → Gemini).
+- `knowledge_relevance_classification` → Requires `fast_classification`, `structured_output` (Default preference: Gemini → OpenAI → Anthropic).
+
+### Q67: How does the AI Gateway handle transient provider failures, rate limits, and retries?
+**Answer**:  
+1. **Error Normalization**: Providers normalize SDK exceptions into structured classes (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
+2. **Selective Retry**: Only retryable errors (`AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`) trigger retries. Non-retryable permanent errors (`401 Auth`, `400 Invalid Request`) terminate immediately without wasting resources.
+3. **Bounded Backoff with Jitter**: Retries apply exponential backoff plus randomized jitter up to `maxRetries` (default 2).
+4. **Degradation & Fallback Chain**: If a provider fails all retries or accumulates ≥3 consecutive failures, the Gateway marks it degraded and routes subsequent attempts to the next configured provider.
+
+### Q68: How does the Gateway ensure that draft syllabi are not treated as authoritative curriculum?
+**Answer**:  
+In `promptRegistry.js`, context assembly strictly inspects the syllabus status. If a syllabus is in `draft` or `superseded` state, it is omitted from the authoritative curriculum section of the system prompt. Only explicitly approved syllabi (`status: 'approved'`) are injected as authoritative Subject curriculum.
+
+### Q69: How is knowledge relevance classification performed, and how are off-topic interactions governed?
+**Answer**:  
+When a user sends a message in a subject with an approved syllabus:
+1. The Gateway dispatches `knowledge_relevance_classification` to classify the input as `on_topic`, `off_topic`, or `uncertain`.
+2. For `off_topic` inputs:
+   - The assistant answers the question helpfully (curiosity is not penalized).
+   - The message is persisted with `knowledgeContext.relevance: 'off_topic'` and `disposition: 'excluded'`.
+   - The frontend renders an informative off-topic notice based strictly on backend metadata.
+   - **Crucial Rule**: Off-topic conversations remain conversational evidence and are strictly excluded from canonical topic knowledge and future note generation.
+
+### Q70: What is the Socratic Fallback Engine and why is it important for offline testing and local reliability?
+**Answer**:  
+When external AI API keys are not supplied in `.env` or all upstream providers are unreachable, `chatController` intercepts `AI_ALL_PROVIDERS_FAILED` or `AI_AUTHENTICATION_FAILED` and delivers a deterministic Socratic response (`model: 'socratic-engine'`). This ensures complete offline development resilience, automated test stability, and zero frontend crashes.
+
+### Q71: How does LearnForge protect credentials and prevent secret leakage in telemetry/logs?
+**Answer**:  
+1. **Strict Credential Gate**: Zero hardcoded keys or fake API keys in code or test files. All credentials are read from server environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+2. **Redacted Telemetry**: `AITelemetry` logs structured latency, task, provider, and token counts with correlation request IDs (`requestId`) while stripping authentication headers, tokens, and raw conversation bodies.
+
+### Q72: How are sequence numbers and transactional message invariants preserved during AI generation?
+**Answer**:  
+1. The user message is persisted first with an atomically reserved sequence index (`sequenceIndex = 0` for turn 1).
+2. Authoritative context is queried and passed to the AI Gateway.
+3. Upon AI response normalization, the assistant message is persisted with the subsequent sequence index (`sequenceIndex = 1`).
+4. If an AI call fails, the user message remains safely recorded with `status: 'sent'` or `status: 'error'`, allowing instant retry without duplicate sequence collisions or database corruption.
+
+### Q73: Why did you implement official SDK adapters for Gemini, OpenAI, and Anthropic rather than generic HTTP fetch?
+**Answer**:  
+Official SDKs (`@google/genai`, `openai`, `@anthropic-ai/sdk`) provide:
+- Typed request/response interfaces and official model parameter mapping.
+- Built-in HTTP connection pooling and keep-alive optimization.
+- Accurate handling of provider-specific token usage metadata and error object schemas.
+- Future-proof streaming and function-calling capabilities for later phases.
+
+### Q74: What is the Credential Gate and how does it distinguish between automated mocks and live provider verification?
+**Answer**:  
+The Credential Gate is a mandatory engineering standard:
+- Unit and integration tests must run deterministically via mocks/spies without pretending they constitute live network verification.
+- Real live provider verification requires genuine user-supplied credentials in local environment variables.
+- When live credentials are unconfigured, the verification status is explicitly declared as `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`, ensuring total engineering honesty without fabricated verification claims.
+
+### Q75: Why are canonical notes not automatically extracted in Phase 05?
+**Answer**:  
+Phase 05 is strictly scoped to the AI Gateway, automatic model routing, and the pedagogical engine. Automatic concept extraction belongs to Phase 06, structured block notes belong to Phase 07, and Study Mode enforcement belongs to Phase 08. Adhering to progressive phase boundaries guarantees rock-solid architectural foundations before building higher-level intelligence pipelines.
+
+

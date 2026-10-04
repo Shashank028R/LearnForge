@@ -56,6 +56,9 @@ Every package added to the project must be documented in this registry before th
 | `mongoose` | `^8.12.1` | `8.24.4` | MongoDB Object Data Modeling (ODM), schema validation, indexes | Schema integrity, middleware hooks, rich query builder for document model | Native MongoDB driver, Prisma | Runtime |
 | `morgan` | `^1.10.0` | `1.12.1` | HTTP request logging middleware with response time and correlation IDs | Standard, lightweight logging for developer observability | Pino, Winston | Runtime |
 | `nodemailer` | `^10.0.14` | `10.0.14` | Real SMTP email transport for delivering 6-digit OTP verification codes | Standard, battle-tested, zero-native-dependency SMTP library for Node.js | `@sendgrid/mail`, `@resend/node`, AWS SES SDK | Runtime |
+| `@google/genai` | `^2.27.0` | `2.27.0` | Official Google GenAI SDK for Gemini models adapter | Current official Google GenAI Node.js SDK with full multimodal & text support | Direct REST API via fetch | Runtime |
+| `openai` | `^7.27.0` | `7.27.0` | Official OpenAI SDK for GPT models adapter | Official, strongly-typed OpenAI Node.js SDK with full chat completion APIs | Direct REST API via fetch | Runtime |
+| `@anthropic-ai/sdk` | `^0.131.0` | `0.131.0` | Official Anthropic SDK for Claude models adapter | Official Anthropic Node.js SDK with standard messages API support | Direct REST API via fetch | Runtime |
 
 ### Development & Testing Dependencies
 
@@ -83,6 +86,21 @@ During Phase 03, a strict dependency discipline was maintained:
 - All HTTP routing, validation, error handling, and authorization utilize native Express (`^4.21.2`) and Node.js built-ins (`crypto.randomUUID`).
 - Frontend views (`SubjectsPage`, `SubjectDetailPage`, and modals) leverage existing React (`^19.0.0`) and the Phase 02 UI primitives suite.
 - Both test suites utilize existing Vitest (`^3.0.7`) and React Testing Library (`^16.2.0`).
+
+## Phase 04 & 04.1 — Chat Infrastructure & Syllabus Governance Evaluation
+
+During Phases 04 and 04.1, strict dependency discipline was maintained:
+- **Zero new external packages added**.
+- Native MongoDB/Mongoose atomic operations (`$inc`, sequence counters, partial unique indexes, multi-document ACID transactions) handled chat messaging, sequence guarantees, and syllabus version reconciliation.
+- Client message rendering and annotations used existing React primitives and Tailwind design tokens.
+
+## Phase 05 — AI Gateway, Provider Adapters & Automatic Routing Evaluation
+
+During Phase 05, official LLM provider SDKs were integrated to power the multi-provider AI Gateway:
+- **`@google/genai` (`^2.27.0` / `2.27.0`)**: Official Google GenAI SDK for Gemini models adapter (`gemini-2.5-flash`).
+- **`openai` (`^7.27.0` / `7.27.0`)**: Official OpenAI Node.js SDK for GPT models adapter (`gpt-4o-mini`).
+- **`@anthropic-ai/sdk` (`^0.131.0` / `0.131.0`)**: Official Anthropic SDK for Claude models adapter (`claude-3-5-sonnet-latest`).
+- **Zero frontend AI packages added**: All AI interactions, provider routing, and error normalizations are encapsulated exclusively on the backend (`server/src/ai/`).
 
 ---
 

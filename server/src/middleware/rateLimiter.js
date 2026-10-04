@@ -57,3 +57,16 @@ export const googleAuthLimiter = rateLimit({
   skip: (req) => config.isTest && req.headers['x-bypass-rate-limit'] === 'test-bypass',
   handler: createRateLimitHandler('AUTH_RATE_LIMITED', 'Too many authentication attempts from this IP. Please try again later.'),
 });
+
+/**
+ * Rate limiter for AI message generation & chat exchanges (Phase 05):
+ * Max 30 messages per minute per IP.
+ */
+export const aiMessageRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: config.isTest ? 500 : 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => config.isTest && req.headers['x-bypass-rate-limit'] === 'test-bypass',
+  handler: createRateLimitHandler('AI_RATE_LIMITED', 'Too many AI requests. Please slow down and try again in a moment.'),
+});

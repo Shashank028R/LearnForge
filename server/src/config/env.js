@@ -34,4 +34,17 @@ export const config = {
   otpExpiryMinutes: parseInt(process.env.OTP_EXPIRY_MINUTES || '10', 10),
   otpResendCooldownSeconds: parseInt(process.env.OTP_RESEND_COOLDOWN_SECONDS || '60', 10),
   otpMaxAttempts: parseInt(process.env.OTP_MAX_ATTEMPTS || '5', 10),
+
+  // AI Gateway & Provider Configuration (Phase 05)
+  ai: {
+    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    openaiApiKey: process.env.OPENAI_API_KEY || '',
+    openaiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+    anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-latest',
+    defaultTimeoutMs: parseInt(process.env.AI_DEFAULT_TIMEOUT_MS || '30000', 10),
+    maxRetries: parseInt(process.env.AI_MAX_RETRIES || '2', 10),
+    defaultProviderPriority: (process.env.AI_PROVIDER_PRIORITY || 'gemini,openai,anthropic').split(',').map((p) => p.trim()),
+  },
 };

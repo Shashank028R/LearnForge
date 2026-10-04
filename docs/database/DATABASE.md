@@ -327,3 +327,5 @@ Represents user-created auxiliary metadata (comments and tags) attached to a cha
    - If a concurrent approval request supersedes an in-flight approval, CAS guards detect staleness and re-sync canonical topics to the true winning approved version, preventing stale mutator state corruption.
 9. **Auxiliary Annotations vs Canonical Knowledge**:
    User comments and tags stored in `Annotation` are auxiliary metadata attached to raw conversational evidence. They are strictly segregated from `Topic.knowledgeState` and future canonical notes.
+10. **AI Interaction & Knowledge Relevance Metadata (Phase 05)**:
+    Assistant `Message` documents persist normalized `metadata: { provider, model, task, latencyMs, usage, routingDecision }` and `knowledgeContext: { relevance, disposition, subjectId, topicId }`. Off-topic messages are classified with `knowledgeContext.relevance: 'off_topic'` and `disposition: 'excluded'`, ensuring that they remain historical conversational evidence and are permanently excluded from canonical knowledge extraction and note generation pipelines.

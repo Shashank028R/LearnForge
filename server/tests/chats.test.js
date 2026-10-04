@@ -20,6 +20,8 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
   let topicsStore = new Map();
   let chatsStore = new Map();
   let messagesStore = new Map();
+  let syllabusStore = new Map();
+  let annotationsStore = new Map();
 
   // Test users & cookies
   let userA, userB;
@@ -32,6 +34,28 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
     topicsStore.clear();
     chatsStore.clear();
     messagesStore.clear();
+    syllabusStore.clear();
+    annotationsStore.clear();
+
+    // Mock SyllabusVersion model
+    vi.spyOn(SyllabusVersion, 'findOne').mockImplementation(async (query) => {
+      for (const s of syllabusStore.values()) {
+        let match = true;
+        if (query.subjectId && s.subjectId?.toString() !== query.subjectId?.toString()) match = false;
+        if (query.userId && s.userId?.toString() !== query.userId?.toString()) match = false;
+        if (query.status && s.status !== query.status) match = false;
+        if (match) return { ...s, save: async () => s };
+      }
+      return null;
+    });
+
+    vi.spyOn(SyllabusVersion, 'find').mockImplementation(async () => Array.from(syllabusStore.values()));
+
+    // Mock Annotation model
+    vi.spyOn(Annotation, 'find').mockImplementation((query) => ({
+      sort: () => Array.from(annotationsStore.values()),
+      then: (resolve) => Promise.resolve(resolve(Array.from(annotationsStore.values()))),
+    }));
 
     // 1. Mock User model
     vi.spyOn(User, 'findById').mockImplementation(async (id) => {
