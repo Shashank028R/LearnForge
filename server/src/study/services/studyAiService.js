@@ -231,25 +231,11 @@ export class StudyAiService {
       matchedConceptIds.some((id) => id && c._id && id.toString() === c._id.toString())
     );
 
-    let expectedReasoningSignals = Array.isArray(raw.expectedReasoningSignals)
-      ? raw.expectedReasoningSignals
-          .filter((s) => typeof s === 'string' && s.trim().length > 0)
-          .map((s) => s.trim())
-      : [];
-
-    // If signals are missing or too generic, ground them in the canonical concept descriptions/evidence
-    if (expectedReasoningSignals.length === 0) {
-      if (canonicalTargetConcepts.length > 0) {
-        expectedReasoningSignals = canonicalTargetConcepts.map((c) => {
-          if (c.description && c.description.trim()) {
-            return `Demonstrate understanding of ${c.name}: ${c.description.trim()}`;
-          }
-          return `Accurately explain the core operational mechanism of ${c.name}.`;
-        });
-      } else {
-        expectedReasoningSignals = ['Accurately explain the primary mechanism and operational requirements.'];
-      }
-    }
+    // Build authoritative grounding keywords from canonical concepts
+    const expectedReasoningSignals = this.groundExpectedReasoningSignals(
+      raw.expectedReasoningSignals,
+      canonicalTargetConcepts
+    );
 
     const difficultyIntent = ['introductory', 'intermediate', 'advanced'].includes(raw.difficultyIntent)
       ? raw.difficultyIntent
@@ -391,6 +377,59 @@ export class StudyAiService {
       followUpQuestion: `In 2-3 sentences, what is the single most important invariant or step in ${conceptName}?`,
       remediatedAt: new Date(),
     };
+  }
+
+  /**
+   * Authoritative Adversarial Signal Filtering & Grounding:
+   * Strips hallucinated/irrelevant grading criteria and retains only evidence-grounded signals.
+   * If all signals are discarded or empty, synthesizes authoritative signals directly from canonical concepts.
+   */
+  groundExpectedReasoningSignals(rawSignals, canonicalConcepts) {
+    const rawList = Array.isArray(rawSignals)
+      ? rawSignals.filter((s) => typeof s === 'string' && s.trim().length > 0).map((s) => s.trim())
+      : [];
+
+    const concepts = Array.isArray(canonicalConcepts) ? canonicalConcepts : [];
+    const groundingTerms = new Set();
+
+    concepts.forEach((c) => {
+      if (c.name) groundingTerms.add(c.name.trim().toLowerCase());
+      (c.aliases || []).forEach((a) => groundingTerms.add(a.trim().toLowerCase()));
+      if (c.description) {
+        c.description
+          .toLowerCase()
+          .split(/[\s,.;:()\-]+/)
+          .filter((w) => w.length >= 4)
+          .forEach((w) => groundingTerms.add(w));
+      }
+    });
+
+    const groundedSignals = rawList.filter((signal) => {
+      const lower = signal.toLowerCase();
+      for (const c of concepts) {
+        if (c.name && lower.includes(c.name.toLowerCase())) return true;
+        if ((c.aliases || []).some((a) => lower.includes(a.toLowerCase()))) return true;
+      }
+      for (const term of groundingTerms) {
+        if (lower.includes(term)) return true;
+      }
+      return false; // Reject ungrounded / hallucinated criteria
+    });
+
+    if (groundedSignals.length > 0) {
+      return groundedSignals;
+    }
+
+    if (concepts.length > 0) {
+      return concepts.map((c) => {
+        if (c.description && c.description.trim()) {
+          return `Demonstrate understanding of ${c.name}: ${c.description.trim()}`;
+        }
+        return `Accurately explain the core operational mechanism of ${c.name}.`;
+      });
+    }
+
+    return ['Accurately explain the primary mechanism and operational requirements.'];
   }
 }
 

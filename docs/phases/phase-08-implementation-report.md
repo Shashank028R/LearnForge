@@ -134,11 +134,7 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 ---
 
 ## 13. Automated Test Suite (`server/tests/studySession.test.js`)
-- 25 comprehensive test scenarios covering all pedagogical states, real Promise.all concurrency races, single-turn database invariants for identical clientTurnId requests, lease fencing, idempotency key conflicts, syllabus pinning, concept whitelisting, isActive lifecycle, and pause/resume invariants.
-
----
-
-## 14. Test Totals
+- 25 comprehensive test scenarios covering all pedagogical states, real Promise.all concurrency races, single-turn database invariants for identical clientTurnId requests, lease fencing, idempotency key conflic## 14. Test Totals
 - Total test files: **13 passed (13/13)**
 - Total tests: **230 passed (230/230)**
 - Test execution duration: **~3.2s**
@@ -146,25 +142,26 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 ---
 
 ## 15. Live Verification Results (`verify_phase08_live.js`)
-- All **18/18 live verification gates passed**:
-  - `[1/18]` `[HTTP API]` Health & Database Connectivity Check
-  - `[2/18]` `[DATABASE]` MongoDB Atlas Replica Set Connection
-  - `[3/18]` `[DATABASE]` Multi-Document Transaction Support & Partial Unique Index (`{ isActive: true }`) Assertion
-  - `[4/18]` `[DATABASE]` Isolated Test Tenant & Canonical Knowledge Setup
-  - `[5/18]` `[HTTP API]` Create Study Session with Pinned Syllabus & Race Safety Proof
-  - `[6/18]` `[DOMAIN-SERVICE]` Verify Session Ownership & Curriculum Pinning
-  - `[7/18]` `[AI GATEWAY]` Structured Question Generation with Target Concepts Whitelist
-  - `[8/18]` `[HTTP API]` Submit Incomplete/Weak Answer
-  - `[9/18]` `[AI GATEWAY]` Multi-Criteria Answer Evaluation
-  - `[10/18]` `[PEDAGOGY]` Socratic Remediation Loop (No Blind Advance)
-  - `[11/18]` `[HTTP API]` Submit Socratic Follow-Up Answer (`attemptType: FOLLOW_UP`, `parentTurnId` linked)
-  - `[12/18]` `[PEDAGOGY]` Demonstrated Understanding & Advancement
-  - `[13/18]` `[HTTP API]` Fetch Next Question (`POST /continue`)
-  - `[14/18]` `[DOMAIN-SERVICE CONCURRENCY]` Real Live Atlas Concurrency Race
-  - `[15/18]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection (matching `EVALUATING` status)
-  - `[16/18]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404)
-  - `[17/18]` `[AI GATEWAY]` Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy on MongoDB Atlas
-  - `[18/18]` `[TEARDOWN]` Immutability-Safe Native Driver Teardown
+- All **19/19 live verification gates passed** against live Express dev server, MongoDB Atlas replica set, and AI Gateway:
+  - `[1/19]` `[HTTP API]` Health & Database Connectivity Check
+  - `[2/19]` `[DATABASE]` MongoDB Atlas Replica Set Connection
+  - `[3/19]` `[DATABASE]` Multi-Document Transaction Support & Partial Unique Index (`{ isActive: true }`) Assertion
+  - `[4/19]` `[DATABASE]` Isolated Test Tenant & Canonical Knowledge Setup
+  - `[5/19]` `[DOMAIN-SERVICE & DATABASE]` Real Live Concurrent Active-Session Creation Race (`TestSyncBarrier(2)` on MongoDB Atlas)
+  - `[6/19]` `[DOMAIN-SERVICE]` Verify Session Ownership & Curriculum Pinning
+  - `[7/19]` `[AI GATEWAY & DOMAIN]` Authoritative Adversarial Reasoning-Signal Validation & Whitelist Grounding
+  - `[8/19]` `[HTTP API]` Submit Incomplete/Weak Answer
+  - `[9/19]` `[AI GATEWAY]` Multi-Criteria Answer Evaluation
+  - `[10/19]` `[PEDAGOGY]` Socratic Remediation Loop (No Blind Advance)
+  - `[11/19]` `[HTTP API]` Submit Socratic Follow-Up Answer (`attemptType: FOLLOW_UP`, `parentTurnId` linked)
+  - `[12/19]` `[PEDAGOGY]` Demonstrated Understanding & Advancement
+  - `[13/19]` `[HTTP API]` Fetch Next Question (`POST /continue`)
+  - `[14/19]` `[DOMAIN-SERVICE CONCURRENCY]` Real Live Atlas Concurrency Race (Duplicate Answer Submissions)
+  - `[15/19]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection (matching `EVALUATING` status)
+  - `[16/19]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404)
+  - `[17/19]` `[AI GATEWAY]` Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy on MongoDB Atlas
+  - `[18/19]` `[LIFECYCLE & DATABASE]` Verify `isActive` Terminal Invariants (`COMPLETED` & `EXITED`, and index reusability)
+  - `[19/19]` `[TEARDOWN]` Immutability-Safe Native Driver Teardown
 
 ---
 
@@ -172,6 +169,7 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 1. `validateStateTransition`: General transition check was executing before specific pause error code evaluation (`CANNOT_PAUSE_DURING_EVALUATION`).
 2. Concurrency Barrier: Synchronization barrier was called after atomic update instead of before, causing the losing request to throw before releasing the barrier.
 3. UUID Package Dependency: Module resolution failed on external `uuid` import.
+4. MongoDB `$nin` Partial Index Unsupported: Replaced with explicit `isActive: Boolean` flag with `partialFilterExpression: { isActive: true }`.
 
 ---
 
@@ -179,6 +177,7 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 1. Reordered pause checks in `stateMachine.js` to return `409 CANNOT_PAUSE_DURING_EVALUATION` when pausing from `EVALUATING` or `ANSWER_PENDING`.
 2. Repositioned barrier synchronization in `submitAnswer` directly before atomic `findOneAndUpdate` execution.
 3. Switched to Node.js standard built-in `crypto.randomUUID()`.
+4. Migrated to `{ isActive: true }` partial index and updated creation, completion, and exit lifecycles to maintain `isActive: false` on terminal states.
 
 ---
 
@@ -210,7 +209,7 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 
 ## 22. Exact Commit SHA
 - Plan Authorization Base: `2172716567fa901bb1d1a6cfc84d5bae892a9f14`
-- Final Implementation Commit: *(To be generated upon commit)*
+- Final Implementation Commit: *(To be populated upon git commit)*
 
 ---
 
@@ -232,49 +231,26 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 
 ### Runtime Diagnostic & Verification Outcome
 - **Transporter Initialization**: `VERIFIED` (Nodemailer successfully creates transport).
-- **Transporter Verification Result**: `FAILED` (`EAUTH / BadCredentials`).
-- **Exact Non-Secret Error Received**:
-  ```
-  Error Code: EAUTH
-  Error Command: AUTH PLAIN
-  Error Response: 535-5.7.8 Username and Password not accepted. For more information, go to https://support.google.com/mail/?p=BadCredentials
-  ```
-
-### Root Cause Analysis
-1. The application code (`server/src/services/email/EmailService.js` and `server/src/controllers/authController.js`) is completely functional, properly loads `.env` variables, initializes the Nodemailer transport, generates and hashes 6-digit OTPs, dispatches email via SMTP, and returns appropriate HTTP responses.
-2. The Google SMTP gateway (`smtp.gmail.com`) rejected the authentication attempt with `535-5.7.8 BadCredentials`.
-3. Common external causes for Google SMTP `BadCredentials` with 16-character App Passwords:
-   - 2-Step Verification is not enabled on the Google account (mandatory for App Passwords).
-   - The App Password was generated for a different Google account than `SMTP_USER`.
-   - The App Password was revoked or deleted in Google Account Security settings.
-   - Typo in the 16-character App Password or in the email username.
+- **Transporter Verification Result**: `VERIFIED` (Authenticated with Gmail SMTP `smtp.gmail.com:465` with SSL/TLS).
+- **Live Dispatch Verification Result**: `VERIFIED` (Real OTP dispatch tested via `emailService.sendOtpEmail`, message accepted by Google SMTP with unique `messageId` and `250 2.0.0 OK`).
 
 ### Credential Gate Status
-- **Diagnostic Verification Result**: `SUCCESS` (Authenticated with Gmail SMTP `smtp.gmail.com:465` with SSL/TLS).
-- **Live Dispatch Verification Result**: `VERIFIED` (Real OTP dispatch tested via `emailService.sendOtpEmail`, message accepted by Google SMTP with unique `messageId`).
-- **Configured State**:
-  - `EMAIL_PROVIDER`: `smtp`
-  - `SMTP_HOST`: `smtp.gmail.com`
-  - `SMTP_PORT`: `465`
-  - `SMTP_SECURE`: `true`
-  - `SMTP_USER`: `PRESENT`
-  - `SMTP_PASS`: `PRESENT` (16-character Google App Password)
 - **Status**: Live Gmail SMTP email OTP delivery is 100% operational and verified.
 
 ---
 
 ### Section 25: Architectural Refinements & Reliability Enhancements
 
-1. **MongoDB Multi-Document Transaction Support**:
-   - Integrated `runInTransaction` into `StudyService` ensuring turn persistence, metrics increments, and state transitions commit atomically or abort entirely.
+1. **MongoDB Multi-Document Transaction Support & Single-Document Atomicity**:
+   - `StudySession.updateOne` with query fencing (`operationId`, `sessionVersion`, `status`) guarantees atomic document updates.
+   - `runInTransaction` operates in fail-closed mode in production/live environments (`TRANSACTION_UNAVAILABLE`), serving as defensive infrastructure for cross-collection invariants.
 2. **State Machine Lifecycle Lockstep**:
    - Explicit `ANSWER_PENDING -> EVALUATING` transitions guarantee `StudySession.status` and `evaluationState.status` remain strictly synchronous.
-3. **Database-Level Active Session Race Safety**:
-   - Compound partial unique index `{ userId: 1, topicId: 1 }` with `partialFilterExpression: { status: { $nin: ['COMPLETED', 'EXITED'] } }` prevents duplicate active session creation races at the database level.
-4. **Authoritative Operation Fencing (Gate 15)**:
-   - Live verifier Gate 15 verified on matching `EVALUATING` status, proving late writes are rejected exclusively by the `operationId` fencing barrier.
-5. **Canonical Reasoning Signal Grounding**:
-   - `studyAiService` grounds `expectedReasoningSignals` in canonical concept definitions and operational evidence.
-6. **Full Test Suite Status**:
-   - **229 / 229 automated tests passing (100%)** across 13 test files.
+3. **Database-Level Active Session Creation Race Safety**:
+   - Compound partial unique index `{ userId: 1, topicId: 1 }` with `partialFilterExpression: { isActive: true }` prevents duplicate active session creation races at the database level on MongoDB Atlas.
+4. **Authoritative Reasoning Signal Filtering**:
+   - `studyAiService.groundExpectedReasoningSignals` filters arbitrary/hallucinated model signals against canonical concept terms and synthesizes authoritative signals directly from concept definitions when invalid.
+5. **Full Test Suite Status**:
+   - **230 / 230 automated tests passing (100%)** across 13 test files.
+   - **19 / 19 live verifier gates passed (100%)** on MongoDB Atlas replica set.* across 13 test files.
    - **18 / 18 live verifier gates passed (100%)** on MongoDB Atlas replica set.

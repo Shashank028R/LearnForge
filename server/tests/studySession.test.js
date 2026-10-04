@@ -247,6 +247,7 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
         const idMatch = !query._id || ss._id.toString() === query._id.toString();
         const userMatch = !query.userId || ss.userId.toString() === query.userId.toString();
         const topicMatch = !query.topicId || ss.topicId.toString() === query.topicId.toString();
+        const activeMatch = query.isActive === undefined || ss.isActive === query.isActive;
 
         let statusMatch = true;
         if (query.status) {
@@ -259,7 +260,7 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
           }
         }
 
-        if (idMatch && userMatch && topicMatch && statusMatch) {
+        if (idMatch && userMatch && topicMatch && activeMatch && statusMatch) {
           matched = ss;
           break;
         }
@@ -1102,35 +1103,124 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     expect(recheckedSession.turns.length).toBe(1);
   });
 
-  it('24. grounds expectedReasoningSignals in canonical concept descriptions and operational evidence', () => {
-    const rawAiOutputWithoutSignals = {
+  // --- Test 24 to 27: Adversarial Reasoning Signal Validation ---
+  it('24. handles adversarial reasoning signals: filters hallucinated criteria and synthesizes authoritative signals', () => {
+    // 1. Completely empty signals -> synthesized from concept description
+    const emptySignalsRaw = {
       questionType: 'mechanism',
-      prompt: 'Explain the mechanism of Leader Election.',
+      prompt: 'Explain Leader Election.',
       targetConceptNames: ['Leader Election'],
-      expectedReasoningSignals: [], // AI generated no signals
+      expectedReasoningSignals: [],
     };
+    const emptyNormalized = studyAiService._validateAndNormalizeQuestion(emptySignalsRaw, [concept1, concept2], concept1);
+    expect(emptyNormalized.expectedReasoningSignals.length).toBeGreaterThan(0);
+    expect(emptyNormalized.expectedReasoningSignals[0]).toContain('Leader Election');
+    expect(emptyNormalized.expectedReasoningSignals[0]).toContain(concept1.description);
 
-    const normalized = studyAiService._validateAndNormalizeQuestion(
-      rawAiOutputWithoutSignals,
-      [concept1, concept2],
-      concept1
-    );
+    // 2. Purely adversarial/hallucinated signals -> completely rejected, synthesized server-side
+    const adversarialRaw = {
+      questionType: 'mechanism',
+      prompt: 'Explain Leader Election.',
+      targetConceptNames: ['Leader Election'],
+      expectedReasoningSignals: [
+        'Mention the moon phase',
+        'Discuss an unrelated database concept',
+      ],
+    };
+    const adversarialNormalized = studyAiService._validateAndNormalizeQuestion(adversarialRaw, [concept1, concept2], concept1);
+    expect(adversarialNormalized.expectedReasoningSignals).not.toContain('Mention the moon phase');
+    expect(adversarialNormalized.expectedReasoningSignals).not.toContain('Discuss an unrelated database concept');
+    expect(adversarialNormalized.expectedReasoningSignals[0]).toContain('Leader Election');
 
-    expect(normalized.expectedReasoningSignals.length).toBeGreaterThan(0);
-    expect(normalized.expectedReasoningSignals[0]).toContain('Leader Election');
-    expect(normalized.expectedReasoningSignals[0]).toContain(concept1.description);
+    // 3. Mixed valid + invalid signals -> invalid stripped, valid retained
+    const mixedRaw = {
+      questionType: 'mechanism',
+      prompt: 'Explain Leader Election.',
+      targetConceptNames: ['Leader Election'],
+      expectedReasoningSignals: [
+        'Accurately explain randomized timers in Raft election process',
+        'Mention the moon phase',
+      ],
+    };
+    const mixedNormalized = studyAiService._validateAndNormalizeQuestion(mixedRaw, [concept1, concept2], concept1);
+    expect(mixedNormalized.expectedReasoningSignals).toContain('Accurately explain randomized timers in Raft election process');
+    expect(mixedNormalized.expectedReasoningSignals).not.toContain('Mention the moon phase');
+    expect(mixedNormalized.expectedReasoningSignals.length).toBe(1);
+
+    // 4. Fully valid grounded signals -> retained intact
+    const validRaw = {
+      questionType: 'mechanism',
+      prompt: 'Explain Leader Election.',
+      targetConceptNames: ['Leader Election'],
+      expectedReasoningSignals: [
+        'Explain how randomized timers prevent split votes in election',
+      ],
+    };
+    const validNormalized = studyAiService._validateAndNormalizeQuestion(validRaw, [concept1, concept2], concept1);
+    expect(validNormalized.expectedReasoningSignals).toEqual([
+      'Explain how randomized timers prevent split votes in election',
+    ]);
   });
 
-  it('25. manages isActive lifecycle: isActive=true during active study and isActive=false upon completion', async () => {
+  // --- Test 25: Full isActive Lifecycle Assertion ---
+  it('25. manages complete isActive lifecycle: isActive=true during active study, and isActive=false upon COMPLETED and EXITED', async () => {
+    // 1. Initial creation -> isActive: true
     const createRes = await request(app)
       .post(`/api/v1/topics/${topicA._id}/study/sessions`)
       .set('Cookie', sessionCookieA)
       .expect(201);
 
     const sessionId = createRes.body.data.session._id;
+    const questionId = createRes.body.data.session.activeQuestion.questionId;
     expect(createRes.body.data.session.isActive).toBe(true);
+    expect(createRes.body.data.session.status).toBe(STUDY_STATUS.QUESTIONING);
 
-    const sessionDoc = await studyService.getSessionById(userA._id, sessionId);
-    expect(sessionDoc.isActive).toBe(true);
+    // 2. Submit Correct Answer -> status: ADVANCING, isActive: true
+    const answerRes = await request(app)
+      .post(`/api/v1/study-sessions/${sessionId}/answer`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        questionId,
+        sessionVersion: 1,
+        clientTurnId: 'turn-lifecycle-001',
+        answer: 'Thorough correct answer on randomized timers in Raft leader election.',
+      })
+      .expect(200);
+
+    expect(answerRes.body.data.session.isActive).toBe(true);
+    expect(answerRes.body.data.session.status).toBe(STUDY_STATUS.ADVANCING);
+
+    // 3. Mark all concepts demonstrated to trigger COMPLETED on continue
+    const sessionDoc = studySessionsStore.get(sessionId.toString());
+    sessionDoc.metrics.demonstratedConceptIds = [concept1._id, concept2._id];
+    studySessionsStore.set(sessionId.toString(), sessionDoc);
+
+    // 4. Continue to COMPLETED -> status: COMPLETED, isActive: false
+    const completeRes = await request(app)
+      .post(`/api/v1/study-sessions/${sessionId}/continue`)
+      .set('Cookie', sessionCookieA)
+      .send({ sessionVersion: 3 })
+      .expect(200);
+
+    expect(completeRes.body.data.status).toBe(STUDY_STATUS.COMPLETED);
+    expect(completeRes.body.data.isActive).toBe(false);
+
+    // 5. Test EXITED lifecycle on a new session
+    const createRes2 = await request(app)
+      .post(`/api/v1/topics/${topicA._id}/study/sessions`)
+      .set('Cookie', sessionCookieA)
+      .expect(201); // New active session allowed since prior is completed (isActive=false)
+
+    const sessionId2 = createRes2.body.data.session._id;
+    expect(createRes2.body.data.session.isActive).toBe(true);
+
+    const exitRes = await request(app)
+      .post(`/api/v1/study-sessions/${sessionId2}/exit`)
+      .set('Cookie', sessionCookieA)
+      .send({ sessionVersion: 1 })
+      .expect(200);
+
+    expect(exitRes.body.data.status).toBe(STUDY_STATUS.EXITED);
+    expect(exitRes.body.data.isActive).toBe(false);
   });
 });

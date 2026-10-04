@@ -14,11 +14,14 @@ import {
 } from '../stateMachine.js';
 
 /**
- * Executes work within a real MongoDB multi-document transaction when available (e.g. Atlas / replica set).
- * Gracefully falls back to non-transactional execution if running on a standalone test instance without replica set.
+ * Executes work within a real MongoDB transaction when available.
+ * In production/live environments, transaction failure fails closed with a deterministic infrastructure error.
+ * In unit/mock test environments, direct execution is supported.
  */
 async function runInTransaction(workFn) {
+  const isTestEnv = process.env.NODE_ENV === 'test';
   let dbSession = null;
+
   if (mongoose.connection && mongoose.connection.readyState === 1) {
     try {
       dbSession = await mongoose.startSession();
@@ -26,8 +29,20 @@ async function runInTransaction(workFn) {
         readConcern: { level: 'snapshot' },
         writeConcern: { w: 'majority' },
       });
-    } catch {
-      // Standalone MongoDB or transactions unsupported in current test environment
+    } catch (sessionErr) {
+      if (dbSession) {
+        try {
+          await dbSession.endSession();
+        } catch (_) {}
+      }
+      if (!isTestEnv) {
+        const txError = new Error(
+          'Database transaction unavailable: Study persistence requires MongoDB transaction support (MongoDB Atlas / replica set).'
+        );
+        txError.code = 'TRANSACTION_UNAVAILABLE';
+        txError.status = 503;
+        throw txError;
+      }
       dbSession = null;
     }
   }
@@ -61,7 +76,7 @@ export class StudyService {
    * Creates a new topic-scoped study session or resumes the existing active session.
    * Fully race-safe via database-level unique constraints and transactional check-and-create.
    */
-  async createOrResumeSession(userId, topicId) {
+  async createOrResumeSession(userId, topicId, options = {}) {
     if (!mongoose.Types.ObjectId.isValid(topicId)) {
       const error = new Error('Invalid topicId.');
       error.code = 'VALIDATION_ERROR';
@@ -97,7 +112,9 @@ export class StudyService {
     }
 
     // Concurrency test hook
-    if (this.testConcurrencyBarrier) {
+    if (options?.barrier) {
+      await options.barrier();
+    } else if (this.testConcurrencyBarrier) {
       await this.testConcurrencyBarrier.wait('createOrResumeSession');
     }
 
