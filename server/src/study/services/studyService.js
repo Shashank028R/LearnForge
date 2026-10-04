@@ -14,40 +14,53 @@ import {
 } from '../stateMachine.js';
 
 /**
- * Executes work within a real MongoDB transaction when available.
- * In production/live environments, transaction failure fails closed with a deterministic infrastructure error.
- * In unit/mock test environments, direct execution is supported.
+ * Executes work within a real MongoDB transaction.
+ * In production/live environments:
+ * - If MongoDB is disconnected/unavailable, or transaction initialization fails:
+ *   fails closed with a deterministic TRANSACTION_UNAVAILABLE error (HTTP 503).
+ * In unit/mock test environments (when process.env.NODE_ENV === 'test'):
+ *   supports controlled in-memory fallback.
  */
-async function runInTransaction(workFn) {
-  const isTestEnv = process.env.NODE_ENV === 'test';
+export async function runInTransaction(workFn, options = {}) {
+  const isTestEnv = options.isTest !== undefined ? options.isTest : (process.env.NODE_ENV === 'test');
   let dbSession = null;
 
-  if (mongoose.connection && mongoose.connection.readyState === 1) {
-    try {
-      dbSession = await mongoose.startSession();
-      dbSession.startTransaction({
-        readConcern: { level: 'snapshot' },
-        writeConcern: { w: 'majority' },
-      });
-    } catch (sessionErr) {
-      if (dbSession) {
-        try {
-          await dbSession.endSession();
-        } catch (_) {}
-      }
-      if (!isTestEnv) {
-        const txError = new Error(
-          'Database transaction unavailable: Study persistence requires MongoDB transaction support (MongoDB Atlas / replica set).'
-        );
-        txError.code = 'TRANSACTION_UNAVAILABLE';
-        txError.status = 503;
-        throw txError;
-      }
-      dbSession = null;
+  const isDbConnected = mongoose.connection && mongoose.connection.readyState === 1;
+
+  if (!isDbConnected) {
+    if (!isTestEnv) {
+      const txError = new Error(
+        'Database transaction unavailable: Study persistence requires MongoDB transaction support (MongoDB Atlas / replica set).'
+      );
+      txError.code = 'TRANSACTION_UNAVAILABLE';
+      txError.statusCode = 503;
+      txError.status = 503;
+      throw txError;
     }
+    return await workFn(null);
   }
 
-  if (!dbSession) {
+  try {
+    dbSession = await mongoose.startSession();
+    dbSession.startTransaction({
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' },
+    });
+  } catch (sessionErr) {
+    if (dbSession) {
+      try {
+        await dbSession.endSession();
+      } catch (_) {}
+    }
+    if (!isTestEnv) {
+      const txError = new Error(
+        'Database transaction unavailable: Study persistence requires MongoDB transaction support (MongoDB Atlas / replica set).'
+      );
+      txError.code = 'TRANSACTION_UNAVAILABLE';
+      txError.statusCode = 503;
+      txError.status = 503;
+      throw txError;
+    }
     return await workFn(null);
   }
 

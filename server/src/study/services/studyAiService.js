@@ -381,8 +381,9 @@ export class StudyAiService {
 
   /**
    * Authoritative Adversarial Signal Filtering & Grounding:
-   * Strips hallucinated/irrelevant grading criteria and retains only evidence-grounded signals.
-   * If all signals are discarded or empty, synthesizes authoritative signals directly from canonical concepts.
+   * Maps legitimate candidate signals to canonical concepts by bounded full name or alias,
+   * completely rejecting generic sub-word overlap, substring false positives, or hallucinated criteria.
+   * Derives final persisted reasoning criteria server-authoritatively from canonical concept records.
    */
   groundExpectedReasoningSignals(rawSignals, canonicalConcepts) {
     const rawList = Array.isArray(rawSignals)
@@ -390,46 +391,55 @@ export class StudyAiService {
       : [];
 
     const concepts = Array.isArray(canonicalConcepts) ? canonicalConcepts : [];
-    const groundingTerms = new Set();
-
-    concepts.forEach((c) => {
-      if (c.name) groundingTerms.add(c.name.trim().toLowerCase());
-      (c.aliases || []).forEach((a) => groundingTerms.add(a.trim().toLowerCase()));
-      if (c.description) {
-        c.description
-          .toLowerCase()
-          .split(/[\s,.;:()\-]+/)
-          .filter((w) => w.length >= 4)
-          .forEach((w) => groundingTerms.add(w));
-      }
-    });
-
-    const groundedSignals = rawList.filter((signal) => {
-      const lower = signal.toLowerCase();
-      for (const c of concepts) {
-        if (c.name && lower.includes(c.name.toLowerCase())) return true;
-        if ((c.aliases || []).some((a) => lower.includes(a.toLowerCase()))) return true;
-      }
-      for (const term of groundingTerms) {
-        if (lower.includes(term)) return true;
-      }
-      return false; // Reject ungrounded / hallucinated criteria
-    });
-
-    if (groundedSignals.length > 0) {
-      return groundedSignals;
+    if (concepts.length === 0) {
+      return ['Accurately explain the primary mechanism and operational requirements.'];
     }
 
-    if (concepts.length > 0) {
-      return concepts.map((c) => {
-        if (c.description && c.description.trim()) {
-          return `Demonstrate understanding of ${c.name}: ${c.description.trim()}`;
+    const buildAuthoritativeSignal = (concept) => {
+      if (concept.description && concept.description.trim()) {
+        return `Demonstrate understanding of ${concept.name}: ${concept.description.trim()}`;
+      }
+      return `Accurately explain the core operational mechanism of ${concept.name}.`;
+    };
+
+    const isBoundedTermMatch = (signalText, term) => {
+      if (!signalText || !term || typeof signalText !== 'string' || typeof term !== 'string') {
+        return false;
+      }
+      const cleanTerm = term.trim();
+      if (cleanTerm.length === 0) return false;
+      const escaped = cleanTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(?:^|[^\\w\\-])${escaped}(?:[^\\w\\-]|$)`, 'i');
+      return regex.test(signalText);
+    };
+
+    // Check which canonical concepts are legitimately referenced by candidate signals
+    const matchedConceptIds = new Set();
+
+    for (const signal of rawList) {
+      for (const concept of concepts) {
+        const name = (concept.name || '').trim();
+        const aliases = (concept.aliases || []).map((a) => (a || '').trim()).filter(Boolean);
+
+        const matchesName = name.length > 0 && isBoundedTermMatch(signal, name);
+        const matchesAlias = aliases.some((alias) => isBoundedTermMatch(signal, alias));
+
+        if (matchesName || matchesAlias) {
+          matchedConceptIds.add(String(concept._id || concept.name));
         }
-        return `Accurately explain the core operational mechanism of ${c.name}.`;
-      });
+      }
     }
 
-    return ['Accurately explain the primary mechanism and operational requirements.'];
+    // If candidate signals legitimately matched a subset of canonical concepts,
+    // return authoritative signals for those matched concepts in canonical order
+    if (matchedConceptIds.size > 0) {
+      const matchedConcepts = concepts.filter((c) => matchedConceptIds.has(String(c._id || c.name)));
+      return matchedConcepts.map(buildAuthoritativeSignal);
+    }
+
+    // If no candidate signals matched (empty, malicious, or hallucinated),
+    // generate authoritative signals for all target canonical concepts
+    return concepts.map(buildAuthoritativeSignal);
   }
 }
 

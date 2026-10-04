@@ -16,17 +16,16 @@ Transform LearnForge from a passive conversational tool into a strict, interacti
 ---
 
 ## 3. Files Added and Modified
-
 ### Added
 - [StudySession.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/models/StudySession.js): Core domain model with `studyTurnSchema` and `evaluationStateSchema`.
 - [stateMachine.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/study/stateMachine.js): Central transition validator and pause invariants.
 - [studyPrompts.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/study/prompts/studyPrompts.js): Grounded prompt builders for questions, evaluation, and remediation.
-- [studyAiService.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/study/services/studyAiService.js): AI Gateway runner, schema normalizer, concept whitelist filter, and deterministic fallbacks.
-- [studyService.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/study/services/studyService.js): Domain aggregate service managing leases, optimistic concurrency, and idempotency.
+- [studyAiService.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/study/services/studyAiService.js): AI Gateway runner, schema normalizer, concept whitelist filter, authoritative adversarial signal grounding, and deterministic fallbacks.
+- [studyService.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/study/services/studyService.js): Domain aggregate service managing leases, optimistic concurrency, fail-closed transactions, and idempotency.
 - [studyController.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/controllers/studyController.js): REST controller for study endpoints.
 - [studyRoutes.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/routes/studyRoutes.js): Express routes mounted on `/api/v1`.
-- [studySession.test.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/tests/studySession.test.js): 22 automated test scenarios covering concurrency, fencing, idempotency, and pedagogy.
-- [verify_phase08_live.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/scripts/verify_phase08_live.js): 18-gate fail-closed live verification script.
+- [studySession.test.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/tests/studySession.test.js): 26 automated test scenarios covering concurrency, fencing, idempotency, adversarial signal grounding, fail-closed transactions, and pedagogy.
+- [verify_phase08_live.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/scripts/verify_phase08_live.js): 19-gate fail-closed live verification script.
 
 ### Modified
 - [tasks.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/ai/schemas/tasks.js): Registered `STUDY_QUESTION_GENERATION`, `STUDY_ANSWER_EVALUATION`, `STUDY_REMEDIATION`.
@@ -43,7 +42,7 @@ Transform LearnForge from a passive conversational tool into a strict, interacti
 | `GET` | `/api/v1/study-sessions` | List user's active and recent study sessions | 200, 401 |
 | `GET` | `/api/v1/study-sessions/:id` | Retrieve full study session document including turn history | 200, 404, 401 |
 | `POST` | `/api/v1/study-sessions/:id/answer` | Submit answer for active question (optimistic lock & fenced lease) | 200, 400, 404, 409 |
-| `POST` | `/api/v1/study-sessions/:id/continue` | Advance session (`ADVANCING` $\rightarrow$ next question; `REMEDIATING` $\rightarrow$ follow-up) | 200, 400, 404, 409 |
+| `POST` | `/api/v1/study-sessions/:id/continue` | Advance session (`ADVANCING` $\rightarrow$ next question; `REMEDIATING` $\rightarrow$ follow-up; completed topic $\rightarrow$ `COMPLETED`) | 200, 400, 404, 409 |
 | `POST` | `/api/v1/study-sessions/:id/pause` | Pause session (allowed from `QUESTIONING`, `REMEDIATING`, `RECHECKING`) | 200, 400, 404, 409 |
 | `POST` | `/api/v1/study-sessions/:id/resume` | Resume session to exact `pausedFromStatus` | 200, 400, 404 |
 | `POST` | `/api/v1/study-sessions/:id/exit` | Terminate study session (`status: 'EXITED'`) | 200, 400, 404 |
@@ -85,9 +84,9 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
      │                 ┌──────────────[Advance]───────┤
      │                 ▼                              ▼
      └──[Continue]── ADVANCING                   REMEDIATING
-                                                      │ [Continue]
-                                                      ▼
-                                                 RECHECKING ──[Follow-Up Answer]──► ANSWER_PENDING
+           │ (All Concepts Demonstrated)              │ [Continue]
+           ▼                                          ▼
+       COMPLETED                                 RECHECKING ──[Follow-Up Answer]──► ANSWER_PENDING
 ```
 
 ---
@@ -117,7 +116,7 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 
 ## 10. AI Gateway Integration & Whitelist Enforcement
 - Generates structured active recall prompts using `aiGateway.generate({ task: AI_TASK_TYPES.STUDY_QUESTION_GENERATION, ... })`.
-- Server-authoritative concept whitelist: queries `Concept.find({ userId, topicId })`, injects canonical names, and strips hallucinated concept names from model outputs before persistence.
+- Server-authoritative concept whitelist and signal grounding: queries `Concept.find({ userId, topicId })`, matches candidate signals strictly to canonical concept full names and aliases, and synthesizes authoritative reasoning signals directly from canonical concept evidence.
 
 ---
 
@@ -134,10 +133,14 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 ---
 
 ## 13. Automated Test Suite (`server/tests/studySession.test.js`)
-- 25 comprehensive test scenarios covering all pedagogical states, real Promise.all concurrency races, single-turn database invariants for identical clientTurnId requests, lease fencing, idempotency key conflic## 14. Test Totals
+- 26 comprehensive test scenarios covering all pedagogical states, real Promise.all concurrency races, single-turn database invariants for identical clientTurnId requests, lease fencing, idempotency key reuse conflict handling, adversarial signal filtering, and fail-closed transactions.
+
+---
+
+## 14. Test Totals
 - Total test files: **13 passed (13/13)**
-- Total tests: **230 passed (230/230)**
-- Test execution duration: **~3.2s**
+- Total tests: **231 passed (231/231)**
+- Test execution duration: **~3.5s**
 
 ---
 
@@ -160,7 +163,7 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
   - `[15/19]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection (matching `EVALUATING` status)
   - `[16/19]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404)
   - `[17/19]` `[AI GATEWAY]` Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy on MongoDB Atlas
-  - `[18/19]` `[LIFECYCLE & DATABASE]` Verify `isActive` Terminal Invariants (`COMPLETED` & `EXITED`, and index reusability)
+  - `[18/19]` `[LIFECYCLE & DATABASE]` Real Application Completion Path (`continueSession` $\rightarrow$ `COMPLETED`, `isActive: false`) and Exited Invariants
   - `[19/19]` `[TEARDOWN]` Immutability-Safe Native Driver Teardown
 
 ---
@@ -209,7 +212,7 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 
 ## 22. Exact Commit SHA
 - Plan Authorization Base: `2172716567fa901bb1d1a6cfc84d5bae892a9f14`
-- Final Implementation Commit: *(To be populated upon git commit)*
+- Final Implementation Commit: `08f5781a7042578505537549046c87eec82cb46a`
 
 ---
 
@@ -251,6 +254,5 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 4. **Authoritative Reasoning Signal Filtering**:
    - `studyAiService.groundExpectedReasoningSignals` filters arbitrary/hallucinated model signals against canonical concept terms and synthesizes authoritative signals directly from concept definitions when invalid.
 5. **Full Test Suite Status**:
-   - **230 / 230 automated tests passing (100%)** across 13 test files.
-   - **19 / 19 live verifier gates passed (100%)** on MongoDB Atlas replica set.* across 13 test files.
-   - **18 / 18 live verifier gates passed (100%)** on MongoDB Atlas replica set.
+   - **231 / 231 automated tests passing (100%)** across 13 test files.
+   - **19 / 19 live verifier gates passed (100%)** on MongoDB Atlas replica set.

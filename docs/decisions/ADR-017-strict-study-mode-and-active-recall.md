@@ -48,8 +48,8 @@ Standard AI learning platforms act as passive question answering systems. In Lea
      ```
 
 7. **Authoritative Adversarial Reasoning-Signal Validation**:
-   - The server validates all model-generated `expectedReasoningSignals` against canonical concept definitions and operational terms.
-   - Hallucinated or arbitrary grading criteria (e.g. "Mention the moon phase") are strictly filtered out and replaced by server-authoritative signals synthesized from canonical concept records.
+   - The server validates all candidate model-generated `expectedReasoningSignals` via bounded term/phrase matching against canonical concepts and aliases.
+   - Arbitrary or adversarial grading criteria (e.g. "Mention the moon phase" or deceptive substring overlaps like "determine" matching "Term") are strictly filtered out and replaced by server-authoritative signals synthesized from canonical Concept data.
 
 8. **Transaction Architecture & Single-Document Isolation**:
    - `StudySession.updateOne` with query fencing (`operationId`, `sessionVersion`, `status`) provides atomic document isolation.

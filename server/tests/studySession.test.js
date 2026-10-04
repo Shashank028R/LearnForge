@@ -9,7 +9,7 @@ import { Topic } from '../src/models/Topic.js';
 import { SyllabusVersion } from '../src/models/SyllabusVersion.js';
 import { Concept } from '../src/models/Concept.js';
 import { StudySession } from '../src/models/StudySession.js';
-import { studyService } from '../src/study/services/studyService.js';
+import { studyService, runInTransaction } from '../src/study/services/studyService.js';
 import { studyAiService } from '../src/study/services/studyAiService.js';
 import { STUDY_STATUS, validateStateTransition } from '../src/study/stateMachine.js';
 import { hashSessionToken, generateSessionToken } from '../src/utils/authCrypto.js';
@@ -1103,67 +1103,152 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     expect(recheckedSession.turns.length).toBe(1);
   });
 
-  // --- Test 24 to 27: Adversarial Reasoning Signal Validation ---
-  it('24. handles adversarial reasoning signals: filters hallucinated criteria and synthesizes authoritative signals', () => {
-    // 1. Completely empty signals -> synthesized from concept description
-    const emptySignalsRaw = {
-      questionType: 'mechanism',
-      prompt: 'Explain Leader Election.',
-      targetConceptNames: ['Leader Election'],
-      expectedReasoningSignals: [],
+  // --- Test 24: Authoritative Adversarial Reasoning Signal Validation ---
+  it('24. handles adversarial reasoning signals: filters hallucinated criteria, rejects substring-only overlaps, and synthesizes authoritative signals', () => {
+    const conceptNoDesc = {
+      _id: new mongoose.Types.ObjectId(),
+      userId: userA._id,
+      topicId: topicA._id,
+      name: 'Term ID',
+      aliases: ['Term'],
+      description: '',
     };
-    const emptyNormalized = studyAiService._validateAndNormalizeQuestion(emptySignalsRaw, [concept1, concept2], concept1);
-    expect(emptyNormalized.expectedReasoningSignals.length).toBeGreaterThan(0);
-    expect(emptyNormalized.expectedReasoningSignals[0]).toContain('Leader Election');
-    expect(emptyNormalized.expectedReasoningSignals[0]).toContain(concept1.description);
 
-    // 2. Purely adversarial/hallucinated signals -> completely rejected, synthesized server-side
-    const adversarialRaw = {
-      questionType: 'mechanism',
-      prompt: 'Explain Leader Election.',
-      targetConceptNames: ['Leader Election'],
-      expectedReasoningSignals: [
-        'Mention the moon phase',
-        'Discuss an unrelated database concept',
-      ],
-    };
-    const adversarialNormalized = studyAiService._validateAndNormalizeQuestion(adversarialRaw, [concept1, concept2], concept1);
-    expect(adversarialNormalized.expectedReasoningSignals).not.toContain('Mention the moon phase');
-    expect(adversarialNormalized.expectedReasoningSignals).not.toContain('Discuss an unrelated database concept');
-    expect(adversarialNormalized.expectedReasoningSignals[0]).toContain('Leader Election');
+    // 1. Completely empty signals -> synthesized authoritative signals for all canonical target concepts
+    const emptySignals = studyAiService.groundExpectedReasoningSignals([], [concept1, concept2]);
+    expect(emptySignals).toEqual([
+      `Demonstrate understanding of ${concept1.name}: ${concept1.description}`,
+      `Demonstrate understanding of ${concept2.name}: ${concept2.description}`,
+    ]);
 
-    // 3. Mixed valid + invalid signals -> invalid stripped, valid retained
-    const mixedRaw = {
-      questionType: 'mechanism',
-      prompt: 'Explain Leader Election.',
-      targetConceptNames: ['Leader Election'],
-      expectedReasoningSignals: [
-        'Accurately explain randomized timers in Raft election process',
-        'Mention the moon phase',
-      ],
-    };
-    const mixedNormalized = studyAiService._validateAndNormalizeQuestion(mixedRaw, [concept1, concept2], concept1);
-    expect(mixedNormalized.expectedReasoningSignals).toContain('Accurately explain randomized timers in Raft election process');
-    expect(mixedNormalized.expectedReasoningSignals).not.toContain('Mention the moon phase');
-    expect(mixedNormalized.expectedReasoningSignals.length).toBe(1);
+    // 2. Fully malicious input (including deceptive sub-word overlaps: "randomized", "duration") -> all rejected, returns authoritative criteria
+    const adversarialSignals = [
+      'Mention the moon phase',
+      'Discuss an unrelated database concept',
+      'Explain randomized database migration strategy',
+      'Discuss duration-based caching policy',
+    ];
+    const filteredAdversarial = studyAiService.groundExpectedReasoningSignals(adversarialSignals, [concept1, concept2]);
+    expect(filteredAdversarial).toEqual([
+      `Demonstrate understanding of ${concept1.name}: ${concept1.description}`,
+      `Demonstrate understanding of ${concept2.name}: ${concept2.description}`,
+    ]);
 
-    // 4. Fully valid grounded signals -> retained intact
-    const validRaw = {
-      questionType: 'mechanism',
-      prompt: 'Explain Leader Election.',
-      targetConceptNames: ['Leader Election'],
-      expectedReasoningSignals: [
-        'Explain how randomized timers prevent split votes in election',
-      ],
-    };
-    const validNormalized = studyAiService._validateAndNormalizeQuestion(validRaw, [concept1, concept2], concept1);
-    expect(validNormalized.expectedReasoningSignals).toEqual([
-      'Explain how randomized timers prevent split votes in election',
+    // 3. Substring-only overlap rejection (bounded term enforcement)
+    // Alias "Term" must NOT match inside "determine" or "long-term"
+    const substringOnlySignals = [
+      'We must determine the consensus outcome in advance',
+      'Discuss long-term durability and caching policies',
+    ];
+    const filteredSubstring = studyAiService.groundExpectedReasoningSignals(substringOnlySignals, [conceptNoDesc]);
+    // Since neither matched as a bounded term, falls back to authoritative fallback for conceptNoDesc
+    expect(filteredSubstring).toEqual([
+      'Accurately explain the core operational mechanism of Term ID.',
+    ]);
+
+    // Valid bounded term match with punctuation and space
+    const boundedAliasSignals = [
+      'Explain the Term in Raft elections',
+    ];
+    const filteredBounded = studyAiService.groundExpectedReasoningSignals(boundedAliasSignals, [conceptNoDesc]);
+    expect(filteredBounded).toEqual([
+      'Accurately explain the core operational mechanism of Term ID.',
+    ]);
+
+    // 4. Mixed valid + malicious signals -> malicious stripped, valid mapped to canonical concept
+    const mixedSignals = [
+      'Explain how Leader Election operates in Raft clusters',
+      'Mention the moon phase',
+      'Explain randomized database migration strategy',
+    ];
+    const filteredMixed = studyAiService.groundExpectedReasoningSignals(mixedSignals, [concept1, concept2]);
+    expect(filteredMixed).toEqual([
+      `Demonstrate understanding of ${concept1.name}: ${concept1.description}`,
+    ]);
+
+    // 5. Fully valid grounded signals -> mapped to canonical concepts in order
+    const validSignals = [
+      'Accurately explain Leader Election mechanism',
+      'Explain Log Replication process',
+    ];
+    const filteredValid = studyAiService.groundExpectedReasoningSignals(validSignals, [concept1, concept2]);
+    expect(filteredValid).toEqual([
+      `Demonstrate understanding of ${concept1.name}: ${concept1.description}`,
+      `Demonstrate understanding of ${concept2.name}: ${concept2.description}`,
+    ]);
+
+    // 6. Concept with canonical alias (concept2 alias: 'AppendEntries')
+    const aliasSignals = ['Verify AppendEntries RPC delivery'];
+    const filteredAlias = studyAiService.groundExpectedReasoningSignals(aliasSignals, [concept1, concept2]);
+    expect(filteredAlias).toEqual([
+      `Demonstrate understanding of ${concept2.name}: ${concept2.description}`,
+    ]);
+
+    // 7. Concept with no description -> core operational mechanism fallback
+    const noDescSignals = studyAiService.groundExpectedReasoningSignals([], [conceptNoDesc]);
+    expect(noDescSignals).toEqual([
+      'Accurately explain the core operational mechanism of Term ID.',
     ]);
   });
 
-  // --- Test 25: Full isActive Lifecycle Assertion ---
-  it('25. manages complete isActive lifecycle: isActive=true during active study, and isActive=false upon COMPLETED and EXITED', async () => {
+  // --- Test 25: Fail-Closed Transaction Behavior ---
+  it('25. enforces fail-closed transaction behavior in non-test mode and supports test fallback', async () => {
+    const readyStateSpy = vi.spyOn(mongoose.connection, 'readyState', 'get');
+
+    // 1. Disconnected/unavailable DB in non-test mode -> throws TRANSACTION_UNAVAILABLE (503)
+    readyStateSpy.mockReturnValue(0);
+    await expect(
+      runInTransaction(async () => 'ok', { isTest: false })
+    ).rejects.toMatchObject({
+      code: 'TRANSACTION_UNAVAILABLE',
+      statusCode: 503,
+    });
+
+    // 2. startSession() failure in non-test mode -> throws TRANSACTION_UNAVAILABLE (503)
+    readyStateSpy.mockReturnValue(1);
+    const sessionSpy = vi.spyOn(mongoose, 'startSession').mockRejectedValueOnce(new Error('ReplicaSet not connected'));
+    await expect(
+      runInTransaction(async () => 'ok', { isTest: false })
+    ).rejects.toMatchObject({
+      code: 'TRANSACTION_UNAVAILABLE',
+      statusCode: 503,
+    });
+    sessionSpy.mockRestore();
+
+    // 3. startSession() succeeds, but session.startTransaction() throws -> throws TRANSACTION_UNAVAILABLE (503), workFn not called, endSession called
+    const mockDbSession = {
+      startTransaction: vi.fn().mockImplementation(() => {
+        throw new Error('Transaction initialization rejected by replica set');
+      }),
+      commitTransaction: vi.fn(),
+      abortTransaction: vi.fn(),
+      endSession: vi.fn().mockResolvedValue(),
+    };
+    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValueOnce(mockDbSession);
+    const workFnSpy = vi.fn().mockResolvedValue('should_not_run');
+
+    await expect(
+      runInTransaction(workFnSpy, { isTest: false })
+    ).rejects.toMatchObject({
+      code: 'TRANSACTION_UNAVAILABLE',
+      statusCode: 503,
+    });
+
+    expect(workFnSpy).not.toHaveBeenCalled();
+    expect(mockDbSession.endSession).toHaveBeenCalled();
+    startSessionSpy.mockRestore();
+    readyStateSpy.mockRestore();
+
+    // 4. Test mode fallback -> executes workFn(null) cleanly
+    const testResult = await runInTransaction(async (session) => {
+      expect(session).toBeNull();
+      return 'test_success';
+    }, { isTest: true });
+    expect(testResult).toBe('test_success');
+  });
+
+  // --- Test 26: Full isActive Lifecycle Assertion ---
+  it('26. manages complete isActive lifecycle: isActive=true during active study, and isActive=false upon COMPLETED and EXITED', async () => {
     // 1. Initial creation -> isActive: true
     const createRes = await request(app)
       .post(`/api/v1/topics/${topicA._id}/study/sessions`)

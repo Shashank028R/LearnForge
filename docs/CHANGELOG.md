@@ -30,8 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **REST APIs**:
   - Authenticated study routes mounted under `/api/v1/study-sessions` and `/api/v1/topics/:topicId/study/sessions`.
 - **Automated & Live Verification**:
-  - 25 unit/integration tests in `server/tests/studySession.test.js` (total 230 backend tests passing 100%).
-  - 19-gate fail-closed live verification script `server/scripts/verify_phase08_live.js` against MongoDB Atlas replica set, proving genuine creation race with `TestSyncBarrier(2)`, adversarial reasoning signal validation, `isActive` terminal lifecycle, and lease fencing.
+  - 26 unit/integration tests in `server/tests/studySession.test.js` (total 231 backend tests passing 100%).
+  - 19-gate fail-closed live verification script `server/scripts/verify_phase08_live.js` against MongoDB Atlas replica set, proving genuine creation race with `TestSyncBarrier(2)`, authoritative reasoning signal validation, `isActive` terminal lifecycle, and lease fencing.
 - **Gmail OTP Investigation**: Live Gmail SMTP verification completed and verified (`VERIFIED`).
 - **Architecture Record**: Documented in `docs/decisions/ADR-017-strict-study-mode-and-active-recall.md`.
 

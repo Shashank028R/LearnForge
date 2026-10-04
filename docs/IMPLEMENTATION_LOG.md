@@ -34,8 +34,8 @@ This log is the permanent chronological engineering journal for the LearnForge p
 6. **REST APIs (`server/src/controllers/studyController.js` & `server/src/routes/studyRoutes.js`)**:
    - Mounted authenticated study routes under `/api/v1/study-sessions` and `/api/v1/topics/:topicId/study/sessions`.
 7. **Automated & Live Verification**:
-   - Added 25 unit/integration tests in `server/tests/studySession.test.js` (total 230 backend tests passing 100%).
-   - Fail-closed live verification script `server/scripts/verify_phase08_live.js` fully passed all 19 verification gates against MongoDB Atlas replica set, proving genuine creation races, index enforcement, adversarial reasoning signal validation, `isActive` terminal lifecycle, and evaluation crash recovery.
+   - Added 26 unit/integration tests in `server/tests/studySession.test.js` (total 231 backend tests passing 100%).
+   - Fail-closed live verification script `server/scripts/verify_phase08_live.js` fully passed all 19 verification gates against MongoDB Atlas replica set, proving genuine creation races, index enforcement, authoritative reasoning signal validation, `isActive` terminal lifecycle, and evaluation crash recovery.
 8. **Gmail OTP Investigation**:
    - Live external Gmail SMTP verification successfully tested and operational (`VERIFIED`).
 

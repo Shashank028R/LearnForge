@@ -271,20 +271,29 @@ async function runLiveVerification() {
     console.log('[7/19] [AI GATEWAY & DOMAIN] Authoritative Adversarial Reasoning-Signal Validation...');
     const canonicalList = [concept1, concept2];
     
-    // Test 7a: Purely hallucinated signals are filtered out and replaced by server-authoritative signals
-    const hallucinatedRaw = ['Mention the moon phase', 'Discuss an unrelated database concept'];
+    // Test 7a: Purely hallucinated signals & deceptive sub-word overlaps are filtered out
+    const hallucinatedRaw = [
+      'Mention the moon phase',
+      'Discuss an unrelated database concept',
+      'Explain randomized database migration strategy',
+      'Discuss duration-based caching policy',
+    ];
     const filteredHallucinated = studyAiService.groundExpectedReasoningSignals(hallucinatedRaw, canonicalList);
-    if (filteredHallucinated.some(s => s.includes('moon') || s.includes('unrelated'))) {
+    if (filteredHallucinated.some(s => s.includes('moon') || s.includes('database migration') || s.includes('caching policy'))) {
       throw new Error(`FAIL-CLOSED: Hallucinated signals leaked through filter: ${JSON.stringify(filteredHallucinated)}`);
     }
-    if (filteredHallucinated.length === 0) {
-      throw new Error('FAIL-CLOSED: Server failed to synthesize fallback authoritative signals.');
+    if (filteredHallucinated.length !== 2) {
+      throw new Error(`FAIL-CLOSED: Server failed to synthesize fallback authoritative signals for both canonical concepts.`);
     }
 
-    // Test 7b: Mixed signals (valid concept term + hallucinated term)
-    const mixedRaw = ['Explain randomized election timers between 150-300ms', 'Mention the moon phase'];
+    // Test 7b: Mixed signals (legitimate concept reference + hallucinated term)
+    const mixedRaw = [
+      'Explain how Randomized Election Timers prevent split votes',
+      'Mention the moon phase',
+      'Discuss duration-based caching policy',
+    ];
     const filteredMixed = studyAiService.groundExpectedReasoningSignals(mixedRaw, canonicalList);
-    if (filteredMixed.length !== 1 || !filteredMixed[0].includes('randomized election timers')) {
+    if (filteredMixed.length !== 1 || !filteredMixed[0].includes('Randomized Election Timers')) {
       throw new Error(`FAIL-CLOSED: Mixed signal filtering failed: ${JSON.stringify(filteredMixed)}`);
     }
 
@@ -584,20 +593,142 @@ async function runLiveVerification() {
     console.log(`  -> Subsequent Retry Result: Succeeded (Next Status: ${retryRes.session.status})`);
     console.log('  -> PASS: Real live catastrophic evaluation recovery verified on MongoDB Atlas replica set.\n');
 
-    // --- Gate 18: Active-Session Terminal Lifecycle (isActive=false on COMPLETED and EXITED) ---
-    console.log('[18/19] [LIFECYCLE & DATABASE] Verify isActive Terminal Invariants (COMPLETED & EXITED)...');
+    // --- Gate 18: Real Application Completion Path & Active-Session Terminal Lifecycle ---
+    console.log('[18/19] [LIFECYCLE & DATABASE] Real Application Completion Path (continueSession -> COMPLETED) & EXITED Invariants...');
     
-    // 18a: Complete session -> status: COMPLETED, isActive: false
-    await StudySession.updateOne(
-      { _id: createdSession._id, userId: userA._id },
-      { $set: { status: STUDY_STATUS.COMPLETED, isActive: false } }
-    );
-    const completedDoc = await StudySession.findById(createdSession._id);
-    if (completedDoc.status !== STUDY_STATUS.COMPLETED || completedDoc.isActive !== false) {
-      throw new Error(`FAIL-CLOSED: Expected status COMPLETED and isActive false, got status=${completedDoc.status}, isActive=${completedDoc.isActive}`);
+    // 18a: Real Application-Path Completion Flow (all concepts demonstrated -> ADVANCING -> continueSession -> COMPLETED)
+    const completionTopic = await Topic.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      title: `Consensus Termination Invariant ${nonce}`,
+      normalizedTitle: `consensus termination invariant ${nonce}`.toLowerCase(),
+      description: 'Single-concept topic for proving full application session completion.',
+    });
+    cleanupIds.topics.push(completionTopic._id);
+
+    const completionConcept = await Concept.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      topicId: completionTopic._id,
+      name: 'Termination Liveness Property',
+      normalizedName: 'termination liveness property',
+      description: 'Every non-faulty process eventually decides on some value in finite steps.',
+      status: 'LEARNING',
+    });
+    cleanupIds.concepts.push(completionConcept._id);
+
+    // Create session via HTTP endpoint
+    const compCreateRes = await fetch(`${API_BASE}/topics/${completionTopic._id}/study/sessions`, {
+      method: 'POST',
+      headers: { Cookie: cookieA },
+    });
+    if (!compCreateRes.ok) throw new Error(`Completion session creation failed: HTTP ${compCreateRes.status}`);
+    const compCreateData = await compCreateRes.json();
+    const compSession = compCreateData.data.session;
+    cleanupIds.studySessions.push(compSession._id);
+
+    // Submit correct answer via HTTP endpoint
+    const compAnswerRes = await fetch(`${API_BASE}/study-sessions/${compSession._id}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+      body: JSON.stringify({
+        questionId: compSession.activeQuestion.questionId,
+        sessionVersion: compSession.sessionVersion,
+        clientTurnId: `turn_comp_${Date.now()}`,
+        answer: 'Termination Liveness Property is the critical distributed systems liveness guarantee ensuring that every non-faulty process eventually decides on some value in finite execution steps without deadlock, livelock, or indefinite blocking.',
+      }),
+    });
+    if (!compAnswerRes.ok) throw new Error(`Completion answer submission failed: HTTP ${compAnswerRes.status}`);
+    const compAnswerData = await compAnswerRes.json();
+    const compSessionAfterAnswer = compAnswerData.data.session;
+
+    let currentSessionForCompletion = compSessionAfterAnswer;
+    let remediationAttempts = 0;
+
+    while (currentSessionForCompletion.status === STUDY_STATUS.REMEDIATING && remediationAttempts < 3) {
+      remediationAttempts++;
+      // Continue to RECHECKING
+      const recheckRes = await fetch(`${API_BASE}/study-sessions/${compSession._id}/continue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+        body: JSON.stringify({ sessionVersion: currentSessionForCompletion.sessionVersion }),
+      });
+      const recheckData = await recheckRes.json();
+      const followUpQ = recheckData.data.activeQuestion;
+
+      // Submit thorough follow-up answer
+      const followUpAnswerRes = await fetch(`${API_BASE}/study-sessions/${compSession._id}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+        body: JSON.stringify({
+          questionId: followUpQ.questionId,
+          sessionVersion: recheckData.data.sessionVersion,
+          clientTurnId: `turn_comp_fu_${remediationAttempts}_${Date.now()}`,
+          answer: 'Termination Liveness Property is the essential distributed consensus liveness guarantee ensuring that every correct, non-faulty process eventually decides on a value in finite execution steps, preventing perpetual blocking or infinite loops.',
+        }),
+      });
+      const followUpAnswerData = await followUpAnswerRes.json();
+      currentSessionForCompletion = followUpAnswerData.data.session;
     }
 
-    // 18b: Exit session via studyService -> status: EXITED, isActive: false
+    if (currentSessionForCompletion.status !== STUDY_STATUS.ADVANCING) {
+      throw new Error(`Expected session status ADVANCING before completion continue, got ${currentSessionForCompletion.status}`);
+    }
+
+    // Call continueSession via HTTP endpoint -> detects all concepts demonstrated and transitions to COMPLETED
+    const compContinueRes = await fetch(`${API_BASE}/study-sessions/${compSession._id}/continue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookieA },
+      body: JSON.stringify({
+        sessionVersion: currentSessionForCompletion.sessionVersion,
+      }),
+    });
+    if (!compContinueRes.ok) throw new Error(`Completion continue failed: HTTP ${compContinueRes.status}`);
+    const compContinueData = await compContinueRes.json();
+    const completedSessionDoc = compContinueData.data;
+
+    if (completedSessionDoc.status !== STUDY_STATUS.COMPLETED) {
+      throw new Error(`Expected status COMPLETED, got ${completedSessionDoc.status}`);
+    }
+    if (completedSessionDoc.isActive !== false) {
+      throw new Error(`Expected isActive false on completed session, got ${completedSessionDoc.isActive}`);
+    }
+
+    // Assert in MongoDB Atlas replica set
+    const atlasCompletedDoc = await StudySession.findById(compSession._id);
+    if (atlasCompletedDoc.status !== STUDY_STATUS.COMPLETED || atlasCompletedDoc.isActive !== false) {
+      throw new Error(`FAIL-CLOSED: Persisted Atlas completed session has status=${atlasCompletedDoc.status}, isActive=${atlasCompletedDoc.isActive}`);
+    }
+
+    // 18b: Verify new active session creation on same topic succeeds without index collision
+    const postCompCreateRes = await fetch(`${API_BASE}/topics/${completionTopic._id}/study/sessions`, {
+      method: 'POST',
+      headers: { Cookie: cookieA },
+    });
+    if (!postCompCreateRes.ok) throw new Error(`Post-completion session creation failed: HTTP ${postCompCreateRes.status}`);
+    const postCompCreateData = await postCompCreateRes.json();
+    if (postCompCreateData.data.isNew !== true || postCompCreateData.data.session.isActive !== true) {
+      throw new Error('FAIL-CLOSED: Failed to create new active session on topic after completion.');
+    }
+    cleanupIds.studySessions.push(postCompCreateData.data.session._id);
+
+    const compTopicActiveCount = await StudySession.countDocuments({
+      userId: userA._id,
+      topicId: completionTopic._id,
+      isActive: true,
+    });
+    const compTopicTotalCount = await StudySession.countDocuments({
+      userId: userA._id,
+      topicId: completionTopic._id,
+    });
+    if (compTopicActiveCount !== 1) {
+      throw new Error(`FAIL-CLOSED: Expected 1 active session on completed topic, found ${compTopicActiveCount}`);
+    }
+    if (compTopicTotalCount !== 2) {
+      throw new Error(`FAIL-CLOSED: Expected 2 total sessions on completed topic, found ${compTopicTotalCount}`);
+    }
+
+    // 18c: Verify EXITED lifecycle via studyService
     const exitDoc = await studyService.exitSession(userA._id, recSession._id, {
       sessionVersion: retryRes.session.sessionVersion,
     });
@@ -609,33 +740,10 @@ async function runLiveVerification() {
       throw new Error(`FAIL-CLOSED: Persisted exit session has isActive=${exitedDoc.isActive}`);
     }
 
-    // 18c: Verify new active session creation succeeds on topic with existing EXITED session
-    const postExitCreate = await studyService.createOrResumeSession(userA._id, recoveryTopic._id);
-    if (postExitCreate.isNew !== true || postExitCreate.session.isActive !== true) {
-      throw new Error('FAIL-CLOSED: Failed to create new active session after previous session reached terminal EXITED state.');
-    }
-    cleanupIds.studySessions.push(postExitCreate.session._id);
-
-    const recoveryTopicActiveCount = await StudySession.countDocuments({
-      userId: userA._id,
-      topicId: recoveryTopic._id,
-      isActive: true,
-    });
-    const recoveryTopicTotalCount = await StudySession.countDocuments({
-      userId: userA._id,
-      topicId: recoveryTopic._id,
-    });
-    if (recoveryTopicActiveCount !== 1) {
-      throw new Error(`FAIL-CLOSED: Expected exactly 1 active session on topic, found ${recoveryTopicActiveCount}`);
-    }
-    if (recoveryTopicTotalCount !== 2) {
-      throw new Error(`FAIL-CLOSED: Expected 2 total sessions (1 EXITED, 1 active) on topic, found ${recoveryTopicTotalCount}`);
-    }
-
-    console.log(`  -> Completed Session Invariant: status=COMPLETED, isActive=false.`);
+    console.log(`  -> Real Application Completion Path: continueSession() -> status=COMPLETED, isActive=false.`);
     console.log(`  -> Exited Session Invariant: status=EXITED, isActive=false.`);
-    console.log(`  -> Partial Index Reusability: Total topic sessions=${recoveryTopicTotalCount}, Active sessions=${recoveryTopicActiveCount} (EXACTLY 1).`);
-    console.log('  -> PASS: Complete isActive terminal lifecycle and partial unique index reuse verified.\n');
+    console.log(`  -> Partial Index Reusability: Total topic sessions=${compTopicTotalCount}, Active sessions=${compTopicActiveCount} (EXACTLY 1).`);
+    console.log('  -> PASS: Complete application-path completion lifecycle, exit lifecycle, and partial unique index reuse verified.\n');
 
     // --- Gate 19: Immutability-Safe Native Driver Teardown ---
     console.log('[19/19] [TEARDOWN] Immutability-Safe Native Driver Test Teardown...');
