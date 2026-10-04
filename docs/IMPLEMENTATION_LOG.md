@@ -2,7 +2,38 @@
 
 This log is the permanent chronological engineering journal for the LearnForge project. Every phase records its objective, work performed, architectural decisions, testing, problems, and solutions.
 
-## [Phase 08] Strict Study Mode & Active Recall (Checkpoint 2 Backend)
+## [Phase 08 — Checkpoint 3] Strict Study Mode & Active Recall Frontend
+
+- **Date**: October 5, 2026
+- **Status**: Completed (Frontend Implementation, Automated Test Suite & Browser Verification)
+- **Phase**: Phase 08 — Strict Study Mode & Active Recall (Checkpoint 3)
+- **Core Invariant**: *"Normal Chat = user asks → AI explains. Study Mode = AI teaches → asks active recall question → evaluates multi-criteria reasoning → Socratic remediation → advances on demonstrated understanding."*
+- **Objective**: Implement the Phase 08 Strict Study Mode frontend as a calm, professional, high-utility study workspace that directly interfaces with the authoritative Phase 08 backend state machine.
+
+### Work Performed
+1. **API Client Integration (`client/src/api/studyApi.js`)**:
+   - Implemented standard client bindings for all 8 Phase 08 backend endpoints: `createOrResumeSession`, `listSessions`, `getSession`, `submitAnswer`, `continueSession`, `pauseSession`, `resumeSession`, `exitSession`.
+2. **Component Architecture (`client/src/components/study/`)**:
+   - `StudyHeader.jsx`: Topic context, state badge (`QUESTIONING`, `REMEDIATING`, `RECHECKING`, `ADVANCING`, `PAUSED`, `COMPLETED`, `EXITED`), pinned syllabus badge (`Syllabus v# (Pinned)`), sessionVersion, pause/resume, exit dialog, turn history toggle.
+   - `QuestionCard.jsx`: Visual focus displaying active recall question prompt, question type badge, target concept names, and reasoning expectations.
+   - `AnswerComposer.jsx`: Keyboard-accessible textarea with live character counter (20,000 max), `Ctrl+Enter` / `Cmd+Enter` shortcut, stable `clientTurnIdRef` key across network retries, and disabled states during in-flight evaluation.
+   - `EvaluationCard.jsx`: Transparent pedagogical breakdown rendering verdict badge (`CORRECT`, `PARTIALLY_CORRECT`, `INCORRECT`, `UNCERTAIN`), percentage scores, submitted answer recap, tutor analysis prose, key strengths, improvement areas, missing concepts, and continue advancement button.
+   - `RemediationCard.jsx`: Dedicated Socratic remediation view presenting tutor hint, follow-up probe preview, and "Answer Follow-Up Question" transition action.
+   - `TurnHistory.jsx`: Collapsible chronological turn drawer distinguishing `INITIAL` vs `FOLLOW_UP` attempts, prompts, student answers, and evaluations.
+   - `StudyCompletedCard.jsx`: Genuine session-local completion summary displaying questions asked, answers submitted, direct correct count, and remediation count.
+   - `StudyExitedCard.jsx`: Terminal sealed session view.
+3. **Workspace & Navigation Integration (`client/src/pages/StudyPage.jsx`, `SubjectDetailPage.jsx`, `Sidebar.jsx`, `App.jsx`)**:
+   - Integrated topic launcher, URL query synchronization (`sessionId`, `topicId`), concurrency conflict reconciliation on HTTP 409 (`STALE_STUDY_STATE`), and evaluation crash recovery (`EVALUATION_FAILED_RETRY_SAFE`).
+   - Added Study button directly on topic nodes in Subject Detail view and Sidebar navigation.
+4. **Automated Testing & Build Verification**:
+   - Added 15 comprehensive unit & integration tests in `client/src/pages/Study.test.jsx`. Total client tests: 67/67 passing (100%). Total backend tests: 231/231 passing (100%). Monorepo total: 298/298 tests passing (100%).
+   - Vite production build verified and clean.
+5. **Live Browser Verification**:
+   - Autonomous end-to-end user journey executed against live dev server and MongoDB database, validating subject navigation, study session launch, active recall reasoning prompt, live answer submission, AI evaluation card display, Socratic follow-up advancement, pause/resume, and turn history drawer.
+
+---
+
+## [Phase 08 — Checkpoint 2] Strict Study Mode & Active Recall Backend
 
 - **Date**: October 5, 2026
 - **Status**: Completed (Backend Implementation & Live Verification)

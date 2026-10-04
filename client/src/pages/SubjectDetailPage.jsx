@@ -856,6 +856,16 @@ export function SubjectDetailPage() {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => navigate(`/study?topicId=${topic._id}`)}
+                    className="text-xs"
+                    aria-label={`Start Study Mode for ${topic.title}`}
+                  >
+                    <Icon name="study" size={14} className="mr-1.5" />
+                    Study
+                  </Button>
                   <IconButton
                     icon={<Icon name="edit" size={14} />}
                     label={`Edit ${topic.title}`}

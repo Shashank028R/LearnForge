@@ -292,6 +292,12 @@ export function Icon({ name, size = 20, className = '', ...props }) {
     minus: (
       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" />
     ),
+    play: (
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+    ),
+    pause: (
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" />
+    ),
   };
 
   // Aliases for camelCase/domain variations

@@ -5,6 +5,32 @@ All notable changes to the LearnForge project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-10-05
+
+### Phase 08 — Strict Study Mode & Active Recall (Checkpoint 3 Frontend)
+
+#### Added
+- **Frontend Study Mode Workspace**:
+  - `StudyPage.jsx`: Topic-scoped active study workspace with topic launcher, session state synchronization, HTTP 409 concurrency reconciliation, and non-stranding crash recovery.
+  - `StudyHeader.jsx`: Workspace context with status badges, pinned syllabus version indicators, sessionVersion, pause/resume, exit dialog, and turn history drawer toggle.
+  - `QuestionCard.jsx`: Visual focus rendering active recall prompt, question type badge, target concepts, and reasoning guidance.
+  - `AnswerComposer.jsx`: Keyboard-accessible textarea with character counter (20,000 max), `Ctrl+Enter` / `Cmd+Enter` shortcut, and stable `clientTurnId` idempotency key.
+  - `EvaluationCard.jsx`: Multi-criteria pedagogical breakdown displaying verdict badge (`CORRECT`, `PARTIALLY_CORRECT`, `INCORRECT`, `UNCERTAIN`), percentage scores, tutor analysis, strengths/weaknesses, and continue action.
+  - `RemediationCard.jsx`: Dedicated Socratic remediation view presenting tutor guidance, follow-up probe preview, and transition to follow-up question.
+  - `TurnHistory.jsx`: Collapsible chronological turn history preserving `INITIAL` and `FOLLOW_UP` turn sequences.
+  - `StudyCompletedCard.jsx` & `StudyExitedCard.jsx`: Professional completion and terminal exit states.
+- **Study API Layer (`client/src/api/studyApi.js`)**:
+  - Full client bindings for all 8 Phase 08 study endpoints.
+- **Navigation Integration**:
+  - Added "Study" button to topic nodes in `SubjectDetailPage.jsx` and "Study" navigation link in `Sidebar.jsx`.
+- **Testing & Verification**:
+  - 15 automated unit & integration tests in `client/src/pages/Study.test.jsx`.
+  - Total client tests: 67/67 passing (100%).
+  - Total repository tests: 298/298 passing (100%).
+  - Live autonomous browser verification against live backend and MongoDB database.
+
+---
+
 ## [0.9.0] - 2026-10-05
 
 ### Phase 08 — Strict Study Mode & Active Recall (Checkpoint 2 Backend)

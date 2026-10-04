@@ -687,6 +687,24 @@ Pausing during `ANSWER_PENDING` or `EVALUATING` would introduce non-deterministi
 **Answer**:  
 When a study session is initialized, if an approved `SyllabusVersion` exists, `syllabusVersionId` and `syllabusVersionNumber` are permanently pinned on the `StudySession` document. Subsequent revisions or new syllabus approvals for that subject do not mutate or re-scope active study sessions.
 
+### Q98: How does the LearnForge frontend interface with the authoritative Study Mode state machine?
+**Answer**:  
+The frontend workspace (`StudyPage.jsx`) is a direct, controlled interaction layer over the backend domain aggregate:
+1. UI rendering is strictly driven by the authoritative backend `StudySession.status` (`QUESTIONING`, `ANSWER_PENDING`, `EVALUATING`, `REMEDIATING`, `RECHECKING`, `ADVANCING`, `COMPLETED`, `PAUSED`, `EXITED`).
+2. The frontend avoids inventing optimistic local progressions or fake client-only state transitions.
+3. On page reload, the frontend fetches the authoritative document from `GET /api/v1/study-sessions/:id`, reconstructing the active question, turn history, and sessionVersion without loss of context.
 
+### Q99: How does the client handle optimistic locking and HTTP 409 concurrency conflicts?
+**Answer**:  
+Every mutation request sent from the client includes the latest known `sessionVersion`. If another tab or concurrent action advances the session version on the server, the backend returns HTTP 409 `STALE_STUDY_STATE`.  
+The client handles this gracefully:
+1. It displays an explicit reconciliation banner: *"Your study session changed in another tab. Refreshing the latest session state."*
+2. It fetches the latest authoritative session document from the server via `studyApi.getSession(session._id)`.
+3. It updates local state without discarding student inputs or leaving the UI stranded in an unresponsive disabled state.
 
-
+### Q100: How does the frontend prevent duplicate submissions while preserving idempotency across retries?
+**Answer**:  
+1. When composing an answer, a stable `clientTurnId` is generated once and stored in a React `useRef`.
+2. Re-renders or prop updates do NOT generate a new `clientTurnId`.
+3. If a network timeout or transient error occurs and the student resubmits, the exact same `clientTurnId` is sent with the retry payload, allowing the backend to return the cached evaluation without creating duplicate turns.
+4. Once an answer is submitted, the submit button is immediately disabled and transitions to an in-flight evaluating spinner to prevent accidental double-clicks.

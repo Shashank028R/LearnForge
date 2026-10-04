@@ -55,7 +55,15 @@ Standard AI learning platforms act as passive question answering systems. In Lea
    - `StudySession.updateOne` with query fencing (`operationId`, `sessionVersion`, `status`) provides atomic document isolation.
    - `runInTransaction` operates fail-closed in production/live environments (`TRANSACTION_UNAVAILABLE`), preventing silent un-transactional execution.
 
+9. **Frontend UI Architecture & Optimistic Concurrency Reconciliation (Checkpoint 3)**:
+   - The frontend workspace is a direct interaction layer over the authoritative backend state machine.
+   - UI state maps 1:1 with backend status (`QUESTIONING`, `ANSWER_PENDING`, `EVALUATING`, `REMEDIATING`, `RECHECKING`, `ADVANCING`, `COMPLETED`, `PAUSED`, `EXITED`).
+   - `clientTurnId` is generated once per active question submission and stored in a React ref, preventing spurious duplicate turns on component re-renders or transport retries.
+   - On HTTP 409 `STALE_STUDY_STATE`, the frontend displays an honest reconciliation notification and retrieves the latest authoritative document without destroying student input.
+   - WCAG AA accessibility: semantic HTML, `Ctrl+Enter` keyboard submission, aria live announcements, and visible focus indicators.
+
 ## Consequences
 - Strict separation between session-local pedagogical records and long-term mastery engine (Phase 09).
 - Immutable preservation of all student reasoning steps.
 - High resilience to distributed network lag, crashes, and concurrent browser tab races.
+- Consistent, calm, and accessible user experience across all devices.
