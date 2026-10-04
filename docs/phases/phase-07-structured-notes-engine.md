@@ -17,6 +17,7 @@ Phase 07 implements the **Structured Notes Engine** for LearnForge, enabling str
 6. **Deterministic Concurrency Barrier**: Real live concurrency is proven against MongoDB Atlas replica set transactions using synchronization barriers:
    - Initial note creation race: Winner commits v1 via transaction, loser catches unique index / write conflict and recovers safely (`resolvedVia: 'transaction_conflict_recovery'`, `alreadyExisted: true`, zero raw E11000).
    - Manual revision collision: Two simultaneous revisions with `baseVersion: 1` enter transaction processing together; exactly one creates v2, the other safely returns HTTP 409 `STALE_BASE_VERSION` with zero raw E11000 and zero partial state.
+   - Proposal approval vs rejection race (Gate 14): Using a 2-party `TestSyncBarrier`, both approval and rejection branches are deterministically synchronized at the pre-mutation critical section before release. Exactly one branch achieves a terminal state (`approved` committing NoteVersion, or `rejected` with zero new NoteVersions), and the losing branch fails safely without partial state or leaked database errors.
 7. **Server-Authoritative Block & Note Provenance**:
    - Manual revisions: New/modified blocks receive `origin: 'user'`, unchanged existing blocks retain previous server-side origin, client-supplied origin spoofing is ignored.
    - AI synthesis: Generated blocks are strictly assigned `origin: 'ai'`.
@@ -56,7 +57,7 @@ Phase 07 implements the **Structured Notes Engine** for LearnForge, enabling str
 
 ## Test & Verification Metrics
 
-- **Backend Automated Tests**: 204 passing across 12 test suites (including 37 notes engine tests in `server/tests/notes.test.js`).
+- **Backend Automated Tests**: 205 passing across 12 test suites (including 38 notes engine tests in `server/tests/notes.test.js`).
 - **Frontend Automated Tests**: 52 passing across 6 test suites (including 6 notes workspace tests in `client/src/pages/Notes.test.jsx`).
-- **Total Monorepo Tests**: 256 passing tests.
+- **Total Monorepo Tests**: 257 passing tests.
 - **Fail-Closed Live Verification**: `server/scripts/verify_phase07_live.js` validates Express API + MongoDB Atlas replica set + live Groq AI pipeline with 100% pass rate across all 16 verification gates.

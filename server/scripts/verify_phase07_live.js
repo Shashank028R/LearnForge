@@ -561,8 +561,8 @@ async function runLiveVerification() {
     }
     console.log(`✓ NoteProposal created in staging (ProposalId: ${proposal._id}, RiskLevel: ${proposal.riskAssessment.riskLevel})`);
 
-    // 14. Proposal Approval / Rejection Concurrency Guard (Exact Current Base Version)
-    console.log('\n[14/16] [DOMAIN-SERVICE CONCURRENCY] Proving Atomic Proposal Approval vs Rejection Race...');
+    // 14. Proposal Approval / Rejection Concurrency Guard (Exact Current Base Version & Deterministic Barrier)
+    console.log('\n[14/16] [DOMAIN-SERVICE CONCURRENCY] Proving Atomic Proposal Approval vs Rejection Race with Synchronization Barrier...');
     const noteBeforeRace = await NoteDocument.findById(currentDoc._id);
     const currentBaseVer = noteBeforeRace.currentVersionNumber;
     const currentBaseVerId = noteBeforeRace.currentVersionId;
@@ -593,14 +593,17 @@ async function runLiveVerification() {
       changeSummary: `Concurrent race proposal targeting base v${currentBaseVer}`,
     });
 
-    const notesService = new NotesService();
+    const raceNotesService = new NotesService();
+    const raceBarrier = new TestSyncBarrier(2);
+    raceNotesService.testConcurrencyBarrier = raceBarrier;
+
     const [concurrentApprove, concurrentReject] = await Promise.allSettled([
-      notesService.approveProposal({
+      raceNotesService.approveProposal({
         userId: testUser._id,
         proposalId: raceProposal._id,
         baseVersion: currentBaseVer,
       }),
-      notesService.rejectProposal({
+      raceNotesService.rejectProposal({
         userId: testUser._id,
         proposalId: raceProposal._id,
         reason: 'Concurrent rejection test',

@@ -1012,6 +1012,11 @@ ${customInstructions ? `Special Instructions: ${customInstructions}` : ''}`;
           throw conflictErr;
         }
 
+        // Concurrency barrier hook: synchronization barrier before terminal proposal approval mutation
+        if (this.testConcurrencyBarrier) {
+          await this.testConcurrencyBarrier.wait('approveProposal');
+        }
+
         const newVersionNumber = noteDoc.currentVersionNumber + 1;
         const versionDocId = new mongoose.Types.ObjectId();
 
@@ -1058,6 +1063,11 @@ ${customInstructions ? `Special Instructions: ${customInstructions}` : ''}`;
           proposal: proposal.toObject(),
         };
       } else {
+        // Concurrency barrier hook: synchronization barrier before terminal proposal approval mutation
+        if (this.testConcurrencyBarrier) {
+          await this.testConcurrencyBarrier.wait('approveProposal');
+        }
+
         // Initial NoteDocument creation through proposal approval
         const topic = await Topic.findOne({ _id: proposal.topicId, userId }).session(session);
         const noteDocId = new mongoose.Types.ObjectId();
@@ -1147,6 +1157,11 @@ ${customInstructions ? `Special Instructions: ${customInstructions}` : ''}`;
    */
   async rejectProposal(params) {
     const { userId, proposalId, reason } = params;
+
+    // Concurrency barrier hook: synchronization barrier before terminal proposal rejection mutation
+    if (this.testConcurrencyBarrier) {
+      await this.testConcurrencyBarrier.wait('rejectProposal');
+    }
 
     const updateOps = {
       $set: {

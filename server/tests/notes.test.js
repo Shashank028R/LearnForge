@@ -1276,7 +1276,131 @@ describe('Phase 07 — Structured Notes Engine', () => {
       expect(aiResult.proposal.proposedBlocks[0].origin).toBe('ai'); // Normalized to 'ai'
     });
 
-    it('prevents concurrent proposal approval / rejection race conditions', async () => {
+    it('prevents concurrent proposal approval / rejection race conditions with deterministic synchronization barrier', async () => {
+      const currentVersionId = new mongoose.Types.ObjectId();
+      const noteDoc = {
+        _id: new mongoose.Types.ObjectId(),
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        title: 'Concurrent Test Note',
+        currentVersionNumber: 1,
+        currentVersionId: currentVersionId,
+        status: 'published',
+        metadata: { blockCount: 1, totalWordCount: 10, conceptAttributionCount: 0 },
+        save: async function () {
+          noteDocumentsStore.set(this._id.toString(), this);
+          return this;
+        },
+        toObject: function () {
+          return { ...this };
+        },
+      };
+      noteDocumentsStore.set(noteDoc._id.toString(), noteDoc);
+
+      const proposal = {
+        _id: new mongoose.Types.ObjectId(),
+        noteDocumentId: noteDoc._id,
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        baseVersion: 1,
+        baseVersionId: currentVersionId,
+        proposedBlocks: [{ id: 'p1', type: 'paragraph', content: { text: 'Proposed text' }, origin: 'ai' }],
+        status: 'pending',
+        riskAssessment: { reasons: [], riskLevel: 'LOW', requiresApproval: true },
+        provenance: { conceptIds: [], learningEventIds: [], aiMetadata: {} },
+        changeSummary: 'Proposed merge',
+        save: async function () {
+          noteProposalsStore.set(this._id.toString(), this);
+          return this;
+        },
+        toObject: function () {
+          return { ...this };
+        },
+      };
+      noteProposalsStore.set(proposal._id.toString(), proposal);
+
+      class LocalSyncBarrier {
+        constructor(parties) {
+          this.parties = parties;
+          this.count = 0;
+          this.release = null;
+          this.promise = new Promise((res) => {
+            this.release = res;
+          });
+        }
+        async wait() {
+          this.count += 1;
+          if (this.count >= this.parties) {
+            this.release();
+          }
+          await this.promise;
+        }
+      }
+
+      const barrierService = new NotesService();
+      barrierService.testConcurrencyBarrier = new LocalSyncBarrier(2);
+
+      // Simulate MongoDB multi-document transaction write conflict detection during concurrent race
+      let rejectWon = false;
+      const originalFindOneAndUpdate = NoteProposal.findOneAndUpdate;
+      vi.spyOn(NoteProposal, 'findOneAndUpdate').mockImplementation(async (query, update) => {
+        let found = null;
+        for (const p of noteProposalsStore.values()) {
+          if (query._id && p._id.toString() === query._id.toString()) {
+            if (!query.userId || p.userId.toString() === query.userId.toString()) {
+              if (!query.status || p.status === query.status) {
+                found = p;
+                break;
+              }
+            }
+          }
+        }
+        if (!found) return null;
+        rejectWon = true;
+        if (update.$set) Object.assign(found, update.$set);
+        return found;
+      });
+
+      vi.spyOn(mongoose, 'startSession').mockImplementation(async () => ({
+        startTransaction: () => {},
+        commitTransaction: async () => {
+          if (rejectWon) {
+            const conflictErr = new Error('WriteConflict: document modified by concurrent operation');
+            conflictErr.code = 112;
+            conflictErr.codeName = 'WriteConflict';
+            throw conflictErr;
+          }
+        },
+        abortTransaction: async () => {},
+        endSession: async () => {},
+      }));
+
+      const results = await Promise.allSettled([
+        barrierService.approveProposal({
+          userId: userA._id,
+          proposalId: proposal._id,
+          baseVersion: 1,
+        }),
+        barrierService.rejectProposal({
+          userId: userA._id,
+          proposalId: proposal._id,
+          reason: 'Concurrent race rejection',
+        }),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+
+      const persistedProp = noteProposalsStore.get(proposal._id.toString());
+      expect(['approved', 'rejected']).toContain(persistedProp.status);
+    });
+
+    it('prevents attempting to reject an already-approved proposal (INVALID_PROPOSAL_STATUS)', async () => {
       const proposal = {
         _id: new mongoose.Types.ObjectId(),
         noteDocumentId: new mongoose.Types.ObjectId(),

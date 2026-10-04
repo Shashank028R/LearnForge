@@ -94,7 +94,7 @@
 - **Strict Immutability Guards**: All 10 update/delete mutation paths (`save`, `updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace`, `deleteOne`, `deleteMany`, `findOneAndDelete`, `bulkWrite`) throw `IMMUTABLE_NOTE_VERSION`.
 - **Server-Authoritative Provenance**: User edits are assigned `origin: 'user'`, existing blocks retain server origin, AI proposals strictly assigned `origin: 'ai'`, and initial creation client AI metadata is ignored. Fallbacks accurately record `source: 'deterministic_fallback'`, `provider: 'deterministic'`, `model: 'rule-based-v1'`.
 - **Block Schema Alignment**: Heading levels 1, 2, 3 only; canonical code `{ language, code }`; strict validation rejecting unknown keys.
-- **Optimistic Concurrency & Real Live Concurrency Proof**: Verified via deterministic synchronization barriers against MongoDB Atlas replica set transactions for initial note creation races and manual revision collisions (409 `STALE_BASE_VERSION`, zero raw E11000).
+- **Optimistic Concurrency & Real Live Concurrency Proof**: Verified via deterministic synchronization barriers (`TestSyncBarrier`) against MongoDB Atlas replica set transactions for initial note creation races, manual revision collisions (409 `STALE_BASE_VERSION`, zero raw E11000), and proposal approval vs rejection races with exactly one atomic terminal outcome.
 - **Risk-Managed Merge Staging & Atomic Lifecycle**: Staged `NoteProposal` records with risk tiers (`LOW`, `MEDIUM`, `HIGH`) and atomic conditional transitions preventing concurrent approval/rejection races.
 
 ---

@@ -42,13 +42,13 @@ Candidate AI updates are staged as `NoteProposal` records and classified into ri
 - **`MEDIUM RISK`**: Modifies or removes existing AI-authored explanation blocks. Explicit user approval required (`requiresApproval: true`).
 - **`LOW RISK`**: Purely additive new knowledge blocks to AI-authored sections.
 
-Atomic conditional status transitions (`findOneAndUpdate({ _id, status: 'pending' }, ...)`) prevent concurrent approval and rejection race conditions.
+Atomic conditional status transitions (`findOneAndUpdate({ _id, status: 'pending' }, ...)`) prevent concurrent approval and rejection race conditions. Verified deterministically via test synchronization barrier (`TestSyncBarrier`) ensuring real domain contention with exactly one terminal outcome.
 
 ### 6. Optimistic Concurrency & Collision Recovery
 - Every manual revision, restore, and proposal approval requires explicit `baseVersion` verification inside a MongoDB multi-document transaction (`readConcern: 'snapshot'`, `writeConcern: 'majority'`).
 - If `baseVersion !== noteDoc.currentVersionNumber`, the transaction aborts with HTTP 409 Conflict (`STALE_BASE_VERSION` or `STALE_PROPOSAL_BASE`).
 - Compound unique indexes `{ noteDocumentId: 1, version: 1 }` and `{ userId: 1, topicId: 1 }` serve as secondary storage guards. Any concurrent write collisions (E11000 / WriteConflict) are intercepted, transaction aborted, and mapped to domain HTTP 409 conflict errors with zero leaked raw database errors and zero partial state.
-- Real live concurrency is proven using deterministic synchronization barriers against MongoDB Atlas replica set transactions.
+- Real live concurrency is proven using deterministic synchronization barriers (`TestSyncBarrier`) against MongoDB Atlas replica set transactions across initial creation, manual revision, and proposal approval vs rejection.
 - Version restore creates a **new sequential NoteVersion** copying historical blocks without mutating historical snapshots.
 
 ## Consequences & Guarantees

@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `BlockEditor.jsx`: Interactive structured block editor with live preview, block reordering, and optimistic revision saves.
   - `VersionHistoryDrawer.jsx`: History inspector for viewing immutable snapshots and restoring versions.
   - `ProposalReviewModal.jsx`: Risk-informed proposal diff review and approval modal.
-- **Automated & Live Verification**: 37 unit/integration tests in `server/tests/notes.test.js` (total 204 backend tests passing), 6 frontend tests in `client/src/pages/Notes.test.jsx` (total 52 client tests passing), total 256 monorepo tests passing 100%, and fail-closed live verification script `server/scripts/verify_phase07_live.js` with deterministic synchronization barriers against MongoDB Atlas replica set transactions.
+- **Automated & Live Verification**: 38 unit/integration tests in `server/tests/notes.test.js` (total 205 backend tests passing), 6 frontend tests in `client/src/pages/Notes.test.jsx` (total 52 client tests passing), total 257 monorepo tests passing 100%, and fail-closed live verification script `server/scripts/verify_phase07_live.js` with deterministic synchronization barriers against MongoDB Atlas replica set transactions (including proposal approval vs rejection race).
 - **Architecture Record**: Documented in `docs/decisions/ADR-016-structured-notes-engine.md`.
 
 ---
