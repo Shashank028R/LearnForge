@@ -21,78 +21,106 @@ export class LearningStateMachine {
     const currentStatus = isNew ? LEARNING_STATES.NOT_STARTED : currentConcept.status || LEARNING_STATES.NOT_STARTED;
     const currentScore = isNew ? 0 : currentConcept.confidenceScore || 0;
     const currentEvidenceCount = isNew ? 0 : currentConcept.evidenceCount || 0;
+    const nextEvidenceCount = currentEvidenceCount + 1;
 
     const {
       eventType,
       classificationOutcome,
-      confidenceDelta = 15,
+      confidenceDelta,
       misconception,
     } = eventData;
 
     let newStatus = currentStatus;
     let newScore = currentScore;
-    let hasActiveMisconception = misconception && Boolean(misconception.misconceptionText);
+    const hasActiveMisconception = Boolean(misconception && misconception.misconceptionText);
+    const isConflict = classificationOutcome === 'CONFLICT' || eventType === 'concept_conflict';
 
-    // 1. Misconception or Confusion Detection -> Regression to NEEDS_REVIEW
+    // 1. Misconception / Confusion / Conflict -> Immediate regression to NEEDS_REVIEW
     if (
       hasActiveMisconception ||
+      isConflict ||
       eventType === 'misconception_detected' ||
       eventType === 'concept_misunderstood'
     ) {
       newStatus = LEARNING_STATES.NEEDS_REVIEW;
       const penalty = misconception?.severity === 'high' ? 30 : misconception?.severity === 'low' ? 15 : 20;
       newScore = Math.max(0, Math.round(currentScore - penalty));
+      return {
+        previousStatus: isNew ? null : currentStatus,
+        newStatus,
+        confidenceScore: newScore,
+        evidenceCount: nextEvidenceCount,
+      };
     }
-    // 2. Correction of Previous Misconception -> Recovery to LEARNING
-    else if (eventType === 'concept_corrected' || classificationOutcome === 'CORRECTION') {
-      if (currentStatus === LEARNING_STATES.NEEDS_REVIEW || currentStatus === LEARNING_STATES.NOT_STARTED) {
-        newStatus = LEARNING_STATES.LEARNING;
-      }
-      newScore = this._applyBoundedIncrease(currentScore, 15);
-    }
-    // 3. First-time Concept Introduction
-    else if (isNew || eventType === 'concept_introduced') {
-      newStatus = LEARNING_STATES.INTRODUCED;
-      newScore = Math.max(currentScore, 20);
-    }
-    // 4. Duplicate Fact Statement -> Minimal reward for repetition without inflation
-    else if (classificationOutcome === 'DUPLICATE') {
-      newScore = this._applyBoundedIncrease(currentScore, 2);
-    }
-    // 5. Normal Explanation / Complementary Knowledge
-    else if (eventType === 'concept_explained' || classificationOutcome === 'COMPLEMENTARY') {
-      if (currentStatus === LEARNING_STATES.NOT_STARTED) {
-        newStatus = LEARNING_STATES.INTRODUCED;
-      } else if (currentStatus === LEARNING_STATES.INTRODUCED) {
-        newStatus = LEARNING_STATES.LEARNING;
-      }
-      newScore = this._applyBoundedIncrease(currentScore, confidenceDelta);
-    }
-    // 6. Recall / Active Reinforcement
-    else if (eventType === 'concept_recalled' || eventType === 'concept_reinforced') {
-      const nextCount = currentEvidenceCount + 1;
-      const potentialScore = this._applyBoundedIncrease(currentScore, confidenceDelta);
 
-      if (currentStatus === LEARNING_STATES.UNDERSTOOD && nextCount >= 4 && potentialScore >= 80) {
-        newStatus = LEARNING_STATES.STRONG;
-      } else if (
-        (currentStatus === LEARNING_STATES.LEARNING || currentStatus === LEARNING_STATES.INTRODUCED) &&
-        nextCount >= 2 &&
-        potentialScore >= 60
-      ) {
-        newStatus = LEARNING_STATES.UNDERSTOOD;
-      } else if (currentStatus === LEARNING_STATES.NOT_STARTED) {
-        newStatus = LEARNING_STATES.INTRODUCED;
+    // 2. Correction of Previous Misconception -> Recovery
+    if (eventType === 'concept_corrected' || classificationOutcome === 'CORRECTION') {
+      newScore = Math.min(100, currentScore + 15);
+      if (currentStatus === LEARNING_STATES.NEEDS_REVIEW || currentStatus === LEARNING_STATES.NOT_STARTED) {
+        if (nextEvidenceCount >= 3 && newScore >= 70) {
+          newStatus = LEARNING_STATES.UNDERSTOOD;
+        } else {
+          newStatus = LEARNING_STATES.LEARNING;
+        }
+      } else {
+        newStatus = this._evaluateStatusFromMetrics(nextEvidenceCount, newScore);
       }
-      newScore = potentialScore;
+
+      return {
+        previousStatus: isNew ? null : currentStatus,
+        newStatus,
+        confidenceScore: newScore,
+        evidenceCount: nextEvidenceCount,
+      };
     }
+
+    // 3. First-time Concept Introduction
+    if (isNew || eventType === 'concept_introduced') {
+      newScore = Math.max(currentScore, 25);
+    }
+    // 4. Duplicate Repetition -> Minimal reinforcement
+    else if (classificationOutcome === 'DUPLICATE') {
+      newScore = this._applyBoundedIncrease(currentScore, 5);
+    }
+    // 5. Active Recall / Reinforcement
+    else if (eventType === 'concept_recalled' || eventType === 'concept_reinforced') {
+      const delta = typeof confidenceDelta === 'number' ? confidenceDelta : 20;
+      newScore = this._applyBoundedIncrease(currentScore, delta);
+    }
+    // 6. Normal Explanation / Complementary Knowledge
+    else {
+      const delta = typeof confidenceDelta === 'number' ? confidenceDelta : 25;
+      newScore = this._applyBoundedIncrease(currentScore, delta);
+    }
+
+    // Determine target status from authoritative thresholds
+    newStatus = this._evaluateStatusFromMetrics(nextEvidenceCount, newScore);
 
     return {
       previousStatus: isNew ? null : currentStatus,
       newStatus,
       confidenceScore: newScore,
-      evidenceCount: currentEvidenceCount + 1,
+      evidenceCount: nextEvidenceCount,
     };
+  }
+
+  /**
+   * Deterministic status evaluation from evidence count and confidence score
+   */
+  _evaluateStatusFromMetrics(evidenceCount, score) {
+    if (evidenceCount >= 5 && score >= 90) {
+      return LEARNING_STATES.STRONG;
+    }
+    if (evidenceCount >= 3 && score >= 70) {
+      return LEARNING_STATES.UNDERSTOOD;
+    }
+    if (evidenceCount >= 2 && score >= 40) {
+      return LEARNING_STATES.LEARNING;
+    }
+    if (evidenceCount >= 1) {
+      return LEARNING_STATES.INTRODUCED;
+    }
+    return LEARNING_STATES.NOT_STARTED;
   }
 
   /**
@@ -137,7 +165,7 @@ export class LearningStateMachine {
     if (current >= 100) return 100;
     // Diminishing returns formula as confidence approaches 100
     const factor = Math.max(0.1, 1 - current / 125);
-    const increase = Math.round(delta * factor);
+    const increase = Math.max(1, Math.round(delta * factor));
     return Math.min(100, current + increase);
   }
 }

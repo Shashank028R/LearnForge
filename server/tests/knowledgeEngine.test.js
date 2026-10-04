@@ -350,7 +350,7 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
   describe('2. Learning State Machine & Bounded Confidence Calculations', () => {
     const sm = new LearningStateMachine();
 
-    it('transitions newly introduced concept from NOT_STARTED to INTRODUCED with score 20', () => {
+    it('transitions newly introduced concept from NOT_STARTED to INTRODUCED with score 25', () => {
       const res = sm.evaluateTransition({
         currentConcept: null,
         eventData: {
@@ -362,34 +362,34 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
 
       expect(res.previousStatus).toBeNull();
       expect(res.newStatus).toBe(LEARNING_STATES.INTRODUCED);
-      expect(res.confidenceScore).toBe(20);
+      expect(res.confidenceScore).toBe(25);
       expect(res.evidenceCount).toBe(1);
     });
 
-    it('advances INTRODUCED concept to LEARNING upon detailed explanation', () => {
+    it('advances INTRODUCED concept to LEARNING upon detailed explanation reaching score >= 40', () => {
       const res = sm.evaluateTransition({
         currentConcept: {
           status: LEARNING_STATES.INTRODUCED,
-          confidenceScore: 20,
+          confidenceScore: 30,
           evidenceCount: 1,
         },
         eventData: {
           eventType: 'concept_explained',
           classificationOutcome: 'COMPLEMENTARY',
-          confidenceDelta: 15,
+          confidenceDelta: 25,
         },
       });
 
       expect(res.previousStatus).toBe(LEARNING_STATES.INTRODUCED);
       expect(res.newStatus).toBe(LEARNING_STATES.LEARNING);
-      expect(res.confidenceScore).toBeGreaterThan(20);
+      expect(res.confidenceScore).toBeGreaterThanOrEqual(40);
     });
 
-    it('advances LEARNING concept to UNDERSTOOD after active recall and sufficient evidence', () => {
+    it('advances LEARNING concept to UNDERSTOOD after active recall and sufficient evidence (E >= 3, score >= 70)', () => {
       const res = sm.evaluateTransition({
         currentConcept: {
           status: LEARNING_STATES.LEARNING,
-          confidenceScore: 50,
+          confidenceScore: 65,
           evidenceCount: 2,
         },
         eventData: {
@@ -400,14 +400,14 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       });
 
       expect(res.newStatus).toBe(LEARNING_STATES.UNDERSTOOD);
-      expect(res.confidenceScore).toBeGreaterThanOrEqual(60);
+      expect(res.confidenceScore).toBeGreaterThanOrEqual(70);
     });
 
-    it('advances UNDERSTOOD concept to STRONG after repeated successful reinforcement', () => {
+    it('advances UNDERSTOOD concept to STRONG after repeated successful reinforcement (E >= 5, score >= 90)', () => {
       const res = sm.evaluateTransition({
         currentConcept: {
           status: LEARNING_STATES.UNDERSTOOD,
-          confidenceScore: 75,
+          confidenceScore: 88,
           evidenceCount: 4,
         },
         eventData: {
@@ -418,7 +418,7 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       });
 
       expect(res.newStatus).toBe(LEARNING_STATES.STRONG);
-      expect(res.confidenceScore).toBeGreaterThanOrEqual(80);
+      expect(res.confidenceScore).toBeGreaterThanOrEqual(90);
     });
 
     it('regresses concept to NEEDS_REVIEW upon detected misconception with score penalty', () => {
@@ -698,6 +698,213 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
 
       expect(res.status).toBe(404);
       expect(res.body.success).toBe(false);
+    });
+
+    it('rejects forged or cross-tenant message extraction requests on manual extraction endpoint', async () => {
+      const otherChatId = new mongoose.Types.ObjectId();
+      const fakeMsgId = new mongoose.Types.ObjectId();
+
+      vi.spyOn(Chat, 'findOne').mockImplementation(async (query) => {
+        const c = chatsStore.get(query._id?.toString());
+        if (c && c.userId.toString() === query.userId?.toString() && c.topicId.toString() === query.topicId?.toString()) {
+          return c;
+        }
+        return null;
+      });
+
+      vi.spyOn(Message, 'findOne').mockImplementation(async (query) => {
+        const m = messagesStore.get(query._id?.toString());
+        if (m && m.userId.toString() === query.userId?.toString() && m.chatId.toString() === query.chatId?.toString() && m.role === query.role) {
+          return m;
+        }
+        return null;
+      });
+
+      // 1. Missing fields
+      const res1 = await request(app)
+        .post(`/api/v1/topics/${topicA._id}/extract-knowledge`)
+        .set('Cookie', sessionCookieA)
+        .send({});
+      expect(res1.status).toBe(400);
+
+      // 2. Chat does not exist or belong to user
+      const res2 = await request(app)
+        .post(`/api/v1/topics/${topicA._id}/extract-knowledge`)
+        .set('Cookie', sessionCookieA)
+        .send({
+          chatId: otherChatId,
+          userMessageId: fakeMsgId,
+          assistantMessageId: fakeMsgId,
+        });
+      expect(res2.status).toBe(404);
+
+      // 3. User message unpersisted / role invalid
+      const validChat = {
+        _id: new mongoose.Types.ObjectId(),
+        userId: userA._id,
+        topicId: topicA._id,
+      };
+      chatsStore.set(validChat._id.toString(), validChat);
+
+      const res3 = await request(app)
+        .post(`/api/v1/topics/${topicA._id}/extract-knowledge`)
+        .set('Cookie', sessionCookieA)
+        .send({
+          chatId: validChat._id,
+          userMessageId: fakeMsgId,
+          assistantMessageId: fakeMsgId,
+        });
+      expect(res3.status).toBe(400);
+      expect(res3.body.error.code).toBe('INVALID_EVIDENCE');
+    });
+  });
+
+  describe('6. P0 & P1 Regression Gates (AIGateway Contract, Transactions & Immutability)', () => {
+    it('P0-1: EventExtractor consumes normalized AIGateway response ({ text, provider, model, usage })', async () => {
+      const mockGateway = {
+        generate: vi.fn().mockResolvedValue({
+          text: JSON.stringify({
+            events: [
+              {
+                conceptName: 'Smart Pointers',
+                aliases: ['Box', 'Rc', 'Arc'],
+                eventType: 'concept_explained',
+                classificationOutcome: 'NEW',
+                evidenceText: 'Box provides heap allocation in Rust.',
+                confidenceDelta: 15,
+              },
+            ],
+            topicSummaryUpdate: 'Introduces pointer types',
+          }),
+          provider: 'groq',
+          model: 'llama-3.3-70b-versatile',
+          task: AI_TASK_TYPES.KNOWLEDGE_EVENT_EXTRACTION,
+          usage: { promptTokens: 50, completionTokens: 100, totalTokens: 150 },
+          routingMetadata: { attempt: 1 },
+          requestId: 'req-contract-test',
+        }),
+      };
+
+      const extractor = new EventExtractor(mockGateway);
+      const result = await extractor.extractExchangeEvents({
+        userMessage: { content: 'What is Box<T>?' },
+        assistantMessage: { content: 'Box<T> is a smart pointer for heap allocation.' },
+        topicContext: { title: 'Smart Pointers' },
+        userId: userA._id,
+      });
+
+      expect(result.events).toHaveLength(1);
+      expect(result.events[0].conceptName).toBe('Smart Pointers');
+      expect(result.metadata.provider).toBe('groq');
+      expect(result.metadata.model).toBe('llama-3.3-70b-versatile');
+      expect(result.metadata.usage.totalTokens).toBe(150);
+    });
+
+    it('P0-2: Fails safely when MongoDB transaction support is unavailable', async () => {
+      vi.spyOn(mongoose, 'startSession').mockRejectedValueOnce(new Error('Standalone MongoDB does not support transactions'));
+
+      const engine = new KnowledgeEngineService();
+      await expect(
+        engine.processExchangeEvidence({
+          userId: userA._id,
+          subjectId: subjectA._id,
+          topicId: topicA._id,
+          chatId: new mongoose.Types.ObjectId(),
+          sourceMessageId: new mongoose.Types.ObjectId(),
+          userMessage: { content: 'Explain borrow checker.' },
+          assistantMessage: { content: 'Borrow checker ensures references are valid.' },
+        })
+      ).rejects.toThrow('Knowledge state mutations require MongoDB multi-document transaction support');
+    });
+
+    it('P0-3: Enforces append-only immutability on LearningEvent instances and pre-hooks', async () => {
+      const event = new LearningEvent({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId: new mongoose.Types.ObjectId(),
+        sourceMessageId: new mongoose.Types.ObjectId(),
+        conceptName: 'Immutable Concept',
+        eventType: 'concept_introduced',
+        classificationOutcome: 'NEW',
+        evidenceText: 'Historical evidence line',
+        confidenceScore: 25,
+        newStatus: 'INTRODUCED',
+        idempotencyKey: 'test-immutability-key',
+      });
+
+      // Mark as not new to test save mutation rejection
+      event.isNew = false;
+      await expect(event.save()).rejects.toThrow('LearningEvent is an immutable append-only audit ledger');
+    });
+
+    it('P1-1 & P1-2: Verifies all state transition boundaries and confidence formula invariants', () => {
+      const sm = new LearningStateMachine();
+
+      // 1 Evidence -> INTRODUCED
+      const t1 = sm.evaluateTransition({
+        currentConcept: null,
+        eventData: { eventType: 'concept_introduced', classificationOutcome: 'NEW' },
+      });
+      expect(t1.newStatus).toBe(LEARNING_STATES.INTRODUCED);
+      expect(t1.confidenceScore).toBe(25);
+      expect(t1.evidenceCount).toBe(1);
+
+      // 2 Evidence, score 39 -> INTRODUCED (< 40)
+      const t2_low = sm.evaluateTransition({
+        currentConcept: { status: LEARNING_STATES.INTRODUCED, confidenceScore: 20, evidenceCount: 1 },
+        eventData: { eventType: 'concept_explained', classificationOutcome: 'COMPLEMENTARY', confidenceDelta: 15 },
+      });
+      expect(t2_low.confidenceScore).toBeLessThan(40);
+      expect(t2_low.newStatus).toBe(LEARNING_STATES.INTRODUCED);
+
+      // 2 Evidence, score >= 40 -> LEARNING
+      const t2_high = sm.evaluateTransition({
+        currentConcept: { status: LEARNING_STATES.INTRODUCED, confidenceScore: 30, evidenceCount: 1 },
+        eventData: { eventType: 'concept_explained', classificationOutcome: 'COMPLEMENTARY', confidenceDelta: 25 },
+      });
+      expect(t2_high.confidenceScore).toBeGreaterThanOrEqual(40);
+      expect(t2_high.newStatus).toBe(LEARNING_STATES.LEARNING);
+
+      // 3 Evidence, score 69 -> LEARNING (< 70)
+      const t3_low = sm.evaluateTransition({
+        currentConcept: { status: LEARNING_STATES.LEARNING, confidenceScore: 50, evidenceCount: 2 },
+        eventData: { eventType: 'concept_explained', classificationOutcome: 'EXISTING', confidenceDelta: 10 },
+      });
+      expect(t3_low.confidenceScore).toBeLessThan(70);
+      expect(t3_low.newStatus).toBe(LEARNING_STATES.LEARNING);
+
+      // 3 Evidence, score >= 70 -> UNDERSTOOD
+      const t3_high = sm.evaluateTransition({
+        currentConcept: { status: LEARNING_STATES.LEARNING, confidenceScore: 60, evidenceCount: 2 },
+        eventData: { eventType: 'concept_recalled', classificationOutcome: 'EXISTING', confidenceDelta: 20 },
+      });
+      expect(t3_high.confidenceScore).toBeGreaterThanOrEqual(70);
+      expect(t3_high.newStatus).toBe(LEARNING_STATES.UNDERSTOOD);
+
+      // 4 Evidence, score 95 -> UNDERSTOOD (evidence count < 5)
+      const t4 = sm.evaluateTransition({
+        currentConcept: { status: LEARNING_STATES.UNDERSTOOD, confidenceScore: 85, evidenceCount: 3 },
+        eventData: { eventType: 'concept_reinforced', classificationOutcome: 'EXISTING', confidenceDelta: 25 },
+      });
+      expect(t4.confidenceScore).toBeGreaterThanOrEqual(90);
+      expect(t4.newStatus).toBe(LEARNING_STATES.UNDERSTOOD);
+
+      // 5 Evidence, score >= 90 -> STRONG
+      const t5 = sm.evaluateTransition({
+        currentConcept: { status: LEARNING_STATES.UNDERSTOOD, confidenceScore: 90, evidenceCount: 4 },
+        eventData: { eventType: 'concept_reinforced', classificationOutcome: 'EXISTING', confidenceDelta: 20 },
+      });
+      expect(t5.confidenceScore).toBeGreaterThanOrEqual(90);
+      expect(t5.newStatus).toBe(LEARNING_STATES.STRONG);
+
+      // Conflict / Misconception -> NEEDS_REVIEW with score penalty
+      const t_conflict = sm.evaluateTransition({
+        currentConcept: { status: LEARNING_STATES.STRONG, confidenceScore: 95, evidenceCount: 5 },
+        eventData: { classificationOutcome: 'CONFLICT', eventType: 'concept_conflict' },
+      });
+      expect(t_conflict.newStatus).toBe(LEARNING_STATES.NEEDS_REVIEW);
+      expect(t_conflict.confidenceScore).toBe(75); // 95 - 20 = 75
     });
   });
 });

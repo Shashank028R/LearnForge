@@ -370,8 +370,7 @@ Represents an immutable, tenant-scoped ledger entry recording each discrete lear
     model: String,
     latencyMs: Number
   },
-  createdAt: Date,
-  updatedAt: Date
+  createdAt: Date
 }
 ```
 **Indexes**:
@@ -413,3 +412,5 @@ Represents an immutable, tenant-scoped ledger entry recording each discrete lear
    User comments and tags stored in `Annotation` are auxiliary metadata attached to raw conversational evidence. They are strictly segregated from `Topic.knowledgeState` and future canonical notes.
 10. **AI Interaction & Knowledge Relevance Metadata (Phase 05)**:
     Assistant `Message` documents persist normalized `metadata: { provider, model, task, latencyMs, usage, routingDecision }` and `knowledgeContext: { relevance, disposition, subjectId, topicId }`. Off-topic messages are classified with `knowledgeContext.relevance: 'off_topic'` and `disposition: 'excluded'`, ensuring that they remain historical conversational evidence and are permanently excluded from canonical knowledge extraction and note generation pipelines.
+11. **Append-Only LearningEvent Ledger & Transactional State Mutation (Phase 06)**:
+    `LearningEvent` documents represent an immutable, append-only ledger of pedagogical evidence. Documents cannot be updated, replaced, or deleted once created (`save`, `updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace` pre-hooks strictly reject mutation). Multi-document mutations across `LearningEvent` creation, `Concept` upsert/update, and `Topic.knowledgeState` aggregation are executed exclusively inside MongoDB multi-document ACID transactions (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`). Sequential uncommitted execution is prohibited.

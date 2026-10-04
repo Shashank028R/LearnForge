@@ -67,18 +67,21 @@ When candidate concepts are extracted:
 | State | Entry Condition | Transition Trigger |
 | :--- | :--- | :--- |
 | `NOT_STARTED` | Default initial state | First introduction (`concept_introduced`) → `INTRODUCED` |
-| `INTRODUCED` | Concept encountered for first time | Detailed explanation or study → `LEARNING` |
-| `LEARNING` | Active study underway | Recall demonstrated (`evidenceCount >= 2`, score ≥ 60) → `UNDERSTOOD` |
-| `UNDERSTOOD` | Competence demonstrated | Repeated reinforcement (`evidenceCount >= 4`, score ≥ 80) → `STRONG` |
-| `STRONG` | Mastery demonstrated across sessions | Misconception or confusion → `NEEDS_REVIEW` |
-| `NEEDS_REVIEW` | Misconception detected | Valid correction (`concept_corrected`) → `LEARNING` |
+| `INTRODUCED` | Concept encountered for first time (`evidenceCount = 1`, score ≥ 25) | Further study (`evidenceCount >= 2`, score ≥ 40) → `LEARNING` |
+| `LEARNING` | Active study underway | Recall demonstrated (`evidenceCount >= 3`, score ≥ 70) → `UNDERSTOOD` |
+| `UNDERSTOOD` | Competence demonstrated | Repeated reinforcement (`evidenceCount >= 5`, score ≥ 90) → `STRONG` |
+| `STRONG` | Mastery demonstrated across multiple observations | Misconception or confusion → `NEEDS_REVIEW` |
+| `NEEDS_REVIEW` | Misconception or conflict detected | Valid correction (`concept_corrected`) → `LEARNING` (or `UNDERSTOOD` if `E >= 3` and score ≥ 70) |
 
 ---
 
-## 6. Bounded Confidence Model
+## 6. Bounded Confidence Model & Ledger Immutability
 Confidence is a bounded product signal (0–100), calculated deterministically via a diminishing returns formula:
-$$\text{newScore} = \min\left(100, \text{round}\left(\text{currentScore} + \text{delta} \times \left(1 - \frac{\text{currentScore}}{125}\right)\right)\right)$$
-- **Penalties**: High severity misconception drops score by 30 points; medium drops by 20 points.
+$$\Delta = \text{round}\left(\text{delta} \times \max\left(0.1, 1 - \frac{S_{\text{current}}}{125}\right)\right)$$
+$$\text{newScore} = \min(100, \max(0, S_{\text{current}} + \Delta))$$
+- **Penalties**: High severity misconception drops score by 30 points; medium/conflict drops by 20 points; low drops by 15 points.
+- **Append-Only Immutability**: `LearningEvent` is an immutable audit ledger with `{ createdAt: true, updatedAt: false }`. Updates, replacements, or deletions are rejected at the schema and domain service layer.
+- **Mandatory Transactions**: Multi-document operations across `LearningEvent`, `Concept`, and `Topic.knowledgeState` must execute within MongoDB transactions (`session.startTransaction()`); sequential uncommitted fallback is prohibited.
 - **Topic Mastery**: `Topic.knowledgeState.masteryScore` is the average confidence of all active topic concepts.
 - **Topic Status**: `mastered` only when all concepts are `UNDERSTOOD` or `STRONG` with `masteryScore >= 80`.
 

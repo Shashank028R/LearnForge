@@ -115,59 +115,52 @@ export class KnowledgeEngineService {
       };
     }
 
-    // 5. Transaction Boundary for Multi-Document State Mutation
-    const hasReplicaSet = Boolean(mongoose.connection?.client?.topology?.description?.servers?.size > 1) ||
-      mongoose.connection?.client?.topology?.description?.type === 'ReplicaSetWithPrimary' ||
-      Boolean(process.env.MONGODB_URI?.includes('mongodb+srv'));
-
-    if (hasReplicaSet) {
-      return await this._executeInTransaction({
-        userId,
-        subjectId,
-        topicId,
-        chatId,
-        sourceMessageId,
-        idempotencyKey,
-        topic,
-        rawEvents,
-        extractionResult,
+    // 5. Mandatory Multi-Document Transaction Boundary
+    let session = null;
+    try {
+      session = await mongoose.startSession();
+      session.startTransaction({
+        readConcern: { level: 'snapshot' },
+        writeConcern: { w: 'majority' },
       });
-    } else {
-      return await this._executeSequential({
-        userId,
-        subjectId,
-        topicId,
-        chatId,
-        sourceMessageId,
-        idempotencyKey,
-        topic,
-        rawEvents,
-        extractionResult,
-      });
+    } catch (sessionErr) {
+      if (session) {
+        try {
+          await session.endSession();
+        } catch (_) {}
+      }
+      const txError = new Error(
+        'Knowledge state mutations require MongoDB multi-document transaction support (MongoDB Atlas or replica set). Sequential non-transactional mutation is prohibited.'
+      );
+      txError.code = 'TRANSACTION_UNAVAILABLE';
+      txError.status = 503;
+      throw txError;
     }
-  }
-
-  async _executeInTransaction(params) {
-    const session = await mongoose.startSession();
-    session.startTransaction({
-      readConcern: { level: 'snapshot' },
-      writeConcern: { w: 'majority' },
-    });
 
     try {
-      const result = await this._processEventsAndPersist({ ...params, session });
+      const result = await this._processEventsAndPersist({
+        userId,
+        subjectId,
+        topicId,
+        chatId,
+        sourceMessageId,
+        idempotencyKey,
+        topic,
+        rawEvents,
+        extractionResult,
+        session,
+      });
+
       await session.commitTransaction();
       return result;
     } catch (err) {
-      await session.abortTransaction();
+      try {
+        await session.abortTransaction();
+      } catch (_) {}
       throw err;
     } finally {
       await session.endSession();
     }
-  }
-
-  async _executeSequential(params) {
-    return await this._processEventsAndPersist({ ...params, session: null });
   }
 
   async _processEventsAndPersist({

@@ -19,18 +19,18 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - `server/src/models/Concept.js`: Canonical concept model with compound unique index `{ userId: 1, topicId: 1, normalizedName: 1 }`, status tracking, bounded confidence score (0–100), evidence counts, misconceptions, and conflict state.
    - `server/src/models/LearningEvent.js`: Immutable, tenant-scoped ledger entry with compound unique index `{ userId: 1, idempotencyKey: 1 }` (`${userId}:${sourceMessageId}:${version}`), event types, classification outcomes (`NEW`, `EXISTING`, `DUPLICATE`, `COMPLEMENTARY`, `CORRECTION`, `CONFLICT`), and source attribution.
 3. **Dedicated Knowledge Engine Subsystem (`server/src/knowledge/`)**:
-   - `extraction/eventExtractor.js`: Calls AIGateway task `KNOWLEDGE_EVENT_EXTRACTION` with JSON schema enforcement and deterministic rule-based fallback.
+   - `extraction/eventExtractor.js`: Calls AIGateway task `KNOWLEDGE_EVENT_EXTRACTION` consuming normalized `AIResponse` envelope (`text`, `provider`, `model`, `usage`) with JSON schema enforcement and deterministic rule-based fallback.
    - `resolution/conceptResolver.js`: Exact normalized name matching and normalized alias resolution with automatic synonym/acronym reconciliation.
-   - `state/learningStateMachine.js`: Governs deterministic state transitions, diminishing returns confidence formula, misconception penalties (-15 to -30), recovery on correction, and topic aggregate mastery calculation.
-   - `services/knowledgeEngineService.js`: Master coordinator handling tenant authorization, approved syllabus boundaries, off-topic exclusion, idempotency deduplication, and atomic multi-document transactions.
+   - `state/learningStateMachine.js`: Governs deterministic state transitions (`NOT_STARTED` → `INTRODUCED` → `LEARNING` → `UNDERSTOOD` → `STRONG` / `NEEDS_REVIEW`), diminishing returns confidence formula, misconception penalties (-15 to -30), recovery on correction, and topic aggregate mastery calculation.
+   - `services/knowledgeEngineService.js`: Master coordinator handling tenant authorization, approved syllabus boundaries, off-topic exclusion, idempotency deduplication, and mandatory multi-document transactions. Sequential uncommitted fallback is prohibited.
 4. **Chat Messaging Integration (`server/src/controllers/chatController.js`)**:
    - Wired `knowledgeEngine.processExchangeEvidence(...)` into `createChat` and `sendMessage` after successful message persistence for on-topic topic chats.
 5. **Knowledge REST APIs (`server/src/controllers/knowledgeController.js` & `server/src/routes/knowledgeRoutes.js`)**:
-   - Mounted `GET /api/v1/topics/:topicId/concepts`, `GET /api/v1/concepts/:conceptId`, `GET /api/v1/topics/:topicId/learning-events`, and `POST /api/v1/topics/:topicId/extract-knowledge`.
+   - Mounted `GET /api/v1/topics/:topicId/concepts`, `GET /api/v1/concepts/:conceptId`, `GET /api/v1/topics/:topicId/learning-events`, and hardened `POST /api/v1/topics/:topicId/extract-knowledge` validating server-loaded persisted Message documents.
 6. **Testing & Verification**:
-   - Added 20 automated unit/integration tests in `server/tests/knowledgeEngine.test.js` (server total: 150 tests passing 100%).
+   - Added 25 automated unit/integration tests in `server/tests/knowledgeEngine.test.js` (server total: 155 tests passing 100%).
    - All 46 client tests passing (client total: 46 tests passing 100%).
-   - Total Monorepo Automated Tests: 196 / 196 passing (100%).
+   - Total Monorepo Automated Tests: 201 / 201 passing (100%).
    - Live integration script `verify_phase06_live.js` fully passed with MongoDB Atlas, Express API, and live Groq API (`openai/gpt-oss-120b`).
    - Phase boundary verified: 0 `NoteDocument` / `NoteVersion` created.
 

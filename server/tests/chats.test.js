@@ -57,6 +57,14 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
       return this;
     });
 
+    // Mock Mongoose transaction session
+    vi.spyOn(mongoose, 'startSession').mockImplementation(async () => ({
+      startTransaction: vi.fn(),
+      commitTransaction: vi.fn(),
+      abortTransaction: vi.fn(),
+      endSession: vi.fn(),
+    }));
+
     // Mock SyllabusVersion model
     vi.spyOn(SyllabusVersion, 'findOne').mockImplementation(async (query) => {
       for (const s of syllabusStore.values()) {

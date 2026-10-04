@@ -570,12 +570,13 @@ When candidate concepts are extracted, `ConceptResolver` queries the user-scoped
 ### Q78: How does the Learning State Machine govern state transitions and confidence scoring?
 **Answer**:  
 `LearningStateMachine` enforces bounded, deterministic transition rules:
-- `NOT_STARTED` → `INTRODUCED` on first encounter (`confidence = 20`).
-- `INTRODUCED` → `LEARNING` on explanation or study.
-- `LEARNING` → `UNDERSTOOD` when recall is demonstrated (`evidenceCount >= 2`, score ≥ 60).
-- `UNDERSTOOD` → `STRONG` upon repeated reinforcement (`evidenceCount >= 4`, score ≥ 80).
-- Misconceptions trigger immediate regression to `NEEDS_REVIEW` with score penalties (-20 to -35).
-- Confidence scores are bounded (0–100) using a diminishing returns formula: $\min(100, \text{round}(\text{current} + \text{delta} \times (1 - \text{current}/125)))$.
+- `NOT_STARTED` → `INTRODUCED` on first encounter (`evidenceCount = 1`, `confidence = 25`).
+- `INTRODUCED` → `LEARNING` upon further study (`evidenceCount >= 2`, score ≥ 40).
+- `LEARNING` → `UNDERSTOOD` when active recall is demonstrated (`evidenceCount >= 3`, score ≥ 70).
+- `UNDERSTOOD` → `STRONG` upon repeated reinforcement (`evidenceCount >= 5`, score ≥ 90).
+- Misconceptions trigger immediate regression to `NEEDS_REVIEW` with score penalties (-15 to -30).
+- Corrections recover from `NEEDS_REVIEW` to `LEARNING` (+15 points, or `UNDERSTOOD` if `evidenceCount >= 3` and score ≥ 70).
+- Confidence scores are bounded (0–100) using a diminishing returns formula: $\Delta = \text{round}\left(\text{delta} \times \max\left(0.1, 1 - \frac{S_{\text{current}}}{125}\right)\right)$.
 
 ### Q79: How are misconceptions and conflicts handled without destroying historical evidence?
 **Answer**:  

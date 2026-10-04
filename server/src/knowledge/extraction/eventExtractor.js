@@ -52,18 +52,23 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
       extractionSource = 'deterministic_fallback';
     }
 
-    if (aiResult && aiResult.content) {
+    // AIGateway returns normalized AIResponse: { text, provider, model, task, usage, routingMetadata, requestId, latencyMs }
+    const rawText = aiResult?.text || aiResult?.content;
+
+    if (rawText) {
       try {
-        const parsed = this._cleanAndParseJSON(aiResult.content);
+        const parsed = this._cleanAndParseJSON(rawText);
         if (parsed && Array.isArray(parsed.events) && parsed.events.length > 0) {
           return {
             events: this._validateAndNormalizeEvents(parsed.events, topicContext),
             topicSummaryUpdate: parsed.topicSummaryUpdate || '',
             extractionSource,
             metadata: {
-              provider: aiResult.metadata?.provider || 'unknown',
-              model: aiResult.metadata?.model || 'unknown',
-              latencyMs: aiResult.metadata?.latencyMs || 0,
+              provider: aiResult.provider || aiResult.metadata?.provider || 'unknown',
+              model: aiResult.model || aiResult.metadata?.model || 'unknown',
+              latencyMs: aiResult.latencyMs || aiResult.metadata?.latencyMs || 0,
+              usage: aiResult.usage || null,
+              routingMetadata: aiResult.routingMetadata || null,
               extractionVersion: this.extractionVersion,
             },
           };

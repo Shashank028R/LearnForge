@@ -25,7 +25,8 @@ The following boundaries were strictly observed:
 - **Fields**: `userId`, `subjectId`, `topicId`, `name`, `normalizedName`, `aliases`, `normalizedAliases`, `description`, `status`, `confidenceScore` (0–100), `evidenceCount`, `misconceptions` (`[{ misconceptionText, correctionText, detectedAt, resolvedAt, isActive }]`), `conflictState` (`{ hasConflict, description, flaggedAt, resolvedAt }`), `lastStudiedAt`.
 
 ### B. LearningEvent Model (`server/src/models/LearningEvent.js`)
-- Immutable, tenant-scoped ledger entry recording each discrete learning observation with source attribution.
+- Append-only, immutable, tenant-scoped ledger entry recording each discrete learning observation with source attribution.
+- **Append-Only Immutability**: Protected by Mongoose pre-hooks on `save` (if not new), `updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, and `findOneAndReplace`. Timestamps schema configured with `{ createdAt: true, updatedAt: false }`.
 - **Compound Unique Index (Idempotency)**: `{ userId: 1, idempotencyKey: 1 }`.
 - **Query Indexes**: `{ userId: 1, topicId: 1, createdAt: -1 }`, `{ userId: 1, conceptId: 1, createdAt: -1 }`, `{ userId: 1, sourceMessageId: 1 }`.
 - **Fields**: `userId`, `subjectId`, `topicId`, `chatId`, `sourceMessageId`, `conceptId`, `conceptName`, `eventType`, `classificationOutcome`, `evidenceText`, `confidenceScore`, `previousStatus`, `newStatus`, `misconception`, `idempotencyKey`, `metadata`.
@@ -33,6 +34,7 @@ The following boundaries were strictly observed:
 ### C. Knowledge Engine Components (`server/src/knowledge/`)
 1. **`EventExtractor` (`extraction/eventExtractor.js`)**:
    - Calls the Phase 05 `AIGateway` with task `KNOWLEDGE_EVENT_EXTRACTION`.
+   - Consumes the normalized `AIResponse` contract (`{ text, provider, model, task, usage, routingMetadata, latencyMs }`).
    - Parses and validates structured JSON schema envelopes.
    - Deterministic rule-based fallback when AI providers are unconfigured or unavailable.
 2. **`ConceptResolver` (`resolution/conceptResolver.js`)**:
@@ -40,12 +42,17 @@ The following boundaries were strictly observed:
    - Reconciles aliases dynamically when new synonyms or acronyms are discovered.
    - Classifies relationships: `NEW`, `EXISTING`, `DUPLICATE`, `COMPLEMENTARY`, `CORRECTION`, `CONFLICT`.
 3. **`LearningStateMachine` (`state/learningStateMachine.js`)**:
-   - Governs deterministic, bounded state transitions (`NOT_STARTED` → `INTRODUCED` → `LEARNING` → `UNDERSTOOD` → `STRONG` / `NEEDS_REVIEW`).
-   - Diminishing returns confidence formula preventing artificial score inflation.
-   - Misconception penalties (-20 to -35 points) with recovery upon correction.
+   - Governs deterministic, bounded state transitions:
+     - `NOT_STARTED` → `INTRODUCED` on first evidence encounter.
+     - `INTRODUCED` → `LEARNING` when `evidenceCount >= 2` and `confidenceScore >= 40`.
+     - `LEARNING` → `UNDERSTOOD` when `evidenceCount >= 3` and `confidenceScore >= 70`.
+     - `UNDERSTOOD` → `STRONG` when `evidenceCount >= 5` and `confidenceScore >= 90`.
+     - Misconception / Conflict → `NEEDS_REVIEW` with deterministic penalties (-15 to -30).
+     - Correction → Recovers from `NEEDS_REVIEW` to `LEARNING` (or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`).
+   - Diminishing returns confidence formula: $\Delta = \text{round}\left(\text{delta} \times \max\left(0.1, 1 - \frac{S_{\text{current}}}{125}\right)\right)$.
    - Computes aggregate `Topic.knowledgeState.masteryScore` and `Topic.status`.
 4. **`KnowledgeEngineService` (`services/knowledgeEngineService.js`)**:
-   - Orchestrates the full pipeline with tenant verification, syllabus governance boundary checks, idempotency deduplication, and atomic multi-document MongoDB transactions on replica sets.
+   - Orchestrates the full pipeline with tenant verification, syllabus governance boundary checks, idempotency deduplication, and mandatory multi-document MongoDB transactions on replica sets / MongoDB Atlas. Sequential uncommitted fallback is prohibited.
 
 ---
 
@@ -56,21 +63,22 @@ The following boundaries were strictly observed:
 | `GET` | `/api/v1/topics/:topicId/concepts` | Lists concepts and aggregate mastery for an owned topic | Authenticated + DB Check |
 | `GET` | `/api/v1/concepts/:conceptId` | Retrieves concept details and chronological learning events | Authenticated + DB Check |
 | `GET` | `/api/v1/topics/:topicId/learning-events` | Lists chronological learning events for an owned topic | Authenticated + DB Check |
-| `POST` | `/api/v1/topics/:topicId/extract-knowledge` | Explicitly triggers knowledge extraction on a verified exchange | Authenticated + DB Check |
+| `POST` | `/api/v1/topics/:topicId/extract-knowledge` | Explicitly triggers knowledge extraction on verified server-loaded message documents | Authenticated + DB Check |
 
 ---
 
 ## 5. Verification Summary
 
-- **Automated Backend Tests**: **150 / 150 passed (100%)** across 11 test files (`server/tests/knowledgeEngine.test.js`, `server/tests/chats.test.js`, etc.).
+- **Automated Backend Tests**: **155 / 155 passed (100%)** across 11 test files (`server/tests/knowledgeEngine.test.js`, `server/tests/chats.test.js`, etc.).
 - **Automated Frontend Tests**: **46 / 46 passed (100%)** (`client/src/App.test.jsx`, etc.).
-- **Total Monorepo Tests**: **196 / 196 passed (100%)**.
+- **Total Monorepo Tests**: **201 / 201 passed (100%)**.
 - **Live Integration Verification (`server/scripts/verify_phase06_live.js`)**:
   - Live Express API health verified.
   - MongoDB Atlas replica set connected and multi-document transactions verified.
   - On-topic exchange created and extracted into `LearningEvent` and `Concept`.
   - Idempotency verified on repeated processing.
+  - Forged message rejection verified on manual endpoint (`HTTP 400 INVALID_EVIDENCE`).
   - Misconception clarification and recovery verified.
   - Off-topic message governance exclusion verified.
   - Phase boundary verified: 0 `NoteDocument` / `NoteVersion` instances created.
-  - Live Groq API verified with exact marker `"LearnForge Phase 06 Knowledge Engine Live Verified"`.
+  - Live Groq API verified with `KNOWLEDGE_EVENT_EXTRACTION` task using `openai/gpt-oss-120b` returning valid structured JSON.

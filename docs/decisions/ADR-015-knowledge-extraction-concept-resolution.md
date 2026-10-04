@@ -42,17 +42,18 @@ When a candidate concept is extracted from an exchange:
 
 ### C. State Machine & Bounded Confidence Rules
 State transitions are governed by deterministic domain rules in `LearningStateMachine`:
-- **First Encounter (`concept_introduced`)**: `NOT_STARTED` → `INTRODUCED` (`confidenceScore = 20`).
-- **Explanation / Nuance (`concept_explained`, `COMPLEMENTARY`)**: `INTRODUCED` → `LEARNING` (`confidenceScore` increases via bounded diminishing formula).
-- **Active Recall (`concept_recalled`)**: `LEARNING` → `UNDERSTOOD` (requires `evidenceCount >= 2` and `confidenceScore >= 60`).
-- **Repeated Reinforcement (`concept_reinforced`)**: `UNDERSTOOD` → `STRONG` (requires `evidenceCount >= 4` and `confidenceScore >= 80`).
-- **Misconception (`misconception_detected`, `concept_misunderstood`)**: Immediate regression to `NEEDS_REVIEW` with score penalty (-20 to -35).
-- **Correction (`concept_corrected`)**: Recovers from `NEEDS_REVIEW` to `LEARNING` (+15 points).
-- **Diminishing Returns Formula**: `newScore = Math.min(100, Math.round(currentScore + delta * (1 - currentScore / 125)))`.
+- **First Encounter (`concept_introduced`)**: `NOT_STARTED` → `INTRODUCED` (`confidenceScore = 25`, `evidenceCount = 1`).
+- **Explanation / Nuance (`concept_explained`, `COMPLEMENTARY`)**: `INTRODUCED` → `LEARNING` (requires `evidenceCount >= 2` and `confidenceScore >= 40`).
+- **Active Recall (`concept_recalled`)**: `LEARNING` → `UNDERSTOOD` (requires `evidenceCount >= 3` and `confidenceScore >= 70`).
+- **Repeated Reinforcement (`concept_reinforced`)**: `UNDERSTOOD` → `STRONG` (requires `evidenceCount >= 5` and `confidenceScore >= 90`).
+- **Misconception / Conflict (`misconception_detected`, `concept_misunderstood`, `CONFLICT`)**: Immediate regression to `NEEDS_REVIEW` with deterministic score penalty (-15 to -30).
+- **Correction (`concept_corrected`)**: Recovers from `NEEDS_REVIEW` to `LEARNING` (+15 points, or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`).
+- **Diminishing Returns Formula**: $\Delta = \text{round}\left(\text{delta} \times \max\left(0.1, 1 - \frac{S_{\text{current}}}{125}\right)\right)$.
+- **Ledger Immutability**: `LearningEvent` is an append-only audit ledger with `{ createdAt: true, updatedAt: false }` and pre-hook guards preventing mutations or replacements.
 - **Topic Aggregate**: `Topic.knowledgeState.masteryScore` is the average confidence of active concepts; `Topic.status` is `mastered` only when all concepts are `UNDERSTOOD` or `STRONG` and `masteryScore >= 80`.
 
 ### D. Multi-Document Transaction Boundary
-When supported on MongoDB replica sets / Atlas clusters, `LearningEvent` creation, `Concept` insertion/update, and `Topic.knowledgeState` aggregation execute inside an atomic multi-document transaction (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`).
+Multi-document operations across `LearningEvent` creation, `Concept` insertion/update, and `Topic.knowledgeState` aggregation must execute inside an atomic multi-document transaction (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`) on MongoDB Atlas or replica sets. Sequential uncommitted execution is prohibited.
 
 ---
 

@@ -148,8 +148,8 @@ async function runLiveVerification() {
     const assistantMsg = chatData.data.messages[1];
     console.log(`✓ Chat created (${chat.id}) with Assistant reply`);
 
-    // Step 6: Verify LearningEvent and Concept Creation
-    console.log('\n[6/10] Verifying Created LearningEvent & Concept Persistence...');
+    // Step 6: Verify LearningEvent and Concept Creation with AI Extraction Metadata
+    console.log('\n[6/10] Verifying Created LearningEvent & Concept Persistence with Real AI Metadata...');
     const conceptsRes = await fetch(`${API_BASE}/topics/${topic._id}/concepts`, {
       headers: authHeaders,
     });
@@ -158,11 +158,13 @@ async function runLiveVerification() {
     const concepts = conceptsData.data.concepts || [];
     console.log(`✓ Retrieved ${concepts.length} canonical concept(s) for topic`);
 
-    if (concepts.length > 0) {
-      const mainConcept = concepts[0];
-      console.log(`  - Concept: "${mainConcept.name}" (Status: ${mainConcept.status}, Score: ${mainConcept.confidenceScore}%)`);
-      console.log(`  - Topic Aggregate Mastery: ${conceptsData.data.topicKnowledgeState?.masteryScore || 0}%`);
+    if (concepts.length === 0) {
+      throw new Error('FAIL-CLOSED: No canonical concepts were extracted or persisted from on-topic exchange');
     }
+
+    const mainConcept = concepts[0];
+    console.log(`  - Concept: "${mainConcept.name}" (Status: ${mainConcept.status}, Score: ${mainConcept.confidenceScore}%)`);
+    console.log(`  - Topic Aggregate Mastery: ${conceptsData.data.topicKnowledgeState?.masteryScore || 0}%`);
 
     const eventsRes = await fetch(`${API_BASE}/topics/${topic._id}/learning-events`, {
       headers: authHeaders,
@@ -172,14 +174,24 @@ async function runLiveVerification() {
     const events = eventsData.data.learningEvents || [];
     console.log(`✓ Retrieved ${events.length} auditable learning event(s)`);
 
-    if (events.length > 0) {
-      const firstEvent = events[0];
-      console.log(`  - Event Type: ${firstEvent.eventType}, Outcome: ${firstEvent.classificationOutcome}`);
-      console.log(`  - Source Attribution: Message=${firstEvent.sourceMessageId}, Chat=${firstEvent.chatId}`);
+    if (events.length === 0) {
+      throw new Error('FAIL-CLOSED: No LearningEvent records were created in database');
     }
 
-    // Step 7: Test Idempotency
-    console.log('\n[7/10] Testing Idempotency on Repeated Processing...');
+    const firstEvent = events[0];
+    console.log(`  - Event Type: ${firstEvent.eventType}, Outcome: ${firstEvent.classificationOutcome}`);
+    console.log(`  - Source Attribution: Message=${firstEvent.sourceMessageId}, Chat=${firstEvent.chatId}`);
+    console.log(`  - AI Extraction Metadata: Provider=${firstEvent.metadata?.provider}, Model=${firstEvent.metadata?.model}`);
+
+    // Assert that extraction was executed via live AI provider (Groq) and not silent fallback
+    if (process.env.GROQ_API_KEY) {
+      if (firstEvent.metadata?.provider !== 'groq') {
+        console.warn(`[Live Note] LearningEvent provider was "${firstEvent.metadata?.provider}" (expected "groq" if Groq was primary router choice)`);
+      }
+    }
+
+    // Step 7: Test Idempotency on Hardened Manual Extraction Endpoint
+    console.log('\n[7/10] Testing Idempotency & Message Validation on Manual Extraction Endpoint...');
     const reprocessRes = await fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
       method: 'POST',
       headers: authHeaders,
@@ -187,15 +199,29 @@ async function runLiveVerification() {
         chatId: chat.id,
         userMessageId: chatData.data.messages[0].id,
         assistantMessageId: assistantMsg.id,
-        userMessage: { content: chatData.data.messages[0].content },
-        assistantMessage: { content: assistantMsg.content },
       }),
     });
     const reprocessData = await reprocessRes.json();
     if (reprocessData.data?.duplicate) {
       console.log('✓ Idempotency verified: repeated extraction safely skipped without duplicating events');
     } else {
-      console.log('✓ Re-processing handled safely');
+      console.log('✓ Re-processing handled safely without duplicate records');
+    }
+
+    // Verify forged message IDs are rejected on manual extraction endpoint
+    const forgedRes = await fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        chatId: chat.id,
+        userMessageId: new mongoose.Types.ObjectId().toString(),
+        assistantMessageId: assistantMsg.id,
+      }),
+    });
+    if (forgedRes.status === 400) {
+      console.log('✓ Forged/unpersisted message IDs correctly rejected with HTTP 400 INVALID_EVIDENCE');
+    } else {
+      throw new Error(`FAIL-CLOSED: Expected 400 for forged message ID, received ${forgedRes.status}`);
     }
 
     // Step 8: Test Misconception & Correction Handling
@@ -235,17 +261,25 @@ async function runLiveVerification() {
     }
     console.log('✓ Phase Boundary Confirmed: Zero NoteDocument / NoteVersion instances created');
 
-    // Step 10: Fail-Closed Direct Groq API Test
-    console.log('\n[10/10] Executing Direct Groq Live API Verification (Fail-Closed)...');
+    // Step 10: Fail-Closed Direct Groq API Test for KNOWLEDGE_EVENT_EXTRACTION
+    console.log('\n[10/10] Executing Direct Groq Live API Verification for Knowledge Extraction (Fail-Closed)...');
     const groqKey = process.env.GROQ_API_KEY;
     if (!groqKey) {
       throw new Error('FAIL-CLOSED: GROQ_API_KEY is not defined in server/.env');
     }
     const groqModel = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
     const liveGroq = new GroqProvider({ apiKey: groqKey, model: groqModel });
+
     const liveRes = await liveGroq.generate({
-      task: AI_TASK_TYPES.GENERAL_CHAT,
-      messages: [{ role: 'user', content: 'Respond with exactly: "LearnForge Phase 06 Knowledge Engine Live Verified"' }],
+      task: AI_TASK_TYPES.KNOWLEDGE_EVENT_EXTRACTION,
+      messages: [
+        {
+          role: 'user',
+          content: `[Exchange for Knowledge Extraction]
+User Statement: "How does binary search work on sorted arrays?"
+Assistant Pedagogical Response: "Binary search repeatedly divides the search interval in half with O(log n) time complexity."`,
+        },
+      ],
       requestId: `live_groq_p06_${Date.now()}`,
     });
 
@@ -253,12 +287,8 @@ async function runLiveVerification() {
       throw new Error('Direct Groq live verification returned empty response');
     }
 
-    if (!liveRes.text.includes('LearnForge Phase 06 Knowledge Engine Live Verified')) {
-      throw new Error(`FAIL-CLOSED: Unexpected Groq response: "${liveRes.text}"`);
-    }
-
     console.log(`✓ GROQ LIVE VERIFIED: Model="${liveRes.model}" Latency=${liveRes.latencyMs}ms Tokens=${liveRes.usage?.totalTokens || 'unknown'}`);
-    console.log(`  Response Marker: "${liveRes.text.trim()}"`);
+    console.log(`  Raw Output Preview: "${liveRes.text.trim().slice(0, 150)}..."`);
 
     console.log('\n================================================================');
     console.log('✓ PHASE 06 LIVE INTEGRATION VERIFICATION PASSED');

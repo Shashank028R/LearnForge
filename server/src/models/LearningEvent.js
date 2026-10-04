@@ -139,7 +139,7 @@ const learningEventSchema = new mongoose.Schema(
     },
   },
   {
-    timestamps: true,
+    timestamps: { createdAt: true, updatedAt: false },
   }
 );
 
@@ -150,6 +150,37 @@ learningEventSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true });
 learningEventSchema.index({ userId: 1, topicId: 1, createdAt: -1 });
 learningEventSchema.index({ userId: 1, conceptId: 1, createdAt: -1 });
 learningEventSchema.index({ userId: 1, sourceMessageId: 1 });
+
+// Defense in Depth: Enforce Append-Only Immutability on LearningEvent
+const immutableLedgerError = () =>
+  new Error('LearningEvent is an immutable append-only audit ledger and cannot be updated, replaced, or modified.');
+
+learningEventSchema.pre('save', function (next) {
+  if (!this.isNew) {
+    return next(immutableLedgerError());
+  }
+  next();
+});
+
+learningEventSchema.pre('updateOne', function (next) {
+  next(immutableLedgerError());
+});
+
+learningEventSchema.pre('updateMany', function (next) {
+  next(immutableLedgerError());
+});
+
+learningEventSchema.pre('findOneAndUpdate', function (next) {
+  next(immutableLedgerError());
+});
+
+learningEventSchema.pre('replaceOne', function (next) {
+  next(immutableLedgerError());
+});
+
+learningEventSchema.pre('findOneAndReplace', function (next) {
+  next(immutableLedgerError());
+});
 
 export const LearningEvent = mongoose.models.LearningEvent || mongoose.model('LearningEvent', learningEventSchema);
 export default LearningEvent;
