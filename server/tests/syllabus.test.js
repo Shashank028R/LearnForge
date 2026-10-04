@@ -346,6 +346,13 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
     vi.spyOn(Message, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
     vi.spyOn(Annotation, 'deleteMany').mockResolvedValue({ deletedCount: 0 });
 
+    vi.spyOn(mongoose, 'startSession').mockImplementation(async () => ({
+      startTransaction: vi.fn(),
+      commitTransaction: vi.fn(),
+      abortTransaction: vi.fn(),
+      endSession: vi.fn(),
+    }));
+
     // Create Test Users & Sessions
     const userAId = new mongoose.Types.ObjectId();
     userA = {

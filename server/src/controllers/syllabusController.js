@@ -382,13 +382,6 @@ export async function approveSyllabusVersion(req, res, next) {
       });
     }
 
-    // Determine if MongoDB transactions are supported on the active connection
-    const supportsTransactions =
-      mongoose.connection.readyState === 1 &&
-      mongoose.connection.client &&
-      typeof mongoose.connection.client.startSession === 'function' &&
-      mongoose.connection.client.topology?.description?.type !== 'Single';
-
     const maxRetries = 6;
     let finalActiveCount = 0;
     let approvalSucceeded = false;
@@ -396,15 +389,24 @@ export async function approveSyllabusVersion(req, res, next) {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       let session = null;
       try {
-        if (supportsTransactions) {
+        try {
           session = await mongoose.startSession();
           session.startTransaction({
             readConcern: { level: 'snapshot' },
             writeConcern: { w: 'majority' },
           });
+        } catch (sessionErr) {
+          if (session) {
+            try { await session.endSession(); } catch (_) {}
+          }
+          return res.status(503).json({
+            success: false,
+            message:
+              'Multi-document ACID transactions are required for syllabus approval to guarantee canonical state consistency across SyllabusVersion, Topic, and Subject collections. A MongoDB replica set or MongoDB Atlas cluster is required.',
+          });
         }
 
-        const sessionOpts = session ? { session } : {};
+        const sessionOpts = { session };
 
         // Reload target version inside session on each retry attempt
         const freshTarget = await SyllabusVersion.findOne(
@@ -418,11 +420,11 @@ export async function approveSyllabusVersion(req, res, next) {
         );
 
         if (!freshTarget) {
-          if (session) await session.abortTransaction();
+          await session.abortTransaction();
           return res.status(404).json({ success: false, message: 'Syllabus version not found' });
         }
 
-        // 1. Mark previous approved versions as superseded
+        // 1. Mark previous approved versions as superseded inside transaction
         await SyllabusVersion.updateMany(
           {
             subjectId,
@@ -439,7 +441,7 @@ export async function approveSyllabusVersion(req, res, next) {
           sessionOpts
         );
 
-        // 2. Update fresh target version to approved
+        // 2. Update fresh target version to approved inside transaction
         freshTarget.status = 'approved';
         freshTarget.approvedAt = new Date();
         freshTarget.supersededAt = null;
@@ -452,10 +454,8 @@ export async function approveSyllabusVersion(req, res, next) {
           sessionOpts
         );
         if (preCheck && preCheck._id.toString() !== freshTarget._id.toString()) {
-          // Lost race prior to topic reconciliation; abort this attempt
-          if (session) {
-            await session.abortTransaction();
-          }
+          // Lost race prior to topic reconciliation; abort this transaction attempt
+          await session.abortTransaction();
           if (attempt < maxRetries - 1) {
             const jitter = Math.floor(Math.random() * 40) + 30 * (attempt + 1);
             await new Promise((resolve) => setTimeout(resolve, jitter));
@@ -464,7 +464,7 @@ export async function approveSyllabusVersion(req, res, next) {
           break;
         }
 
-        // 3. Reconcile canonical topics, active topic count, and Subject metadata
+        // 3. Reconcile canonical topics, active topic count, and Subject metadata within transaction
         finalActiveCount = await reconcileCanonicalTopics(
           subjectId,
           req.user._id,
@@ -481,13 +481,7 @@ export async function approveSyllabusVersion(req, res, next) {
 
         if (postCheck && postCheck._id.toString() !== freshTarget._id.toString()) {
           // A concurrent request won and superseded this version during reconciliation
-          // Re-sync canonical topics to the actual winning version to prevent stale state corruption
-          if (session) {
-            await session.abortTransaction();
-          } else {
-            await reconcileCanonicalTopics(subjectId, req.user._id, postCheck);
-          }
-
+          await session.abortTransaction();
           if (attempt < maxRetries - 1) {
             const jitter = Math.floor(Math.random() * 40) + 30 * (attempt + 1);
             await new Promise((resolve) => setTimeout(resolve, jitter));
@@ -496,9 +490,7 @@ export async function approveSyllabusVersion(req, res, next) {
           break;
         }
 
-        if (session) {
-          await session.commitTransaction();
-        }
+        await session.commitTransaction();
         approvalSucceeded = true;
         break;
       } catch (err) {
@@ -527,7 +519,9 @@ export async function approveSyllabusVersion(req, res, next) {
         throw err;
       } finally {
         if (session) {
-          await session.endSession();
+          try {
+            await session.endSession();
+          } catch (_) {}
         }
       }
     }

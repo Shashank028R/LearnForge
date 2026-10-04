@@ -183,7 +183,7 @@ Represents an immutable or draft curriculum proposal / authoritative learning co
 **Indexes**:
 - Compound Unique Version Index: `{ subjectId: 1, version: 1 }, { unique: true }`
 - Compound Version Listing Index: `{ userId: 1, subjectId: 1, version: -1 }`
-- Partial Unique Approved Index: `{ subjectId: 1, status: 1 }, { unique: true, partialFilterExpression: { status: 'approved' } }` — structurally guarantees at the database storage engine layer that at most ONE approved syllabus version can exist per subject.
+- Partial Unique Approved Index: `{ subjectId: 1, status: 1 }, { unique: true, partialFilterExpression: { status: 'approved' } }` — structurally guarantees at the database storage engine layer that at most ONE approved syllabus version can exist per subject. Multi-document ACID transactions (`session.startTransaction()`) are strictly required on MongoDB replica sets/Atlas to atomically orchestrate superseding, approval, Topic reconciliation, and Subject metadata updates. Standalone MongoDB instances without replica sets return HTTP 503.
 
 ---
 

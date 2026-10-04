@@ -50,8 +50,9 @@ Phase 04.1 establishes the durable product, data model, and user experience foun
 - **Subject.topicsCount Contract**: Defined strictly as the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`), preventing historical or pre-governance records from inflating current curriculum metrics.
 - **Single Approved Version Invariant & End-to-End Atomic Approval Pipeline**:
   - Structurally guaranteed at the MongoDB storage engine level via a Partial Unique Index `{ subjectId: 1, status: 1 }` (`unique: true, partialFilterExpression: { status: 'approved' }`).
-  - End-to-end atomicity is achieved through MongoDB multi-document ACID transactions (on replica sets / Atlas) wrapping version superseding, approval, canonical topic reconciliation, and `Subject.activeSyllabusVersionId` / `Subject.topicsCount` updates in a single isolated transaction.
-  - In all environments, pre- and post-reconciliation CAS staleness guards verify that the target version has not lost an approval race to a concurrent request before mutating canonical state, auto-syncing canonical topics to the winning version if a race condition occurs.
+  - End-to-end atomicity is strictly enforced through MongoDB multi-document ACID transactions (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`) wrapping version superseding, approval, canonical topic reconciliation, and `Subject.activeSyllabusVersionId` / `Subject.topicsCount` updates in a single isolated transaction with automated retry on transient write conflicts (`WriteConflict` code 112, E11000).
+  - Transaction support (MongoDB replica set or MongoDB Atlas) is a strict prerequisite for approval operations. Standalone MongoDB instances without replica sets return `HTTP 503 Service Unavailable` with a clear prerequisite message.
+  - Live adversarial interleaving testing against MongoDB Atlas verified that delayed worker threads attempting to commit stale transactions after an interleaved approval race fail cleanly with `WriteConflict`, preventing any stale mutator corruption of canonical topics or `Subject` active version.
 
 ## Cascading Entity Cleanup
 - `Subject` deletion cascades removal of all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` documents.

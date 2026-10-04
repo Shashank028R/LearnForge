@@ -199,8 +199,9 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - **End-to-End Atomic Approval Pipeline & Structural Invariants**:
   - The persistence layer structurally enforces *exactly ONE* approved syllabus version per `Subject` via a MongoDB Partial Unique Index:
     `{ subjectId: 1, status: 1 }` with `partialFilterExpression: { status: 'approved' }`.
-  - In `approveSyllabusVersion()`, all operations (superseding prior versions, approving the target version, reconciling canonical topics, computing active topic counts, and updating `Subject.activeSyllabusVersionId` / `Subject.topicsCount`) execute within a single multi-document ACID transaction on replica sets / Atlas.
-  - In addition, pre- and post-reconciliation CAS guards ensure that if an approval request is superseded by a concurrent operation, it is prevented from mutating canonical state and automatically re-syncs canonical topics to the true winning version.
+  - Multi-document ACID transactions (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`) are strictly required on MongoDB Atlas and replica set clusters. Standalone MongoDB instances without replica sets are unsupported for approvals and return `HTTP 503 Service Unavailable`.
+  - In `approveSyllabusVersion()`, all operations (superseding prior versions, approving the target version, reconciling canonical topics, computing active topic counts, and updating `Subject.activeSyllabusVersionId` / `Subject.topicsCount`) execute within a single isolated transaction with retry on transient write conflicts (`WriteConflict` code 112).
+  - Genuine live adversarial testing against MongoDB Atlas verified that delayed uncommitted worker threads are cleanly isolated and fail with `WriteConflict` when racing against a winning approval, preventing stale mutator state corruption.
 - **Topic Reconciliation & History Preservation**:
   1. Matching topics remain active (`isActiveInSyllabus: true`) with stable `_id` and preserved learning history (`knowledgeState`, `chatsCount`, `notesCount`).
   2. Newly introduced topics are created with `isActiveInSyllabus: true`.

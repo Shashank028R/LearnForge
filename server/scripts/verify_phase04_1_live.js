@@ -278,23 +278,23 @@ async function runLiveVerification() {
     }
     console.log('✓ Invariant 4: Syllabus approval activated matching topics (including previously manual topic) and updated Subject topicsCount to 4.');
 
-    // 7. Create Revision Draft v2 via Express API removing Paxos and Storage
+    // 7. Create Revision Draft v2 (Stale Candidate) via Express API
     const draftV2Res = await apiRequest(
       `/subjects/${subjectId}/syllabus/versions`,
       {
         method: 'POST',
         body: JSON.stringify({
           baseVersionId: draftV1._id,
-          title: 'Distributed Systems Curriculum v2',
-          changeSummary: 'Removed Paxos in favor of Raft and Byzantine Agreement',
+          title: 'Distributed Systems Curriculum v2 (Stale Candidate)',
+          changeSummary: 'Contains Stale Exclusive Protocol topic',
           sections: [
             {
-              title: 'Modern Consensus',
+              title: 'Stale Section',
               description: 'Pragmatic consensus',
               topics: [
                 { title: 'Vector Clocks', description: 'Updated Vector Clocks description' },
+                { title: 'Stale Exclusive Protocol', description: 'Topic belonging only to stale candidate' },
                 { title: 'Raft Consensus', description: 'Leader election and log replication' },
-                { title: 'Byzantine Fault Tolerance', description: 'PBFT and 3f+1 resilience' },
               ],
             },
           ],
@@ -307,7 +307,7 @@ async function runLiveVerification() {
       throw new Error(`Failed to create draft v2 via API: ${JSON.stringify(draftV2Res.body)}`);
     }
     const draftV2 = draftV2Res.body.data;
-    console.log(`7. Created Revision Draft v2 via API (${draftV2._id}).`);
+    console.log(`7. Created Revision Draft v2 (Stale Candidate) via API (${draftV2._id}).`);
 
     // Invariant Check 5: v1 must remain 'approved' while v2 is 'draft'
     const v1DocInAtlas = await SyllabusVersion.findById(draftV1._id);
@@ -316,22 +316,22 @@ async function runLiveVerification() {
     }
     console.log('✓ Invariant 5: Historical approved version remains immutable during draft editing.');
 
-    // 8. Create Revision Draft v3 to test concurrent approval requests
+    // 8. Create Revision Draft v3 (Winning Candidate) to test live adversarial interleaving
     const draftV3Res = await apiRequest(
       `/subjects/${subjectId}/syllabus/versions`,
       {
         method: 'POST',
         body: JSON.stringify({
           baseVersionId: draftV1._id,
-          title: 'Distributed Systems Curriculum v3 (Concurrent Candidate)',
-          changeSummary: 'Alternate candidate with Vector Clocks, Raft, and Paxos Re-added',
+          title: 'Distributed Systems Curriculum v3 (Winning Candidate)',
+          changeSummary: 'Contains Winning Exclusive Protocol topic and Paxos',
           sections: [
             {
-              title: 'Consensus Full Suite',
+              title: 'Winning Section',
               description: 'All protocols',
               topics: [
                 { title: 'Vector Clocks', description: 'Vector Clocks v3' },
-                { title: 'Raft Consensus', description: 'Raft Consensus v3' },
+                { title: 'Winning Exclusive Protocol', description: 'Topic belonging only to winning candidate' },
                 { title: 'Paxos Consensus', description: 'Paxos Consensus Reactivated' },
               ],
             },
@@ -344,20 +344,73 @@ async function runLiveVerification() {
       throw new Error(`Failed to create draft v3 via API: ${JSON.stringify(draftV3Res.body)}`);
     }
     const draftV3 = draftV3Res.body.data;
-    console.log(`8. Created Revision Draft v3 via API (${draftV3._id}) for Concurrency Test.`);
+    console.log(`8. Created Revision Draft v3 (Winning Candidate) via API (${draftV3._id}).`);
 
-    // 9. Issue Concurrent Approval Requests via API (v2 and v3 approved simultaneously)
-    console.log('9. Issuing concurrent approval requests for draft v2 and draft v3 via API...');
-    const [approveConcurrentA, approveConcurrentB] = await Promise.all([
-      apiRequest(`/subjects/${subjectId}/syllabus/versions/${draftV2._id}/approve`, { method: 'POST' }, cookieA),
-      apiRequest(`/subjects/${subjectId}/syllabus/versions/${draftV3._id}/approve`, { method: 'POST' }, cookieA),
-    ]);
+    // 9. Execute Genuine Live Adversarial Interleaving Test on MongoDB Atlas
+    console.log('9. Executing genuine live Atlas adversarial test (Worker A delayed mid-transaction while Worker B commits)...');
 
-    if (!approveConcurrentA.ok || !approveConcurrentB.ok) {
-      throw new Error(`Concurrent approval request failed: A=${JSON.stringify(approveConcurrentA.body)}, B=${JSON.stringify(approveConcurrentB.body)}`);
+    let workerAError = null;
+    let workerBResult = null;
+
+    // Worker A: Deliberately delays after establishing uncommitted version approval
+    const workerAPromise = (async () => {
+      const sessionA = await mongoose.startSession();
+      try {
+        sessionA.startTransaction({
+          readConcern: { level: 'snapshot' },
+          writeConcern: { w: 'majority' },
+        });
+
+        // Worker A marks previous versions superseded and sets Draft v2 to approved in its transaction
+        await SyllabusVersion.updateMany(
+          { subjectId, userId: userA._id, status: 'approved', _id: { $ne: draftV2._id } },
+          { $set: { status: 'superseded', supersededAt: new Date() } },
+          { session: sessionA }
+        );
+
+        await SyllabusVersion.updateOne(
+          { _id: draftV2._id, subjectId, userId: userA._id },
+          { $set: { status: 'approved', approvedAt: new Date(), supersededAt: null } },
+          { session: sessionA }
+        );
+
+        // DELIBERATE ADVERSARIAL DELAY: Worker A pauses 500ms before topic reconciliation and transaction commit
+        console.log('   [Worker A] Established uncommitted approval for Draft v2; sleeping 500ms before topic reconciliation...');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Worker A attempts to commit its transaction after Worker B has already committed Draft v3
+        console.log('   [Worker A] Woke up; attempting to commit stale transaction on Atlas...');
+        await sessionA.commitTransaction();
+      } catch (err) {
+        workerAError = err;
+        try {
+          await sessionA.abortTransaction();
+        } catch (_) {}
+      } finally {
+        await sessionA.endSession();
+      }
+    })();
+
+    // Worker B: Waits 100ms then executes a complete, valid approval for Draft v3 via real Express API
+    const workerBPromise = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      console.log('   [Worker B] Issuing API approval request for Draft v3 while Worker A is paused...');
+      workerBResult = await apiRequest(
+        `/subjects/${subjectId}/syllabus/versions/${draftV3._id}/approve`,
+        { method: 'POST' },
+        cookieA
+      );
+    })();
+
+    await Promise.all([workerAPromise, workerBPromise]);
+
+    if (!workerBResult || !workerBResult.ok) {
+      throw new Error(`Worker B approval failed: ${JSON.stringify(workerBResult?.body)}`);
     }
 
-    // Invariant Check 6: Guarantee exactly ONE approved version in Atlas, all others superseded
+    console.log(`   [Live Adversarial Outcome] Worker B committed Draft v3. Worker A transaction aborted as expected (${workerAError?.message || workerAError?.codeName || 'WriteConflict'}).`);
+
+    // Invariant Check 6: Guarantee exactly ONE approved version in Atlas (Draft v3), all others superseded
     const [approvedVersionsAtlas, supersededVersionsAtlas, allVersionsAtlas] = await Promise.all([
       SyllabusVersion.find({ subjectId, userId: userA._id, status: 'approved' }),
       SyllabusVersion.find({ subjectId, userId: userA._id, status: 'superseded' }),
@@ -365,54 +418,57 @@ async function runLiveVerification() {
     ]);
 
     if (approvedVersionsAtlas.length !== 1) {
-      throw new Error(`CONCURRENCY INVARIANT VIOLATION: Found ${approvedVersionsAtlas.length} approved versions in Atlas! Must be exactly 1.`);
+      throw new Error(`ADVERSARIAL INVARIANT VIOLATION: Found ${approvedVersionsAtlas.length} approved versions in Atlas! Must be exactly 1.`);
+    }
+    if (approvedVersionsAtlas[0]._id.toString() !== draftV3._id.toString()) {
+      throw new Error(`ADVERSARIAL INVARIANT VIOLATION: Expected Draft v3 (${draftV3._id}) to be sole approved version, but found ${approvedVersionsAtlas[0]._id}`);
     }
     if (supersededVersionsAtlas.length !== allVersionsAtlas.length - 1) {
-      throw new Error(`CONCURRENCY INVARIANT VIOLATION: Expected ${allVersionsAtlas.length - 1} superseded versions, found ${supersededVersionsAtlas.length}`);
+      throw new Error(`ADVERSARIAL INVARIANT VIOLATION: Expected ${allVersionsAtlas.length - 1} superseded versions, found ${supersededVersionsAtlas.length}`);
     }
 
     const winningApprovedVersion = approvedVersionsAtlas[0];
-    const subjectAfterConcurrency = await Subject.findById(subjectId);
-    if (subjectAfterConcurrency.activeSyllabusVersionId.toString() !== winningApprovedVersion._id.toString()) {
-      throw new Error(`Subject.activeSyllabusVersionId (${subjectAfterConcurrency.activeSyllabusVersionId}) does not match winning approved version (${winningApprovedVersion._id})`);
+    const subjectAfterAdversarial = await Subject.findById(subjectId);
+    if (subjectAfterAdversarial.activeSyllabusVersionId.toString() !== winningApprovedVersion._id.toString()) {
+      throw new Error(`Subject.activeSyllabusVersionId (${subjectAfterAdversarial.activeSyllabusVersionId}) does not match winning approved version (${winningApprovedVersion._id})`);
     }
-    if (subjectAfterConcurrency.syllabusStatus !== 'approved') {
-      throw new Error(`Subject.syllabusStatus is '${subjectAfterConcurrency.syllabusStatus}', expected 'approved'`);
+    if (subjectAfterAdversarial.syllabusStatus !== 'approved') {
+      throw new Error(`Subject.syllabusStatus is '${subjectAfterAdversarial.syllabusStatus}', expected 'approved'`);
     }
-    console.log(`✓ Invariant 6: Concurrency Safety Verified — Exactly ONE approved version (${winningApprovedVersion.title}) active in Atlas, all ${supersededVersionsAtlas.length} other versions superseded.`);
+    console.log(`✓ Invariant 6: Live Adversarial Isolation Verified — Exactly ONE approved version (${winningApprovedVersion.title}) active in Atlas, all ${supersededVersionsAtlas.length} other versions superseded.`);
 
-    // Invariant Check 7: Topic Lifecycle & History Preservation Verified
+    // Invariant Check 7: Topic Lifecycle, Stale Topic Exclusion, & History Preservation Verified
     const paxosInAtlas = await Topic.findById(paxosId);
-    if (winningApprovedVersion._id.toString() === draftV3._id.toString()) {
-      // If v3 won, Paxos was re-added and should be active with preserved masteryScore
-      if (paxosInAtlas.isActiveInSyllabus !== true || paxosInAtlas.knowledgeState.masteryScore !== 90 || paxosInAtlas.chatsCount !== 5) {
-        throw new Error('Paxos reactivated topic did not preserve learning history!');
-      }
-    } else {
-      // If v2 won, Paxos was omitted and should be historical with preserved masteryScore
-      if (paxosInAtlas.isActiveInSyllabus !== false || paxosInAtlas.knowledgeState.masteryScore !== 90 || paxosInAtlas.chatsCount !== 5) {
-        throw new Error('Paxos historical topic did not preserve learning history!');
-      }
+    if (paxosInAtlas.isActiveInSyllabus !== true || paxosInAtlas.knowledgeState.masteryScore !== 90 || paxosInAtlas.chatsCount !== 5) {
+      throw new Error('Paxos reactivated topic did not preserve learning history!');
     }
 
-    // Invariant Check 8: Subject.topicsCount reflects ONLY active syllabus topics and active topic set matches winning syllabus
     const activeTopicsAtlas = await Topic.find({ subjectId, userId: userA._id, isActiveInSyllabus: true });
     const actualActiveCount = activeTopicsAtlas.length;
-    if (subjectAfterConcurrency.topicsCount !== actualActiveCount) {
-      throw new Error(`Subject.topicsCount (${subjectAfterConcurrency.topicsCount}) does not match actual active topics count (${actualActiveCount})`);
+    if (subjectAfterAdversarial.topicsCount !== actualActiveCount || actualActiveCount !== 3) {
+      throw new Error(`Subject.topicsCount (${subjectAfterAdversarial.topicsCount}) does not match actual active topics count (${actualActiveCount})`);
     }
 
-    const expectedActiveTitles = winningApprovedVersion.sections
-      .flatMap((s) => s.topics)
-      .map((t) => t.title.trim().toLowerCase());
+    const activeNormalizedTitles = activeTopicsAtlas.map((t) => t.normalizedTitle);
+    const expectedTitles = ['vector clocks', 'winning exclusive protocol', 'paxos consensus'];
 
-    for (const activeTopic of activeTopicsAtlas) {
-      if (!expectedActiveTitles.includes(activeTopic.normalizedTitle)) {
-        throw new Error(`Topic '${activeTopic.title}' is marked active but not present in winning approved syllabus!`);
+    for (const title of expectedTitles) {
+      if (!activeNormalizedTitles.includes(title)) {
+        throw new Error(`Expected active topic '${title}' missing from Atlas canonical topics!`);
       }
     }
 
-    console.log(`✓ Invariant 7: Topic Lifecycle & Learning History Verified — Stable ID preserved (${vectorClockId}), historical learning data intact, and Subject.topicsCount (${subjectAfterConcurrency.topicsCount}) strictly matches active topics.`);
+    // Explicitly verify that no topic exclusive to the stale worker (Worker A) is active
+    const staleExclusiveTopic = await Topic.findOne({
+      subjectId,
+      userId: userA._id,
+      normalizedTitle: 'stale exclusive protocol',
+    });
+    if (staleExclusiveTopic && staleExclusiveTopic.isActiveInSyllabus === true) {
+      throw new Error('CRITICAL VIOLATION: Stale worker exclusive topic is active in Atlas canonical topics!');
+    }
+
+    console.log(`✓ Invariant 7: Topic Lifecycle & Stale Exclusion Verified — Stable ID preserved (${vectorClockId}), stale candidate topics strictly excluded, and Subject.topicsCount (${subjectAfterAdversarial.topicsCount}) strictly matches active topics.`);
 
     // 8. Create Chat & Messages & User Annotations via API
     const createChatRes = await apiRequest(

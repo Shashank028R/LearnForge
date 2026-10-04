@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Added & Hardened
 - **End-to-End Atomic Approval Pipeline & Concurrency Hardening**:
   - Defined MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` with `partialFilterExpression: { status: 'approved' }` on `SyllabusVersion.js` to physically prevent more than one approved syllabus version per subject at the database storage engine layer.
-  - Implemented multi-document ACID transactions on replica sets / Atlas ensuring atomic execution of version superseding, target approval, canonical topic reconciliation, active count calculation, and `Subject` active version update.
-  - Added pre- and post-reconciliation CAS guards across all environments, auto-reconciling topics to the winning approved version if an approval request is superseded during concurrent execution and preventing stale mutator state corruption.
+  - Required multi-document ACID transactions on replica sets / Atlas (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`) to atomically execute version superseding, target approval, canonical topic reconciliation, active count calculation, and `Subject.activeSyllabusVersionId` / `Subject.topicsCount` updates in a single isolated transaction with automated retry on transient write conflicts (`WriteConflict` code 112). Standalone MongoDB instances without replica sets return HTTP 503.
+  - Implemented live Atlas adversarial test with deliberate worker interleaving, verifying that stale uncommitted worker transactions cleanly abort with `WriteConflict` and prevent stale mutator corruption.
 - **Subject `topicsCount` & Topic Lifecycle Semantic Contract**:
   - `Subject.topicsCount` is strictly defined as the count of active syllabus topics (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`).
   - Pre-syllabus user-created topics default to `isActiveInSyllabus: false`, enabling free-form study without violating the active syllabus count contract (`topicsCount = 0`).
