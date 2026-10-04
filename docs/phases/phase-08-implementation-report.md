@@ -55,12 +55,25 @@ Transform LearnForge from a passive conversational tool into a strict, interacti
 - `syllabusVersionId`, `syllabusVersionNumber`: Pinned approved syllabus version (immutable).
 - `status`: State enum (`ORIENTING`, `QUESTIONING`, `ANSWER_PENDING`, `EVALUATING`, `REMEDIATING`, `RECHECKING`, `ADVANCING`, `COMPLETED`, `PAUSED`, `EXITED`).
 - `pausedFromStatus`: Exact prior state before pause.
+- `isActive`: Boolean flag (`true` for all non-terminal active states; `false` on `COMPLETED` and `EXITED`).
 - `sessionVersion`: Monotonic integer for optimistic concurrency locking.
 - `sequenceCounter`: Monotonic integer index for turn numbering.
 - `activeQuestion`: Active prompt with `expectedReasoningSignals` and `targetConceptIds`.
 - `evaluationState`: Single-slot tracker with `operationId`, `leaseExpiresAt`, `answerFingerprint`, `lastError`.
 - `turns`: Array of `StudyTurn` subdocuments.
 - `metrics`: Local counters (`correctCount`, `partiallyCorrectCount`, `incorrectCount`, `remediationsCount`, `demonstratedConceptIds`, `strugglingConceptIds`).
+
+### Database Constraint
+```javascript
+studySessionSchema.index(
+  { userId: 1, topicId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { isActive: true },
+    name: 'unique_active_study_session_per_user_topic',
+  }
+);
+```
 
 ---
 
@@ -121,14 +134,14 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 ---
 
 ## 13. Automated Test Suite (`server/tests/studySession.test.js`)
-- 22 comprehensive test scenarios covering all pedagogical states, real Promise.all concurrency races, lease fencing, idempotency key conflicts, syllabus pinning, concept whitelisting, and pause/resume invariants.
+- 25 comprehensive test scenarios covering all pedagogical states, real Promise.all concurrency races, single-turn database invariants for identical clientTurnId requests, lease fencing, idempotency key conflicts, syllabus pinning, concept whitelisting, isActive lifecycle, and pause/resume invariants.
 
 ---
 
 ## 14. Test Totals
 - Total test files: **13 passed (13/13)**
-- Total tests: **227 passed (227/227)**
-- Test execution duration: **~3.0s**
+- Total tests: **230 passed (230/230)**
+- Test execution duration: **~3.2s**
 
 ---
 
@@ -136,9 +149,9 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 - All **18/18 live verification gates passed**:
   - `[1/18]` `[HTTP API]` Health & Database Connectivity Check
   - `[2/18]` `[DATABASE]` MongoDB Atlas Replica Set Connection
-  - `[3/18]` `[DATABASE]` Multi-Document Transaction Support Assertion
+  - `[3/18]` `[DATABASE]` Multi-Document Transaction Support & Partial Unique Index (`{ isActive: true }`) Assertion
   - `[4/18]` `[DATABASE]` Isolated Test Tenant & Canonical Knowledge Setup
-  - `[5/18]` `[HTTP API]` Create Study Session with Pinned Syllabus
+  - `[5/18]` `[HTTP API]` Create Study Session with Pinned Syllabus & Race Safety Proof
   - `[6/18]` `[DOMAIN-SERVICE]` Verify Session Ownership & Curriculum Pinning
   - `[7/18]` `[AI GATEWAY]` Structured Question Generation with Target Concepts Whitelist
   - `[8/18]` `[HTTP API]` Submit Incomplete/Weak Answer
@@ -148,9 +161,9 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
   - `[12/18]` `[PEDAGOGY]` Demonstrated Understanding & Advancement
   - `[13/18]` `[HTTP API]` Fetch Next Question (`POST /continue`)
   - `[14/18]` `[DOMAIN-SERVICE CONCURRENCY]` Real Live Atlas Concurrency Race
-  - `[15/18]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection
+  - `[15/18]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection (matching `EVALUATING` status)
   - `[16/18]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404)
-  - `[17/18]` `[AI GATEWAY]` Safe Fallback Execution & Non-Stranding Error Recovery
+  - `[17/18]` `[AI GATEWAY]` Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy on MongoDB Atlas
   - `[18/18]` `[TEARDOWN]` Immutability-Safe Native Driver Teardown
 
 ---

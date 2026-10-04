@@ -173,6 +173,7 @@ const studySessionSchema = new mongoose.Schema(
       demonstratedConceptIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Concept' }],
       strugglingConceptIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Concept' }],
     },
+    isActive: { type: Boolean, default: true, index: true }, // Set to false on terminal COMPLETED or EXITED
     lastActivityAt: { type: Date, default: Date.now, index: true },
   },
   { timestamps: true }
@@ -183,12 +184,12 @@ studySessionSchema.index({ userId: 1, topicId: 1, status: 1 });
 studySessionSchema.index({ userId: 1, status: 1, lastActivityAt: -1 });
 studySessionSchema.index({ userId: 1, subjectId: 1, lastActivityAt: -1 });
 
-// Database-level race-safety constraint: only one active (non-terminal) session allowed per user and topic
+// Database-level race-safety constraint: only one active (isActive=true) session allowed per user and topic
 studySessionSchema.index(
   { userId: 1, topicId: 1 },
   {
     unique: true,
-    partialFilterExpression: { status: { $nin: ['COMPLETED', 'EXITED'] } },
+    partialFilterExpression: { isActive: true },
     name: 'unique_active_study_session_per_user_topic',
   }
 );

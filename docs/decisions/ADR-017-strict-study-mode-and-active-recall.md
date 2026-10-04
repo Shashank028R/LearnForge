@@ -28,9 +28,24 @@ Standard AI learning platforms act as passive question answering systems. In Lea
    - An active `StudySession` permanently pins the approved `SyllabusVersion` at creation time (`syllabusVersionId` and `syllabusVersionNumber`).
    - Subsequent syllabus revisions do not alter existing study sessions.
 
-5. **State Machine Invariants**:
+5. **State Machine Invariants & Exit Concurrency**:
    - Pause is strictly prohibited during active evaluation (returns HTTP 409 `CANNOT_PAUSE_DURING_EVALUATION`).
    - Unrecoverable evaluation failures safely restore session state to `QUESTIONING` (initial) or `RECHECKING` (follow-up), ensuring the student is never permanently stranded in `EVALUATING`.
+   - `exitSession` requires and verifies expected `sessionVersion`, failing closed with HTTP 409 `STALE_STUDY_STATE` on version conflict.
+
+6. **Active Session Database Constraint (`isActive`)**:
+   - `StudySession` maintains an `isActive: Boolean` field (`true` for all non-terminal states; `false` on `COMPLETED` or `EXITED`).
+   - Database-level unique active session constraint is enforced via:
+     ```javascript
+     studySessionSchema.index(
+       { userId: 1, topicId: 1 },
+       {
+         unique: true,
+         partialFilterExpression: { isActive: true },
+         name: 'unique_active_study_session_per_user_topic',
+       }
+     );
+     ```
 
 ## Consequences
 - Strict separation between session-local pedagogical records and long-term mastery engine (Phase 09).

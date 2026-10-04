@@ -168,14 +168,15 @@ export const studyController = {
 
   /**
    * POST /api/v1/study-sessions/:id/exit
-   * Terminates study session permanently (status: 'EXITED')
+   * Terminates study session permanently (status: 'EXITED', isActive: false) with sessionVersion protection
    */
   async exitSession(req, res, next) {
     try {
       const userId = req.user._id;
       const { id } = req.params;
+      const { sessionVersion } = req.body || {};
 
-      const session = await studyService.exitSession(userId, id);
+      const session = await studyService.exitSession(userId, id, { sessionVersion });
 
       return res.status(200).json({
         success: true,

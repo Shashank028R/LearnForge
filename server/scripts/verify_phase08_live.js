@@ -1,41 +1,16 @@
 /**
- * Phase 08 Live Verification Script (Fail-Closed, Hardened Pedagogical & Concurrency Proof)
+ * LearnForge Phase 08 — Strict Study Mode & Active Recall Live Verifier
+ * Comprehensive, fail-closed live verification script against live Express, MongoDB Atlas, and AI Gateway.
  *
- * Validates Strict Study Mode & Active Recall against live Express API, MongoDB Atlas replica set, and AI Gateway:
- *
- * ==============================================================================
- * CATEGORY 1: LIVE HTTP / REST API & PEDAGOGY INTEGRATION VERIFICATION
- * ==============================================================================
- * 1. Health & Database Connectivity Check
- * 2. MongoDB Atlas Replica Set Connection
- * 3. Multi-Document Transaction Support
- * 4. Isolated Test Tenant & Canonical Knowledge Base Setup
- * 5. Create Study Session with Pinned Syllabus (POST /topics/:topicId/study/sessions)
- * 6. Verify Session Ownership, Initial State QUESTIONING, and Curriculum Pinning
- * 7. Live AI Structured Question Generation with Target Concepts Whitelist
- * 8. Submit Incomplete/Weak Answer via REST API (POST /study-sessions/:id/answer)
- * 9. Verify Multi-Criteria Answer Evaluation (INCORRECT / PARTIALLY_CORRECT)
- * 10. Verify Pedagogical Remediation Loop Triggered (status: REMEDIATING, no blind advance)
- * 11. Advance to RECHECKING & Submit Socratic Follow-Up Answer (attemptType: FOLLOW_UP, parentTurnId)
- * 12. Verify Demonstrated Understanding & Advancement (CORRECT -> ADVANCING)
- * 13. Advance Already-Evaluated Session to Next Question (POST /study-sessions/:id/continue)
- * 16. Cross-Tenant Isolation & Security (HTTP 404 on unauthorized access)
- * 17. Safe Fallback Execution & Non-Stranding Error Recovery on Catastrophic AI Error
- * 18. Immutability-Safe Native Driver Test Teardown
- *
- * ==============================================================================
- * CATEGORY 2: LIVE DOMAIN-SERVICE CONCURRENCY & LEASE FENCING VERIFICATION
- * ==============================================================================
- * 14. Deterministic Real Live Concurrency: Duplicate Answer Submission Race with Synchronization Barrier
- * 15. Authoritative OperationId Lease Takeover & Stale Worker Fencing Rejection Proof
+ * Requirements:
+ * - Express dev server running on port 5000
+ * - MongoDB Atlas replica set reachable
+ * - Valid API keys for AI Gateway
+ * - Immutability safe (creates isolated test data, cleans up after itself, never mutates canonical records)
  */
 
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import crypto from 'crypto';
-import { hashSessionToken, generateSessionToken } from '../src/utils/authCrypto.js';
+import mongoose from 'mongoose';
 import { User } from '../src/models/User.js';
 import { UserSession } from '../src/models/UserSession.js';
 import { Subject } from '../src/models/Subject.js';
@@ -46,29 +21,30 @@ import { StudySession } from '../src/models/StudySession.js';
 import { studyService } from '../src/study/services/studyService.js';
 import { studyAiService } from '../src/study/services/studyAiService.js';
 import { STUDY_STATUS } from '../src/study/stateMachine.js';
+import { generateSessionToken, hashSessionToken } from '../src/utils/authCrypto.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, '../.env') });
+dotenv.config({ path: './server/.env' });
 
 const API_BASE = 'http://localhost:5000/api/v1';
 
 class TestSyncBarrier {
-  constructor(parties) {
-    this.parties = parties;
-    this.count = 0;
-    this.release = null;
-    this.promise = new Promise((resolve) => {
-      this.release = resolve;
-    });
+  constructor(count) {
+    this.count = count;
+    this.waiting = 0;
+    this.resolvers = [];
   }
 
-  async wait() {
-    this.count++;
-    if (this.count >= this.parties) {
-      this.release();
-    }
-    await this.promise;
+  wait() {
+    return new Promise((resolve) => {
+      this.resolvers.push(resolve);
+      this.waiting++;
+      if (this.waiting === this.count) {
+        const batch = [...this.resolvers];
+        this.resolvers = [];
+        this.waiting = 0;
+        batch.forEach((r) => r());
+      }
+    });
   }
 }
 
@@ -91,7 +67,7 @@ async function runLiveVerification() {
     // --- Gate 1: Live API Health Check ---
     console.log('[1/18] [HTTP API] Health & Database Connectivity Check...');
     const healthRes = await fetch(`${API_BASE}/health`);
-    if (!healthRes.ok) throw new Error(`Health check failed with HTTP ${healthRes.status}`);
+    if (!healthRes.ok) throw new Error(`FAIL-CLOSED: Express API health endpoint failed (HTTP ${healthRes.status})`);
     const healthData = await healthRes.json();
     const dbStatus = typeof healthData.data.database === 'object' ? healthData.data.database?.status : healthData.data.database;
     if (dbStatus !== 'connected') throw new Error(`FAIL-CLOSED: Live API database status is "${dbStatus}", expected "connected"`);
@@ -104,16 +80,31 @@ async function runLiveVerification() {
     await mongoose.connect(mongoUri);
     console.log('  -> PASS: Connected to MongoDB replica set via Mongoose driver.\n');
 
-    // --- Gate 3: Multi-Document Transaction Support ---
-    console.log('[3/18] [DATABASE] Multi-Document Transaction Support Assertion...');
+    // --- Gate 3: Multi-Document Transaction & Partial Unique Index Verification ---
+    console.log('[3/18] [DATABASE] Multi-Document Transaction Support & Partial Unique Index Assertion...');
     const testSession = await mongoose.startSession();
     try {
       testSession.startTransaction();
       await testSession.abortTransaction();
-      console.log('  -> PASS: Multi-document replica set transactions supported.\n');
+      console.log('  -> PASS: Multi-document replica set transactions supported.');
     } finally {
       await testSession.endSession();
     }
+
+    // Ensure database indexes are synchronized on Atlas
+    await StudySession.init();
+    const indexes = await StudySession.collection.listIndexes().toArray();
+    const activeIndex = indexes.find((idx) => idx.name === 'unique_active_study_session_per_user_topic');
+    if (!activeIndex) {
+      throw new Error('FAIL-CLOSED: unique_active_study_session_per_user_topic index not found on StudySession collection.');
+    }
+    if (!activeIndex.unique) {
+      throw new Error('FAIL-CLOSED: unique_active_study_session_per_user_topic index is not marked unique.');
+    }
+    if (!activeIndex.partialFilterExpression || activeIndex.partialFilterExpression.isActive !== true) {
+      throw new Error(`FAIL-CLOSED: Expected partialFilterExpression { isActive: true }, got: ${JSON.stringify(activeIndex.partialFilterExpression)}`);
+    }
+    console.log(`  -> PASS: Verified database partial unique index: unique=true, partialFilterExpression={ isActive: true }.\n`);
 
     // --- Gate 4: Isolated Test Tenant & Canonical Knowledge Base Setup ---
     console.log('[4/18] [DATABASE] Isolated Test Tenant & Canonical Knowledge Setup...');
@@ -214,7 +205,7 @@ async function runLiveVerification() {
 
     console.log(`  -> PASS: Seeded tenant A (${userA._id}), tenant B (${userB._id}), subject, topic, pinned syllabus v1, and 2 canonical concepts.\n`);
 
-    // --- Gate 5: Create Study Session with Pinned Syllabus ---
+    // --- Gate 5: Create Study Session with Pinned Syllabus & Race Safety Proof ---
     console.log('[5/18] [HTTP API] Create Study Session with Pinned Syllabus (POST /api/v1/topics/:topicId/study/sessions)...');
     const createRes = await fetch(`${API_BASE}/topics/${topicA._id}/study/sessions`, {
       method: 'POST',
@@ -226,7 +217,18 @@ async function runLiveVerification() {
     cleanupIds.studySessions.push(createdSession._id);
 
     if (createData.data.isNew !== true) throw new Error('Expected isNew: true on fresh session creation.');
-    console.log(`  -> PASS: Study session created with ID: ${createdSession._id}\n`);
+    if (createdSession.isActive !== true) throw new Error('Expected created session to have isActive: true.');
+
+    // Duplicate creation proof: second call safely resumes existing session
+    const dupCreateRes = await fetch(`${API_BASE}/topics/${topicA._id}/study/sessions`, {
+      method: 'POST',
+      headers: { Cookie: cookieA },
+    });
+    const dupCreateData = await dupCreateRes.json();
+    if (dupCreateData.data.isNew !== false) throw new Error('Expected isNew: false on duplicate active session creation.');
+    if (dupCreateData.data.session._id !== createdSession._id) throw new Error('Duplicate creation failed to return original session.');
+
+    console.log(`  -> PASS: Study session created with ID: ${createdSession._id} (isActive: true, race-safe resumption verified).\n`);
 
     // --- Gate 6: Verify Session Ownership & Curriculum Pinning ---
     console.log('[6/18] [DOMAIN-SERVICE] Verify Session Ownership, Initial State QUESTIONING, and Curriculum Pinning...');
@@ -234,7 +236,7 @@ async function runLiveVerification() {
     if (createdSession.syllabusVersionId !== approvedSyllabusA._id.toString()) throw new Error('Pinned syllabusVersionId mismatch.');
     if (createdSession.syllabusVersionNumber !== 1) throw new Error('Pinned syllabusVersionNumber mismatch.');
     if (createdSession.sessionVersion !== 1) throw new Error('Initial sessionVersion should be 1.');
-    console.log('  -> PASS: Session correctly initialized in QUESTIONING state with permanent SyllabusVersion v1 pinning.\n');
+    console.log(`  -> PASS: Session correctly initialized in QUESTIONING state with permanent SyllabusVersion v1 pinning.\n`);
 
     // --- Gate 7: Verify Structured Question Generation with Target Concepts Whitelist ---
     console.log('[7/18] [AI GATEWAY] Verify Structured Question Generation with Target Concepts Whitelist...');
@@ -278,18 +280,15 @@ async function runLiveVerification() {
     const weakTurn = weakAnswerData.data.turn;
     const sessionAfterWeak = weakAnswerData.data.session;
 
-    if (!['INCORRECT', 'PARTIALLY_CORRECT'].includes(weakTurn.evaluation?.verdict)) {
-      console.warn(`  [Notice] Live AI verdict was "${weakTurn.evaluation?.verdict}".`);
+    if (!['INCORRECT', 'PARTIALLY_CORRECT'].includes(weakTurn.evaluation.verdict)) {
+      throw new Error(`Expected incomplete answer verdict INCORRECT or PARTIALLY_CORRECT, got ${weakTurn.evaluation.verdict}`);
     }
-
     if (sessionAfterWeak.status !== STUDY_STATUS.REMEDIATING) {
-      throw new Error(`Expected status REMEDIATING for weak answer, got ${sessionAfterWeak.status}`);
+      throw new Error(`Expected session status REMEDIATING on weak answer, got ${sessionAfterWeak.status}`);
     }
-
     if (!weakTurn.remediation?.followUpQuestion) {
-      throw new Error('Expected Socratic followUpQuestion in remediation payload.');
+      throw new Error('Expected Socratic followUpQuestion generated in remediation.');
     }
-
     console.log(`  -> Verdict: ${weakTurn.evaluation.verdict} (Correctness: ${weakTurn.evaluation.correctness}%)`);
     console.log(`  -> Feedback: "${weakTurn.evaluation.feedback.substring(0, 90)}..."`);
     console.log(`  -> Follow-Up Probe: "${weakTurn.remediation.followUpQuestion.substring(0, 90)}..."`);
@@ -297,7 +296,6 @@ async function runLiveVerification() {
 
     // --- Gate 11: Advance to RECHECKING & Submit Follow-Up Answer ---
     console.log('[11/18] [HTTP API] Advance to RECHECKING & Submit Socratic Follow-Up Answer...');
-    // Continue to RECHECKING
     const continueRes = await fetch(`${API_BASE}/study-sessions/${createdSession._id}/continue`, {
       method: 'POST',
       headers: {
@@ -309,10 +307,10 @@ async function runLiveVerification() {
       }),
     });
 
-    if (!continueRes.ok) throw new Error(`Failed to continue session: HTTP ${continueRes.status}`);
+    if (!continueRes.ok) throw new Error(`Continue failed: HTTP ${continueRes.status}`);
     const continueData = await continueRes.json();
     if (continueData.data.status !== STUDY_STATUS.RECHECKING) {
-      throw new Error(`Expected status RECHECKING, got ${continueData.data.status}`);
+      throw new Error(`Expected status RECHECKING after continuing remediation, got ${continueData.data.status}`);
     }
 
     const followUpQuestion = continueData.data.activeQuestion;
@@ -456,14 +454,86 @@ async function runLiveVerification() {
     }
     console.log('  -> PASS: Tenant isolation strictly enforced (HTTP 404).\n');
 
-    // --- Gate 17: Safe Fallback Execution & Non-Stranding Error Recovery ---
-    console.log('[17/18] [AI GATEWAY] Safe Fallback Execution & Non-Stranding Error Recovery on AI Error...');
-    const fallbackQ = studyAiService._buildDeterministicQuestion([concept1], 'Raft', concept1, 'req-live-fallback');
-    if (!fallbackQ.prompt || fallbackQ.provenance.source !== 'deterministic_fallback') {
-      throw new Error('Deterministic question fallback failed.');
+    // --- Gate 17: Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy ---
+    console.log('[17/18] [AI GATEWAY] Proving Real Live Evaluation Failure Recovery on MongoDB Atlas...');
+    const recoveryTopic = await Topic.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      title: `Consensus Safety Invariants ${nonce}`,
+      normalizedTitle: `consensus safety invariants ${nonce}`.toLowerCase(),
+      description: 'Leader completeness, state machine safety, and election safety.',
+    });
+    cleanupIds.topics.push(recoveryTopic._id);
+
+    const recoveryConcept = await Concept.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      topicId: recoveryTopic._id,
+      name: 'Election Safety Invariant',
+      normalizedName: 'election safety invariant',
+      description: 'At most one leader can be elected in a given term across the entire cluster.',
+      status: 'LEARNING',
+    });
+    cleanupIds.concepts.push(recoveryConcept._id);
+
+    // Create a fresh session for recovery verification
+    const recSessionRes = await studyService.createOrResumeSession(userA._id, recoveryTopic._id);
+    const recSession = recSessionRes.session;
+    cleanupIds.studySessions.push(recSession._id);
+
+    const recQuestionId = recSession.activeQuestion.questionId;
+    const recSessionVersion = recSession.sessionVersion;
+
+    // Induce controlled evaluation failure on live Atlas DB
+    let failedSafely = false;
+    try {
+      await studyService.submitAnswer(userA._id, recSession._id, {
+        questionId: recQuestionId,
+        sessionVersion: recSessionVersion,
+        clientTurnId: `turn_rec_fail_${Date.now()}`,
+        answer: 'Any answer that triggers controlled evaluation error.',
+      }, { forceEvaluationError: true });
+    } catch (err) {
+      if (err.code === 'EVALUATION_FAILED_RETRY_SAFE') {
+        failedSafely = true;
+      }
     }
-    console.log(`  -> Fallback Prompt: "${fallbackQ.prompt}"`);
-    console.log('  -> PASS: Deterministic rule-based fallbacks guarantee non-stranding pedagogy.\n');
+
+    if (!failedSafely) {
+      throw new Error('Expected submitAnswer with forceEvaluationError to throw EVALUATION_FAILED_RETRY_SAFE.');
+    }
+
+    // Inspect the actual persisted state in MongoDB Atlas
+    const postFailureSession = await StudySession.findById(recSession._id);
+    if (postFailureSession.status === STUDY_STATUS.EVALUATING) {
+      throw new Error('FAIL-CLOSED: Session remained stranded in EVALUATING state after evaluation error.');
+    }
+    if (postFailureSession.status !== STUDY_STATUS.QUESTIONING) {
+      throw new Error(`Expected session restored to QUESTIONING, got ${postFailureSession.status}`);
+    }
+    if (postFailureSession.evaluationState.status !== 'FAILED') {
+      throw new Error(`Expected evaluationState.status FAILED, got ${postFailureSession.evaluationState.status}`);
+    }
+    if (postFailureSession.activeQuestion.questionId !== recQuestionId) {
+      throw new Error('FAIL-CLOSED: Active question context was lost after evaluation failure.');
+    }
+
+    // Prove subsequent retry succeeds
+    const retryRes = await studyService.submitAnswer(userA._id, recSession._id, {
+      questionId: recQuestionId,
+      sessionVersion: postFailureSession.sessionVersion,
+      clientTurnId: `turn_rec_retry_${Date.now()}`,
+      answer: 'At most one leader can be elected in a given term because a candidate requires a majority of votes, and each follower votes for at most one candidate per term.',
+    });
+
+    if (!retryRes.turn || !retryRes.session) {
+      throw new Error('Subsequent answer retry failed after recovery.');
+    }
+
+    console.log(`  -> Recovery Session Restored to Status: ${postFailureSession.status} (evaluationState: ${postFailureSession.evaluationState.status})`);
+    console.log(`  -> Active Question Preserved: "${postFailureSession.activeQuestion.prompt.substring(0, 60)}..."`);
+    console.log(`  -> Subsequent Retry Result: Succeeded (Next Status: ${retryRes.session.status})`);
+    console.log('  -> PASS: Real live catastrophic evaluation recovery verified on MongoDB Atlas replica set.\n');
 
     // --- Gate 18: Immutability-Safe Native Driver Teardown ---
     console.log('[18/18] [TEARDOWN] Immutability-Safe Native Driver Test Teardown...');

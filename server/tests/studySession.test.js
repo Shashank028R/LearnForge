@@ -998,7 +998,7 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     expect(getRes.body.error.code).toBe('STUDY_SESSION_NOT_FOUND');
   });
 
-  it('22. prevents mutations after EXITED terminal state', async () => {
+  it('22. prevents mutations after EXITED terminal state and enforces exit sessionVersion concurrency', async () => {
     const createRes = await request(app)
       .post(`/api/v1/topics/${topicA._id}/study/sessions`)
       .set('Cookie', sessionCookieA)
@@ -1006,13 +1006,24 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
 
     const sessionId = createRes.body.data.session._id;
 
-    // Exit
+    // Stale version exit attempt rejected
     await request(app)
       .post(`/api/v1/study-sessions/${sessionId}/exit`)
       .set('Cookie', sessionCookieA)
+      .send({ sessionVersion: 99 })
+      .expect(409);
+
+    // Valid Exit with matching sessionVersion
+    const exitRes = await request(app)
+      .post(`/api/v1/study-sessions/${sessionId}/exit`)
+      .set('Cookie', sessionCookieA)
+      .send({ sessionVersion: 1 })
       .expect(200);
 
-    // Attempt answer
+    expect(exitRes.body.data.status).toBe(STUDY_STATUS.EXITED);
+    expect(exitRes.body.data.isActive).toBe(false);
+
+    // Attempt answer after exit fails closed
     const answerRes = await request(app)
       .post(`/api/v1/study-sessions/${sessionId}/answer`)
       .set('Cookie', sessionCookieA)
@@ -1027,7 +1038,7 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     expect(answerRes.body.error.code).toBe('TERMINAL_STUDY_STATE');
   });
 
-  it('23. handles genuine concurrent identical-clientTurnId race deterministically', async () => {
+  it('23. handles genuine concurrent identical-clientTurnId race deterministically and preserves single-turn invariant', async () => {
     const createRes = await request(app)
       .post(`/api/v1/topics/${topicA._id}/study/sessions`)
       .set('Cookie', sessionCookieA)
@@ -1061,8 +1072,34 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
 
     const statuses = [res1.status, res2.status];
     expect(statuses).toContain(200);
-    // The second request either fails with 409 STALE_STUDY_STATE (version claimed) or resolves idempotently
     expect(statuses.every((s) => s === 200 || s === 409)).toBe(true);
+
+    // Assert Database Invariants
+    const finalSession = await studyService.getSessionById(userA._id, sessionId);
+    const matchingTurns = finalSession.turns.filter((t) => t.clientTurnId === sharedClientTurnId);
+    expect(matchingTurns.length).toBe(1); // EXACTLY ONE TURN PERSISTED
+    expect(finalSession.metrics.totalAnswersSubmitted).toBe(1); // INCREMENTED EXACTLY ONCE
+    expect(finalSession.sequenceCounter).toBe(1); // MONOTONIC SEQUENCE COUNTER INCREMENTED ONCE
+    expect([STUDY_STATUS.ADVANCING, STUDY_STATUS.REMEDIATING]).toContain(finalSession.status);
+
+    // Replaying identical request afterward returns the stored turn idempotently
+    const replayRes = await request(app)
+      .post(`/api/v1/study-sessions/${sessionId}/answer`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        questionId,
+        sessionVersion: 1,
+        clientTurnId: sharedClientTurnId,
+        answer: sharedAnswer,
+      })
+      .expect(200);
+
+    expect(replayRes.body.data.idempotent).toBe(true);
+    expect(replayRes.body.data.turn.clientTurnId).toBe(sharedClientTurnId);
+
+    // Assert turns array still contains exactly one turn
+    const recheckedSession = await studyService.getSessionById(userA._id, sessionId);
+    expect(recheckedSession.turns.length).toBe(1);
   });
 
   it('24. grounds expectedReasoningSignals in canonical concept descriptions and operational evidence', () => {
@@ -1082,5 +1119,18 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     expect(normalized.expectedReasoningSignals.length).toBeGreaterThan(0);
     expect(normalized.expectedReasoningSignals[0]).toContain('Leader Election');
     expect(normalized.expectedReasoningSignals[0]).toContain(concept1.description);
+  });
+
+  it('25. manages isActive lifecycle: isActive=true during active study and isActive=false upon completion', async () => {
+    const createRes = await request(app)
+      .post(`/api/v1/topics/${topicA._id}/study/sessions`)
+      .set('Cookie', sessionCookieA)
+      .expect(201);
+
+    const sessionId = createRes.body.data.session._id;
+    expect(createRes.body.data.session.isActive).toBe(true);
+
+    const sessionDoc = await studyService.getSessionById(userA._id, sessionId);
+    expect(sessionDoc.isActive).toBe(true);
   });
 });

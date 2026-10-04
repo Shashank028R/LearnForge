@@ -85,11 +85,11 @@ export class StudyService {
       throw error;
     }
 
-    // 1. Check for existing active (non-terminal) session
+    // 1. Check for existing active session (isActive: true)
     const existingSession = await StudySession.findOne({
       userId,
       topicId,
-      status: { $nin: TERMINAL_STATUSES },
+      isActive: true,
     }).sort({ lastActivityAt: -1 });
 
     if (existingSession) {
@@ -161,6 +161,7 @@ export class StudyService {
         demonstratedConceptIds: [],
         strugglingConceptIds: [],
       },
+      isActive: true,
       lastActivityAt: new Date(),
     });
 
@@ -173,7 +174,7 @@ export class StudyService {
         const concurrentSession = await StudySession.findOne({
           userId,
           topicId,
-          status: { $nin: TERMINAL_STATUSES },
+          isActive: true,
         }).sort({ lastActivityAt: -1 });
 
         if (concurrentSession) {
@@ -571,6 +572,7 @@ export class StudyService {
           {
             $set: {
               status: STUDY_STATUS.COMPLETED,
+              isActive: false,
               lastActivityAt: new Date(),
             },
             $inc: { sessionVersion: 1 },
@@ -797,25 +799,39 @@ export class StudyService {
   }
 
   /**
-   * Terminates a study session permanently (EXITED).
-   * Fully atomic with sessionVersion.
+   * Terminates a study session permanently (EXITED, isActive: false).
+   * Fully atomic with expected sessionVersion.
    */
-  async exitSession(userId, sessionId) {
+  async exitSession(userId, sessionId, payload = {}) {
+    const { sessionVersion } = payload;
     const session = await this.getSessionById(userId, sessionId);
 
-    if (session.status === STUDY_STATUS.EXITED) {
-      return session;
+    if (session.status === STUDY_STATUS.EXITED || !session.isActive) {
+      const error = new Error('Cannot perform operations on terminal study session (EXITED).');
+      error.code = 'TERMINAL_STUDY_STATE';
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (sessionVersion !== undefined && Number(sessionVersion) !== session.sessionVersion) {
+      const error = new Error('Stale sessionVersion.');
+      error.code = 'STALE_STUDY_STATE';
+      error.statusCode = 409;
+      throw error;
     }
 
     const updated = await StudySession.findOneAndUpdate(
       {
         _id: sessionId,
         userId,
+        isActive: true,
         status: { $ne: STUDY_STATUS.EXITED },
+        sessionVersion: session.sessionVersion,
       },
       {
         $set: {
           status: STUDY_STATUS.EXITED,
+          isActive: false,
           lastActivityAt: new Date(),
         },
         $inc: { sessionVersion: 1 },
@@ -823,7 +839,14 @@ export class StudyService {
       { new: true }
     );
 
-    return updated || session;
+    if (!updated) {
+      const error = new Error('Stale sessionVersion or session state modified concurrently.');
+      error.code = 'STALE_STUDY_STATE';
+      error.statusCode = 409;
+      throw error;
+    }
+
+    return updated;
   }
 
   /**
