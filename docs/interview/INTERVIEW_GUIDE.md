@@ -554,4 +554,44 @@ The Credential Gate is a mandatory engineering standard:
 **Answer**:  
 Phase 05 is strictly scoped to the AI Gateway, automatic model routing, and the pedagogical engine. Automatic concept extraction belongs to Phase 06, structured block notes belong to Phase 07, and Study Mode enforcement belongs to Phase 08. Adhering to progressive phase boundaries guarantees rock-solid architectural foundations before building higher-level intelligence pipelines.
 
+### Q76: What is the core axiom of the Knowledge Engine and why is it separated from chat?
+**Answer**:  
+> **"Chat is evidence. Knowledge is the product. Notes are the structured representation of that knowledge. AI is the pedagogical engine that evaluates and organizes it."**  
+Conversations are ephemeral interaction streams. Treating chat transcripts as the knowledge model leads to messy unstructured blobs, duplicated information, and loss of learning progression. The Knowledge Engine extracts structured `LearningEvent` and `Concept` entities, creating a clean, versioned, and auditable representation of student understanding.
+
+### Q77: How does the Knowledge Engine achieve durable Concept Identity without creating duplicate concepts?
+**Answer**:  
+When candidate concepts are extracted, `ConceptResolver` queries the user-scoped topic records:
+1. Exact normalized name match: matches `{ userId, topicId, normalizedName }`.
+2. Normalized alias match: checks if candidate matches any stored `normalizedAliases`.
+3. Alias reconciliation: automatically appends new discovered abbreviations/synonyms (e.g., "BST" to "Binary Search Tree").
+4. Semantic classification: assigns `NEW`, `EXISTING`, `DUPLICATE`, `COMPLEMENTARY`, `CORRECTION`, or `CONFLICT`. Duplicate facts receive minimal confidence increments (+2%) without creating redundant records.
+
+### Q78: How does the Learning State Machine govern state transitions and confidence scoring?
+**Answer**:  
+`LearningStateMachine` enforces bounded, deterministic transition rules:
+- `NOT_STARTED` → `INTRODUCED` on first encounter (`confidence = 20`).
+- `INTRODUCED` → `LEARNING` on explanation or study.
+- `LEARNING` → `UNDERSTOOD` when recall is demonstrated (`evidenceCount >= 2`, score ≥ 60).
+- `UNDERSTOOD` → `STRONG` upon repeated reinforcement (`evidenceCount >= 4`, score ≥ 80).
+- Misconceptions trigger immediate regression to `NEEDS_REVIEW` with score penalties (-20 to -35).
+- Confidence scores are bounded (0–100) using a diminishing returns formula: $\min(100, \text{round}(\text{current} + \text{delta} \times (1 - \text{current}/125)))$.
+
+### Q79: How are misconceptions and conflicts handled without destroying historical evidence?
+**Answer**:  
+- **Misconceptions**: Recorded in `concept.misconceptions` array with detected timestamp, flawed premise, and corrective explanation. Historical messages remain intact, while concept status regresses to `NEEDS_REVIEW`. When corrected, misconceptions are marked `isActive: false` with `resolvedAt` timestamp.
+- **Conflicts**: When new statements contradict established canonical facts, a `concept_conflict` `LearningEvent` is created and `concept.conflictState` is flagged (`hasConflict: true`). Neither existing notes nor raw evidence are overwritten.
+
+### Q80: How is idempotency guaranteed when processing chat exchanges?
+**Answer**:  
+Each `LearningEvent` enforces a compound unique index on `{ userId: 1, idempotencyKey: 1 }` where `idempotencyKey = \`${userId}:${sourceMessageId}:${version}\``. If an exchange is reprocessed, `KnowledgeEngineService` intercepts the duplicate key or existing event check and returns safely without duplicate records or score inflation.
+
+### Q81: What is the transaction boundary for Knowledge Engine persistence?
+**Answer**:  
+On MongoDB replica sets / Atlas clusters, `LearningEvent` creation, `Concept` update, and `Topic.knowledgeState` aggregation execute within an atomic multi-document transaction (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`). If any write fails, the entire transaction aborts cleanly.
+
+### Q82: Why does Phase 06 NOT create NoteDocument or NoteVersion records?
+**Answer**:  
+Phase 06 strictly owns canonical concept extraction, learning event ledgers, and topic mastery state. Structured block notes, note version snapshots, and note diff proposals belong to Phase 07. Keeping these domains decoupled ensures modularity, testability, and architectural discipline.
+
 

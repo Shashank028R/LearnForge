@@ -2,6 +2,40 @@
 
 This log is the permanent chronological engineering journal for the LearnForge project. Every phase records its objective, work performed, architectural decisions, testing, problems, and solutions.
 
+## [Phase 06] Knowledge Extraction Engine & Pedagogical Analysis
+
+- **Date**: October 4, 2026
+- **Status**: Completed
+- **Phase**: Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis
+- **Core Principle**: *"Chat is evidence. Knowledge is the product. Notes are the structured representation of that knowledge. AI is the pedagogical engine that evaluates and organizes it."*
+- **Objective**: Build the first production-grade Knowledge Extraction Engine and Pedagogical Analysis pipeline. Transform conversational evidence into validated, auditable `LearningEvent` ledger entries and canonical `Concept` models, with deterministic state machine transitions (`NOT_STARTED` → `INTRODUCED` → `LEARNING` → `UNDERSTOOD` → `STRONG` / `NEEDS_REVIEW`), bounded confidence scoring, misconception tracking, conflict handling, and topic mastery aggregation (`Topic.knowledgeState` & `Topic.status`), while strictly respecting phase boundaries (zero `NoteDocument` / `NoteVersion` mutations).
+- **Active AI Gateway Tasks**: Added `KNOWLEDGE_EVENT_EXTRACTION` mapped to `STRUCTURED_OUTPUT` and `COMPLEX_REASONING` capabilities.
+
+### Work Performed
+1. **Architectural Foundations & ADR-015**:
+   - Designed and documented ADR-015 governing knowledge extraction, concept resolution, learning states, and transaction boundaries.
+   - Preserved strict separation between raw conversation transcripts (evidence) and canonical knowledge state (`Concept` / `LearningEvent` / `Topic.knowledgeState`).
+2. **Domain Persistence Models**:
+   - `server/src/models/Concept.js`: Canonical concept model with compound unique index `{ userId: 1, topicId: 1, normalizedName: 1 }`, status tracking, bounded confidence score (0–100), evidence counts, misconceptions, and conflict state.
+   - `server/src/models/LearningEvent.js`: Immutable, tenant-scoped ledger entry with compound unique index `{ userId: 1, idempotencyKey: 1 }` (`${userId}:${sourceMessageId}:${version}`), event types, classification outcomes (`NEW`, `EXISTING`, `DUPLICATE`, `COMPLEMENTARY`, `CORRECTION`, `CONFLICT`), and source attribution.
+3. **Dedicated Knowledge Engine Subsystem (`server/src/knowledge/`)**:
+   - `extraction/eventExtractor.js`: Calls AIGateway task `KNOWLEDGE_EVENT_EXTRACTION` with JSON schema enforcement and deterministic rule-based fallback.
+   - `resolution/conceptResolver.js`: Exact normalized name matching and normalized alias resolution with automatic synonym/acronym reconciliation.
+   - `state/learningStateMachine.js`: Governs deterministic state transitions, diminishing returns confidence formula, misconception penalties (-15 to -30), recovery on correction, and topic aggregate mastery calculation.
+   - `services/knowledgeEngineService.js`: Master coordinator handling tenant authorization, approved syllabus boundaries, off-topic exclusion, idempotency deduplication, and atomic multi-document transactions.
+4. **Chat Messaging Integration (`server/src/controllers/chatController.js`)**:
+   - Wired `knowledgeEngine.processExchangeEvidence(...)` into `createChat` and `sendMessage` after successful message persistence for on-topic topic chats.
+5. **Knowledge REST APIs (`server/src/controllers/knowledgeController.js` & `server/src/routes/knowledgeRoutes.js`)**:
+   - Mounted `GET /api/v1/topics/:topicId/concepts`, `GET /api/v1/concepts/:conceptId`, `GET /api/v1/topics/:topicId/learning-events`, and `POST /api/v1/topics/:topicId/extract-knowledge`.
+6. **Testing & Verification**:
+   - Added 20 automated unit/integration tests in `server/tests/knowledgeEngine.test.js` (server total: 150 tests passing 100%).
+   - All 46 client tests passing (client total: 46 tests passing 100%).
+   - Total Monorepo Automated Tests: 196 / 196 passing (100%).
+   - Live integration script `verify_phase06_live.js` fully passed with MongoDB Atlas, Express API, and live Groq API (`openai/gpt-oss-120b`).
+   - Phase boundary verified: 0 `NoteDocument` / `NoteVersion` created.
+
+---
+
 ## [Phase 05] AI Gateway, Automatic Model Routing & Pedagogical Engine
 
 - **Date**: October 4, 2026

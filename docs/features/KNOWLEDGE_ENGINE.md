@@ -1,164 +1,89 @@
-# Knowledge Engine
+# Knowledge Engine & Pedagogical Analysis (Phase 06)
 
 ## 1. Purpose
-
-The Knowledge Engine converts study interactions into a structured representation of what the user has encountered, understood, misunderstood, or needs to review.
+The Knowledge Engine converts study interactions and conversational evidence into structured, validated, and auditable representations of what the user has encountered, understood, misunderstood, or needs to review.
 
 ## 2. Core Principle
+> **"Chat is evidence. Knowledge is the product. Notes are the structured representation of that knowledge. AI is the pedagogical engine that evaluates and organizes it."**
 
-A chat transcript is evidence. It is not itself the knowledge model.
+A chat transcript is evidence. It is not itself the canonical knowledge model.
+
+---
 
 ## 3. Learning Event Pipeline
 
 ```text
-Chat / Study / Quiz / Import
+Chat Exchange (User + Assistant)
           |
           v
-Learning Event Extraction
+Knowledge Governance Boundary (Off-Topic Exclusion)
           |
           v
-Topic + Concept Resolution
+Learning Event Extraction (AIGateway: KNOWLEDGE_EVENT_EXTRACTION)
+          |
+          v
+Topic + Concept Identity Resolution (Exact Match -> Alias Match -> Conflict Check)
           |
           v
 Existing Knowledge Lookup
           |
-          +--> New concept
-          +--> Existing concept
-          +--> Duplicate
-          +--> Correction
-          +--> Conflict
+          +--> NEW
+          +--> EXISTING
+          +--> DUPLICATE (Minimal reward, no inflation)
+          +--> COMPLEMENTARY (Enriches concept nuance)
+          +--> CORRECTION (Resolves active misconception)
+          +--> CONFLICT (Flags concept, preserves evidence)
           |
           v
-Knowledge State Evaluation
+Learning State Machine Evaluation
           |
-          +--> update state
-          +--> update confidence
-          +--> record weak areas
-          +--> schedule review signal
+          +--> Status Transition (NOT_STARTED -> INTRODUCED -> LEARNING -> UNDERSTOOD -> STRONG / NEEDS_REVIEW)
+          +--> Bounded Confidence Calculation (Diminishing returns formula)
+          +--> Misconception Tracking (Severity penalties: -15 to -30)
           |
           v
-Notes / Progress / Quiz Signals
+Atomic Multi-Document Persistence (LearningEvent + Concept + Topic.knowledgeState)
 ```
 
-## 4. Concept Resolution
+---
 
-When new content appears, the engine should attempt to resolve it to an existing concept using:
+## 4. Concept Identity & Resolution
+When candidate concepts are extracted:
+1. **Exact Canonical Match**: Matches `{ userId, topicId, normalizedName: normalize(candidateName) }`.
+2. **Normalized Alias Match**: Matches candidate name against existing concepts' `normalizedAliases` array.
+3. **Alias Reconciliation**: Appends new discovered aliases/acronyms to the existing canonical `Concept`.
+4. **Relationship Classification**:
+   - `NEW`: Creates a new `Concept` in `INTRODUCED` status with baseline confidence (20%).
+   - `EXISTING`: Continues work on established concept.
+   - `DUPLICATE`: Same semantic fact restated; awards nominal increment (+2%) to prevent score inflation.
+   - `COMPLEMENTARY`: Adds new properties or edge cases to concept.
+   - `CORRECTION`: Resolves active misconceptions and transitions from `NEEDS_REVIEW` to `LEARNING`.
+   - `CONFLICT`: Evidence contradicts established definition; sets `conflictState.hasConflict = true` without deleting existing knowledge.
 
-1. exact/canonical name match;
-2. normalized aliases;
-3. topic context;
-4. semantic similarity if later introduced;
-5. AI-assisted resolution for ambiguous cases.
+---
 
-The final decision must be deterministic enough to audit.
+## 5. Learning States & Transition Rules
 
-## 5. Learning States
+| State | Entry Condition | Transition Trigger |
+| :--- | :--- | :--- |
+| `NOT_STARTED` | Default initial state | First introduction (`concept_introduced`) → `INTRODUCED` |
+| `INTRODUCED` | Concept encountered for first time | Detailed explanation or study → `LEARNING` |
+| `LEARNING` | Active study underway | Recall demonstrated (`evidenceCount >= 2`, score ≥ 60) → `UNDERSTOOD` |
+| `UNDERSTOOD` | Competence demonstrated | Repeated reinforcement (`evidenceCount >= 4`, score ≥ 80) → `STRONG` |
+| `STRONG` | Mastery demonstrated across sessions | Misconception or confusion → `NEEDS_REVIEW` |
+| `NEEDS_REVIEW` | Misconception detected | Valid correction (`concept_corrected`) → `LEARNING` |
 
-Suggested states:
+---
 
-- NOT_STARTED
-- INTRODUCED
-- LEARNING
-- UNDERSTOOD
-- STRONG
-- NEEDS_REVIEW
+## 6. Bounded Confidence Model
+Confidence is a bounded product signal (0–100), calculated deterministically via a diminishing returns formula:
+$$\text{newScore} = \min\left(100, \text{round}\left(\text{currentScore} + \text{delta} \times \left(1 - \frac{\text{currentScore}}{125}\right)\right)\right)$$
+- **Penalties**: High severity misconception drops score by 30 points; medium drops by 20 points.
+- **Topic Mastery**: `Topic.knowledgeState.masteryScore` is the average confidence of all active topic concepts.
+- **Topic Status**: `mastered` only when all concepts are `UNDERSTOOD` or `STRONG` with `masteryScore >= 80`.
 
-State transitions must be based on explicit evidence and documented rules.
+---
 
-## 6. Confidence
-
-Confidence is a product signal, not a claim of objective knowledge.
-
-A simple initial model can combine:
-
-- successful explanations;
-- correct quiz answers;
-- repeated successful recall;
-- explicit user difficulty;
-- detected misconceptions.
-
-The score should be bounded and deterministic.
-
-## 7. Misconception Handling
-
-If a user gives an incorrect answer:
-
-```text
-Incorrect response
-      |
-      v
-Identify misconception
-      |
-      v
-Explain correction
-      |
-      v
-Record weak area
-      |
-      v
-Reduce/hold confidence
-      |
-      v
-Create future review signal
-```
-
-## 8. Duplicate Knowledge
-
-New information should not create duplicate concepts simply because wording differs.
-
-Merge analysis should determine:
-
-- exact duplicate;
-- complementary information;
-- broader/narrower concept;
-- conflicting information.
-
-## 9. Conflict Handling
-
-If existing and new content disagree:
-
-1. preserve both evidence sources;
-2. flag the conflict;
-3. generate a user-reviewable resolution;
-4. never silently overwrite trusted user-edited content.
-
-## 10. Source Attribution
-
-Knowledge evidence should record sources such as:
-
-- chat message;
-- study session;
-- quiz attempt;
-- imported conversation;
-- user-edited note.
-
-## 11. Progress
-
-Subject progress is derived from topic/concept states.
-
-Avoid updating one `progressPercent` field from multiple places as the primary source of truth.
-
-## 12. Review Scheduling
-
-The first release can use simple review signals. A future release can evolve to spaced repetition.
-
-Possible signal:
-
-- `nextReviewAt` based on confidence/state and recent assessment.
-
-## 13. Knowledge Consistency Rules
-
-- one canonical knowledge state per user/concept;
-- no orphan concepts;
-- no unauthorized cross-user knowledge access;
-- every automated change must be traceable to evidence;
-- note changes and knowledge-state changes should be independently auditable.
-
-## 14. Interview Questions to Support
-
-- How does the system know the user learned something?
-- How do you avoid duplicate concepts?
-- How do you handle conflicting imported knowledge?
-- How is progress computed?
-- How does a quiz result affect knowledge?
-- Why is the knowledge engine separated from chat?
+## 7. Hard Phase Boundaries
+- **Phase 06 owns**: `Concept`, `LearningEvent`, `Topic.knowledgeState`, and `Topic.status`.
+- **Phase 06 DOES NOT touch**: `NoteDocument`, `NoteVersion`, note generation, Study Mode sessions, quiz generation, or PDF exports.

@@ -10,6 +10,8 @@ import { Chat } from '../src/models/Chat.js';
 import { Message } from '../src/models/Message.js';
 import { Annotation } from '../src/models/Annotation.js';
 import { SyllabusVersion } from '../src/models/SyllabusVersion.js';
+import { Concept } from '../src/models/Concept.js';
+import { LearningEvent } from '../src/models/LearningEvent.js';
 import { aiGateway, AI_TASK_TYPES } from '../src/ai/index.js';
 import { hashSessionToken, generateSessionToken } from '../src/utils/authCrypto.js';
 
@@ -37,6 +39,23 @@ describe('Chat Infrastructure API (/api/v1/chats)', () => {
     messagesStore.clear();
     syllabusStore.clear();
     annotationsStore.clear();
+
+    // Mock LearningEvent and Concept
+    vi.spyOn(LearningEvent, 'findOne').mockImplementation(async () => null);
+    vi.spyOn(LearningEvent.prototype, 'save').mockImplementation(async function () {
+      return this;
+    });
+
+    vi.spyOn(Concept, 'findOne').mockImplementation(() => ({
+      session: async () => null,
+    }));
+    vi.spyOn(Concept, 'find').mockImplementation(() => ({
+      session: async () => [],
+      sort: () => ({ lean: async () => [] }),
+    }));
+    vi.spyOn(Concept.prototype, 'save').mockImplementation(async function () {
+      return this;
+    });
 
     // Mock SyllabusVersion model
     vi.spyOn(SyllabusVersion, 'findOne').mockImplementation(async (query) => {

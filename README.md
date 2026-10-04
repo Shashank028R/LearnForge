@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase-05%20AI%20Gateway-indigo.svg)](docs/phases/phase-05-ai-gateway-and-model-routing.md)
+[![Status](https://img.shields.io/badge/Phase-06%20Knowledge%20Engine-indigo.svg)](docs/phases/phase-06-knowledge-extraction-and-pedagogical-analysis.md)
 
 ---
 
@@ -64,13 +64,13 @@ Progress Telemetry & Review Signals
 | :--- | :--- | :--- |
 | **Monorepo Foundation** | **Implemented** | Decoupled client (`/client`) and server (`/server`) with npm workspaces, unified scripts, and strict environment isolation. |
 | **API Health & Observability** | **Implemented** | Correlation IDs (`X-Request-ID`), standardized response envelopes, and runtime database connectivity telemetry. |
-| **Architecture Documentation** | **Implemented** | 18 detailed phase specifications, 8 Architecture Decision Records (ADRs), system diagrams, and continuous interview guide. |
+| **Architecture Documentation** | **Implemented** | 18 detailed phase specifications, 9 Architecture Decision Records (ADRs), system diagrams, and continuous interview guide. |
 | **User Authentication** | **Implemented** | Dual-provider identity: Google OAuth 2.0 and passwordless email OTP with secure session lifecycle. |
 | **Professional UI Shell** | **Implemented** | Distraction-free, restrained productivity UI without neon, glassmorphism, or decorative bloat. |
 | **Subject & Topic Hierarchy** | **Implemented** | Hierarchical knowledge organization mapping subjects, topics, and canonical concepts. |
 | **Conversational Engine** | **Implemented** | Streaming-ready message persistence and subject-scoped conversation contexts. |
 | **AI Gateway & Router** | **Implemented** | Multi-provider abstraction (Gemini, OpenAI, Groq) with automated model routing by task complexity. |
-| **Knowledge Engine** | *Planned (Phase 06)* | Canonical concept extraction, deduplication, confidence scoring, and misconception logging. |
+| **Knowledge Engine** | **Implemented** | Canonical concept extraction, deduplication, confidence scoring, misconception tracking, and learning event ledgers. |
 | **Structured Notes Engine** | *Planned (Phase 07)* | Block-based structured notes with immutable version history and risk-based AI merge proposals. |
 | **Strict Study Mode** | *Planned (Phase 08)* | Adaptive teacher loop evaluating answer completeness, reasoning quality, and remediating weak points. |
 | **Progress Engine** | *Planned (Phase 09)* | Verifiable mastery calculations derived from concept states rather than arbitrary percentages. |
@@ -166,7 +166,7 @@ LearnForge/
 │   ├── database/               # MongoDB entity schemas, relationships, indexes
 │   ├── features/               # Knowledge engine, notes engine, study mode specs
 │   ├── phases/                 # Phase-by-phase implementation specifications & reports
-│   ├── decisions/              # Architecture Decision Records (ADR-001 through ADR-008)
+│   ├── decisions/              # Architecture Decision Records (ADR-001 through ADR-015)
 │   ├── interview/              # Project-specific technical interview guide
 │   ├── operations/             # Security controls and deployment runbooks
 │   ├── PROJECT_CONTEXT.md      # Living project state and roadmap
@@ -191,8 +191,9 @@ LearnForge/
 | **M4** | **Phase 04** | Chat Infrastructure & Message Persistence | **Completed** |
 | **—** | **Phase 04.1** | Syllabus & Knowledge Governance Foundation | **Completed** |
 | **M5** | **Phase 05** | AI Gateway & Automatic Model Router | **Completed** |
-| **M6** | **Phase 06** | Concept Extraction & Pedagogical Analysis | *Up Next (Awaiting authorization)* |
-| **M7–M17**| **Phases 07–17** | Structured Notes Engine through Final Production Audit | *Planned* |
+| **M6** | **Phase 06** | Concept Extraction & Pedagogical Analysis | **Completed** |
+| **M7** | **Phase 07** | Structured Notes Engine | *Up Next (Awaiting authorization)* |
+| **M8–M17**| **Phases 08–17** | Strict Study Mode through Final Production Audit | *Planned* |
 
 ---
 
@@ -269,6 +270,7 @@ Key architectural decisions are documented as immutable Architecture Decision Re
 - **[ADR-012](docs/decisions/ADR-012-chat-and-message-infrastructure.md)**: Chat and Message Infrastructure with Sequential Ordering.
 - **[ADR-013](docs/decisions/ADR-013-syllabus-governance-and-immutability.md)**: Syllabus and Knowledge Governance Foundation.
 - **[ADR-014](docs/decisions/ADR-014-ai-gateway-and-model-routing.md)**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
+- **[ADR-015](docs/decisions/ADR-015-knowledge-extraction-concept-resolution.md)**: Knowledge Extraction, Concept Resolution & Learning State.
 
 ---
 

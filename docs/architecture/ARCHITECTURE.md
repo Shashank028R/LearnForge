@@ -270,7 +270,7 @@ Message Persistence with Knowledge Relevance Classification
 - **Conversation Domain (Phase 04 - Implemented)**: Chat sessions, chronological message sequencing (`sequenceIndex`), topic/subject context linking, and responsive two-pane workspace.
 - **Syllabus & Knowledge Governance Domain (Phase 04.1 - Implemented)**: Multi-version syllabus lifecycle, draft reconciliation, topic ID stability, off-topic data contract, and user annotations.
 - **AI Domain (Phase 05 - Implemented)**: Centralized AI Gateway, task-based model router, provider adapters (Gemini, OpenAI, Groq), normalized envelopes, retry/fallback engine, and knowledge relevance governance. Anthropic disabled/deferred.
-- **Knowledge Extraction Domain (Phase 06 - Planned)**: Concept extraction, confidence tracking, and misconception detection.
+- **Knowledge Extraction Domain (Phase 06 - Implemented)**: Canonical concept extraction, concept identity resolution (exact/alias matching, deduplication, conflict/correction detection), auditable learning events (`LearningEvent`), deterministic state machine (`NOT_STARTED` → `INTRODUCED` → `LEARNING` → `UNDERSTOOD` → `STRONG` / `NEEDS_REVIEW`), bounded confidence scoring, misconception tracking, and atomic topic mastery aggregation.
 - **Notes Domain (Phase 07 - Planned)**: Structured block notes, versioning, and diff proposals.
 - **Study Mode Domain (Phase 08 - Planned)**: Socratic teacher logic, session objectives, and mastery pacing.
 - **Assessment Domain (Phase 10 - Planned)**: Quiz generation, attempts, and scoring.

@@ -6,6 +6,7 @@ import { Topic } from '../models/Topic.js';
 import { Annotation } from '../models/Annotation.js';
 import { SyllabusVersion } from '../models/SyllabusVersion.js';
 import { aiGateway, AI_TASK_TYPES, AIError } from '../ai/index.js';
+import { knowledgeEngine } from '../knowledge/index.js';
 
 /**
  * Formats a chat document for standard API response envelopes.
@@ -450,6 +451,27 @@ export async function createChat(req, res, next) {
       chat.sequenceCounter = 2;
       chat.lastMessageAt = new Date();
       await chat.save();
+
+      // Trigger Knowledge Engine for on-topic subject/topic exchanges (Phase 06)
+      if (topicDoc && subjectDoc && knowledgeContext.relevance !== 'off_topic') {
+        try {
+          await knowledgeEngine.processExchangeEvidence({
+            userId: req.user._id,
+            subjectId: subjectDoc._id,
+            topicId: topicDoc._id,
+            chatId: chat._id,
+            sourceMessageId: assistantMessage._id,
+            userMessage,
+            assistantMessage,
+            requestId: req.id,
+          });
+        } catch (kErr) {
+          // Non-blocking: Knowledge extraction errors do not fail the chat HTTP response
+          if (!process.env.VITEST) {
+            console.error('[Knowledge Engine Error]', kErr.message);
+          }
+        }
+      }
     }
 
     return res.status(201).json({
@@ -1124,6 +1146,28 @@ export async function sendMessage(req, res, next) {
 
         formattedUser = formatMessageResponse(userMessage);
         formattedAssistant = formatMessageResponse(assistantMessage);
+
+        // Trigger Knowledge Engine for on-topic subject/topic exchanges (Phase 06)
+        if (chat.topicId && chat.subjectId && knowledgeContext.relevance !== 'off_topic') {
+          try {
+            await knowledgeEngine.processExchangeEvidence({
+              userId: req.user._id,
+              subjectId: subjectDoc ? subjectDoc._id : chat.subjectId,
+              topicId: topicDoc ? topicDoc._id : chat.topicId,
+              chatId: chat._id,
+              sourceMessageId: assistantMessage._id,
+              userMessage,
+              assistantMessage,
+              requestId: req.id,
+            });
+          } catch (kErr) {
+            // Non-blocking: Knowledge extraction errors do not fail the chat HTTP response
+            if (!process.env.VITEST) {
+              console.error('[Knowledge Engine Error]', kErr.message);
+            }
+          }
+        }
+
         break;
       } catch (err) {
         const isDuplicateKey =

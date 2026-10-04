@@ -5,6 +5,26 @@ All notable changes to the LearnForge project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-04
+
+### Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis
+
+#### Added
+- **Domain Models**:
+  - `Concept.js`: Canonical knowledge unit scoped to Topic with compound unique index on `{ userId: 1, topicId: 1, normalizedName: 1 }`, status tracking (`NOT_STARTED`, `INTRODUCED`, `LEARNING`, `UNDERSTOOD`, `STRONG`, `NEEDS_REVIEW`), bounded confidence score, alias array, and active/resolved misconception tracking.
+  - `LearningEvent.js`: Immutable, tenant-scoped ledger entry recording learning observations with source message attribution and compound unique idempotency index on `{ userId: 1, idempotencyKey: 1 }`.
+- **Dedicated Knowledge Subsystem (`server/src/knowledge/`)**:
+  - `EventExtractor.js`: AI Gateway structured extraction with deterministic rule-based fallback.
+  - `ConceptResolver.js`: Exact and normalized alias matching with automatic synonym reconciliation.
+  - `LearningStateMachine.js`: Deterministic state transitions, bounded confidence calculation with diminishing returns, misconception penalties, and topic aggregate mastery calculation.
+  - `KnowledgeEngineService.js`: Master orchestrator coordinating extraction, resolution, state evaluation, idempotency, and atomic multi-document transactions.
+- **REST APIs**:
+  - Mounted authenticated routes for `GET /api/v1/topics/:topicId/concepts`, `GET /api/v1/concepts/:conceptId`, `GET /api/v1/topics/:topicId/learning-events`, and `POST /api/v1/topics/:topicId/extract-knowledge`.
+- **AI Task Registration**: Added `KNOWLEDGE_EVENT_EXTRACTION` task to `AIGateway` with `STRUCTURED_OUTPUT` and `COMPLEX_REASONING` capabilities.
+- **Automated & Live Verification**: 20 comprehensive unit/integration tests in `server/tests/knowledgeEngine.test.js` (total 150 backend tests + 46 frontend tests = 196 monorepo tests passing 100%) and fail-closed live verification via `verify_phase06_live.js`.
+
+---
+
 ## [0.6.0] - 2026-10-04
 
 ### Phase 05 — AI Gateway, Automatic Model Routing & Pedagogical Engine

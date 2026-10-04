@@ -10,8 +10,8 @@
 
 ## 2. Current Phase Status
 
-- **Current Phase**: **Phase 05 — AI Gateway, Automatic Model Routing & Pedagogical Engine (COMPLETED)**
-- **Next Phase**: **Phase 06 — Concept Extraction & Pedagogical Analysis (Awaiting authorization)**
+- **Current Phase**: **Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis (COMPLETED)**
+- **Next Phase**: **Phase 07 — Structured Notes Engine (Awaiting authorization)**
 - **Repository Remote**: `https://github.com/Shashank028R/LearnForge.git`
 - **Default Branch**: `main`
 
@@ -73,24 +73,32 @@
 ### Phase 05 (AI Gateway, Automatic Model Routing & Pedagogical Engine)
 - **Centralized AI Gateway**: Provider-neutral gateway (`server/src/ai/gateway/aiGateway.js`) implementing `generate(request)` with normalized envelopes (`AIResponse`).
 - **Official Provider Adapters**: Concrete adapters for Google Gemini (`@google/genai`), OpenAI (`openai`), and Groq (`groq-sdk`) with uniform error normalization and health monitoring. Anthropic marked `DISABLED / DEFERRED`.
-- **Task & Capability Taxonomy**: Typed task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) mapped to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
-- **Automatic Model Routing**: Server-side deterministic router (`ModelRouter`) selecting optimal models without exposing provider choices to frontend (`general_chat`: Gemini → Groq → OpenAI; `pedagogical_explanation` & `syllabus_generation`: OpenAI → Gemini → Groq; `knowledge_relevance_classification`: Groq → Gemini → OpenAI).
+- **Task & Capability Taxonomy**: Typed task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`, `knowledge_event_extraction`) mapped to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
+- **Automatic Model Routing**: Server-side deterministic router (`ModelRouter`) selecting optimal models without exposing provider choices to frontend (`general_chat`: Gemini → Groq → OpenAI; `pedagogical_explanation` & `syllabus_generation`: OpenAI → Gemini → Groq; `knowledge_relevance_classification`: Groq → Gemini → OpenAI; `knowledge_event_extraction`: Groq → OpenAI → Gemini).
 - **Resilience Engine**: Deterministic same-provider bounded retries with exponential backoff and jitter on transient failures (`429`, `503`, `ETIMEDOUT`), provider fallback chains upon retry exhaustion, and application-level offline Socratic fallback in `chatController.js`.
 - **Curriculum Context Isolation**: Strict prompt assembly ensuring only approved syllabi (`status: 'approved'`) are treated as authoritative curriculum.
 - **Knowledge Relevance Governance**: Automatic semantic relevance classification (`on_topic`, `off_topic`, `uncertain`) with `excluded` disposition for off-topic queries, preventing canonical note pollution.
 - **Observability & Security**: Request correlation via `X-Request-ID`, token telemetry (`AITelemetry`), rate limiting (`aiMessageRateLimiter`), and strict secret redaction.
 
+### Phase 06 (Knowledge Extraction Engine & Pedagogical Analysis)
+- **Knowledge Extraction Pipeline**: Transforms conversational evidence into structured `LearningEvent` ledger records and canonical `Concept` entities without conflating raw transcripts with canonical knowledge.
+- **Durable Concept Identity & Resolution**: `ConceptResolver` performs exact normalized name and alias matching with dynamic alias reconciliation, classifying interactions as `NEW`, `EXISTING`, `DUPLICATE`, `COMPLEMENTARY`, `CORRECTION`, or `CONFLICT`.
+- **Deterministic Learning State Machine**: Governs transitions across `NOT_STARTED`, `INTRODUCED`, `LEARNING`, `UNDERSTOOD`, `STRONG`, and `NEEDS_REVIEW` using bounded diminishing returns confidence calculations and misconception penalties.
+- **Misconception & Conflict Governance**: Tracks active and resolved misconceptions with corrective explanations; flags conceptual conflicts without deleting historical evidence or trusted knowledge.
+- **Idempotency & Transaction Boundaries**: Compound unique index `{ userId: 1, idempotencyKey: 1 }` prevents duplicate event processing; multi-document ACID transactions atomically update `LearningEvent`, `Concept`, and `Topic.knowledgeState`.
+- **Strict Phase Boundary**: Zero `NoteDocument` or `NoteVersion` records created (deferred to Phase 07).
+
 ---
 
 ## 4. Current Work
-- Phase 05 complete. Awaiting explicit project-owner authorization before beginning Phase 06.
+- Phase 06 complete. Awaiting explicit project-owner authorization before beginning Phase 07.
 
 ---
 
-## 5. Upcoming Work (Phase 06 — Concept Extraction & Pedagogical Analysis)
-- Automatic concept and key insight extraction from conversational evidence.
-- Concept confidence scoring and misconception detection.
-- Learning event stream and mastery progression evaluation.
+## 5. Upcoming Work (Phase 07 — Structured Notes Engine)
+- Block-based structured notes schema (`NoteDocument` and `NoteVersion`).
+- Immutable note snapshot versioning and audit trails.
+- Risk-based AI merge proposals and diff previews.
 
 ---
 
@@ -110,6 +118,7 @@
 - **ADR-012**: Chat and Message Infrastructure Sequencing and Concurrency Design.
 - **ADR-013**: Syllabus Governance, Immutability and Topic Reconciliation.
 - **ADR-014**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
+- **ADR-015**: Knowledge Extraction, Concept Resolution & Learning State.
 
 ---
 

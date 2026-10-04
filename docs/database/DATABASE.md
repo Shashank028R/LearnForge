@@ -295,11 +295,95 @@ Represents user-created auxiliary metadata (comments and tags) attached to a cha
 - Message Annotation Index: `{ userId: 1, messageId: 1, createdAt: 1 }`
 - Chat Annotation Index: `{ userId: 1, chatId: 1, createdAt: 1 }`
 
+### 3.7 Concept (Phase 06 Implemented)
+Represents a canonical, persistent unit of knowledge within a Topic.
+
+```javascript
+{
+  _id: ObjectId,
+  userId: ObjectId,          // Ref: 'User', indexed, required
+  subjectId: ObjectId,       // Ref: 'Subject', indexed, required
+  topicId: ObjectId,         // Ref: 'Topic', indexed, required
+  name: String,              // Canonical human-readable title, trimmed, 1-200 chars
+  normalizedName: String,    // Normalized lowercase string for unique index
+  aliases: [String],         // Synonyms, abbreviations, and acronyms
+  normalizedAliases: [String],// Indexed normalized alias strings
+  description: String,       // Concise definition or synthesis (max 2000 chars)
+  status: String,            // 'NOT_STARTED' | 'INTRODUCED' | 'LEARNING' | 'UNDERSTOOD' | 'STRONG' | 'NEEDS_REVIEW'
+  confidenceScore: Number,   // Bounded integer 0 - 100
+  evidenceCount: Number,     // Total count of supporting learning events
+  misconceptions: [
+    {
+      misconceptionText: String,
+      correctionText: String,
+      detectedAt: Date,
+      resolvedAt: Date,
+      isActive: Boolean
+    }
+  ],
+  conflictState: {
+    hasConflict: Boolean,
+    description: String,
+    flaggedAt: Date,
+    resolvedAt: Date
+  },
+  lastStudiedAt: Date,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Compound Unique Index: `{ userId: 1, topicId: 1, normalizedName: 1 }, { unique: true }` — guarantees exactly one canonical concept per normalized name per topic.
+- Topic Status Query Index: `{ userId: 1, topicId: 1, status: 1 }`
+- Topic Confidence Query Index: `{ userId: 1, topicId: 1, confidenceScore: -1 }`
+
+---
+
+### 3.8 LearningEvent (Phase 06 Implemented)
+Represents an immutable, tenant-scoped ledger entry recording each discrete learning observation with source attribution.
+
+```javascript
+{
+  _id: ObjectId,
+  userId: ObjectId,          // Ref: 'User', indexed, required
+  subjectId: ObjectId,       // Ref: 'Subject', indexed, required
+  topicId: ObjectId,         // Ref: 'Topic', indexed, required
+  chatId: ObjectId,          // Ref: 'Chat', indexed, required
+  sourceMessageId: ObjectId, // Ref: 'Message', indexed, required (source attribution)
+  conceptId: ObjectId,       // Ref: 'Concept', indexed, nullable
+  conceptName: String,       // Concept title at event time
+  eventType: String,         // 'concept_introduced' | 'concept_explained' | 'concept_recalled' | 'concept_misunderstood' | 'misconception_detected' | 'concept_corrected' | 'concept_reinforced' | 'concept_conflict' | 'learning_signal'
+  classificationOutcome: String, // 'NEW' | 'EXISTING' | 'DUPLICATE' | 'COMPLEMENTARY' | 'CORRECTION' | 'CONFLICT'
+  evidenceText: String,      // Concise excerpt from conversation serving as evidence
+  confidenceScore: Number,   // Evaluated score at time of event (0 - 100)
+  previousStatus: String,    // Status prior to transition
+  newStatus: String,         // Status after transition
+  misconception: {
+    misconceptionText: String,
+    correctionText: String,
+    severity: String         // 'low' | 'medium' | 'high' | null
+  },
+  idempotencyKey: String,    // Derived from `${userId}:${sourceMessageId}:${version}`
+  metadata: {
+    extractionVersion: String,
+    provider: String,
+    model: String,
+    latencyMs: Number
+  },
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+**Indexes**:
+- Compound Unique Idempotency Index: `{ userId: 1, idempotencyKey: 1 }, { unique: true }` — guarantees idempotency on re-processing.
+- Topic Timeline Index: `{ userId: 1, topicId: 1, createdAt: -1 }`
+- Concept Timeline Index: `{ userId: 1, conceptId: 1, createdAt: -1 }`
+- Message Source Index: `{ userId: 1, sourceMessageId: 1 }`
+
 ---
 
 ## 4. Core Domain Entities (Scheduled for Subsequent Phases)
 
-- **LearningEvent** (`Phase 06`): Learning observations and concept interactions.
 - **NoteDocument & NoteVersion** (`Phase 07`): Typed block notes and immutable snapshots.
 - **Quiz & QuizAttempt** (`Phase 10`): Dynamic assessments and scored student responses.
 - **ImportJob** (`Phase 11`): External conversation ingest tracking.
