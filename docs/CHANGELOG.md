@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **REST APIs**:
   - Mounted authenticated routes for `GET /api/v1/topics/:topicId/concepts`, `GET /api/v1/concepts/:conceptId`, `GET /api/v1/topics/:topicId/learning-events`, and `POST /api/v1/topics/:topicId/extract-knowledge`.
 - **AI Task Registration**: Added `KNOWLEDGE_EVENT_EXTRACTION` task to `AIGateway` with `STRUCTURED_OUTPUT` and `COMPLEX_REASONING` capabilities.
-- **Automated & Live Verification**: 20 comprehensive unit/integration tests in `server/tests/knowledgeEngine.test.js` (total 150 backend tests + 46 frontend tests = 196 monorepo tests passing 100%) and fail-closed live verification via `verify_phase06_live.js`.
+- **Automated & Live Verification**: 35 comprehensive unit/integration tests in `server/tests/knowledgeEngine.test.js` (total 167 backend tests + 46 frontend tests = 213 monorepo tests passing 100%) and fail-closed live verification via `verify_phase06_live.js` with deterministic transaction race barrier proof.
 
 ---
 

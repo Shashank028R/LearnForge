@@ -71,9 +71,9 @@ The following boundaries were strictly observed:
 
 ## 5. Verification Summary
 
-- **Automated Backend Tests**: **166 / 166 passed (100%)** across 11 test files (`server/tests/knowledgeEngine.test.js`, `server/tests/aiGateway.test.js`, `server/tests/chats.test.js`, etc.).
+- **Automated Backend Tests**: **167 / 167 passed (100%)** across 11 test files (`server/tests/knowledgeEngine.test.js`, `server/tests/aiGateway.test.js`, `server/tests/chats.test.js`, etc.).
 - **Automated Frontend Tests**: **46 / 46 passed (100%)** (`client/src/App.test.jsx`, `client/src/pages/Subjects.test.jsx`, etc.).
-- **Total Monorepo Tests**: **212 / 212 passed (100%)**.
+- **Total Monorepo Tests**: **213 / 213 passed (100%)**.
 - **Live Integration Verification (`server/scripts/verify_phase06_live.js` - All 14 Assertive Fail-Closed Gates Passed)**:
   1. Live Express API health verified (`GET /api/v1/health` status `healthy`).
   2. MongoDB Atlas replica set connected.
@@ -81,10 +81,17 @@ The following boundaries were strictly observed:
   4. Authenticated test users established.
   5. Authoritative subject and approved syllabus v1 established.
   6. **REAL AI Extraction Pipeline Verified**: Real chat exchange executed through `chatController` → `KnowledgeEngineService` → `EventExtractor` → `AIGateway` using live provider `groq` and model `openai/gpt-oss-20b`.
-  7. **Multi-Event Extraction (>= 3 Gate) & Fresh-Exchange Concurrent Idempotency Verified**:
+  7. **Multi-Event Extraction (>= 3 Gate) & Deterministic Concurrent Transaction Race Verified**:
      - Multi-concept exchange generated >=3 LearningEvents (fail-closed gate asserted).
-     - Serial re-processing verified exact 0 duplicate events and preserved concept score.
-     - **Fresh-Exchange Concurrent Idempotency**: Verified against a completely fresh exchange with `Promise.all()`, proving exact 1 mutation result, 1 duplicate/already_processed, 0 raw E11000 leaks, 0 duplicate events, and no score doubling.
+     - Serial re-processing verified exact 0 duplicate events, preserved concept score, and returned `resolvedVia: 'pre_check'`.
+     - **Deterministic Fresh-Exchange Concurrent Transaction Race**:
+       - Fresh exchange initialized with exactly zero prior LearningEvents.
+       - Both concurrent requests cross the initial idempotency `LearningEvent.findOne()` check simultaneously.
+       - Test synchronization barrier (`KnowledgeEngineService.awaitTestBarrier(barrierKey)`) synchronizes requests before starting transactions.
+       - Both requests enter the MongoDB multi-document transaction path simultaneously.
+       - Exactly one transaction commits mutations with `resolvedVia: 'transaction_commit'`.
+       - Exactly one racing transaction encounters `E11000 duplicate key` / `WriteConflict` on `{ userId: 1, idempotencyKey: 1 }`, aborts cleanly, polls until the winning transaction commits, and resolves safely as `already_processed` with `resolvedVia: 'transaction_conflict_recovery'`.
+       - Hard gate asserts zero raw `E11000` leaks, zero duplicate events created in DB, and zero concept score/evidence double mutations.
   8. **Assertive Misconception Verification**: Hard-asserted transition to `NEEDS_REVIEW`, confidence score reduction, and active misconception tracking.
   9. **Assertive Correction Recovery**: Hard-asserted recovery to `LEARNING`, resolution of active misconceptions, and confidence score increase.
   10. **Assertive Off-Topic Governance**: Hard-asserted `relevance === 'off_topic'` and `disposition === 'excluded'` with exact 0 mutation on `LearningEvent` and `Concept` counts.

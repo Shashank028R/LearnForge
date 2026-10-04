@@ -583,13 +583,15 @@ When candidate concepts are extracted, `ConceptResolver` queries the user-scoped
 - **Misconceptions**: Recorded in `concept.misconceptions` array with detected timestamp, flawed premise, and corrective explanation. Historical messages remain intact, while concept status regresses to `NEEDS_REVIEW`. When corrected, misconceptions are marked `isActive: false` with `resolvedAt` timestamp.
 - **Conflicts**: When new statements contradict established canonical facts, a `concept_conflict` `LearningEvent` is created and `concept.conflictState` is flagged (`hasConflict: true`). Neither existing notes nor raw evidence are overwritten.
 
-### Q80: How is idempotency guaranteed when processing chat exchanges?
+### Q80: How is idempotency guaranteed when processing chat exchanges and how is the concurrent transaction race proven?
 **Answer**:  
-Each `LearningEvent` enforces a compound unique index on `{ userId: 1, idempotencyKey: 1 }` where `idempotencyKey = \`${userId}:${sourceMessageId}:${version}\``. If an exchange is reprocessed, `KnowledgeEngineService` intercepts the duplicate key or existing event check and returns safely without duplicate records or score inflation.
+1. **Serial Deduplication**: Pre-commit check (`LearningEvent.findOne()`) intercepts duplicate requests for previously processed exchanges, returning `{ duplicate: true, reason: 'already_processed', resolvedVia: 'pre_check' }` without opening a transaction.
+2. **Concurrent Transaction Race Recovery**: When identical concurrent extractions pass the pre-check simultaneously, both enter MongoDB multi-document transactions. Each `LearningEvent` enforces a compound unique index on `{ userId: 1, idempotencyKey: 1 }` (`${userId}:${sourceMessageId}:${version}`). One transaction commits mutations (`resolvedVia: 'transaction_commit'`), while the racing transaction encounters an `E11000 duplicate key` or `WriteConflict` collision inside the transaction, aborts cleanly, polls until the winning transaction commits, and safely returns `{ duplicate: true, reason: 'already_processed', resolvedVia: 'transaction_conflict_recovery' }`.
+3. **Deterministic Concurrency Proof**: During testing, a non-production synchronization barrier (`KnowledgeEngineService.awaitTestBarrier`) synchronizes concurrent requests after the initial `findOne()` pre-check and before transaction persistence, deterministically proving that both requests entered transaction processing and that collision recovery operated correctly.
 
 ### Q81: What is the transaction boundary for Knowledge Engine persistence?
 **Answer**:  
-On MongoDB replica sets / Atlas clusters, `LearningEvent` creation, `Concept` update, and `Topic.knowledgeState` aggregation execute within an atomic multi-document transaction (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`). If any write fails, the entire transaction aborts cleanly.
+On MongoDB replica sets / Atlas clusters, `LearningEvent` creation, `Concept` update, and `Topic.knowledgeState` aggregation execute within an atomic multi-document transaction (`session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } })`). If any write fails, the entire transaction aborts cleanly. Standalone MongoDB instances without replica sets return HTTP 503 (`TRANSACTION_UNAVAILABLE`). Sequential non-transactional fallback is strictly prohibited.
 
 ### Q82: Why does Phase 06 NOT create NoteDocument or NoteVersion records?
 **Answer**:  
