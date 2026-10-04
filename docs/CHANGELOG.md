@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `pedagogical_explanation`: `openai` → `gemini` → `groq`
     - `syllabus_generation`: `openai` → `gemini` → `groq`
     - `knowledge_relevance_classification`: `groq` → `gemini` → `openai`
-  - Resilience engine with bounded exponential backoff with jitter on transient failures (`429`, `503`, `ETIMEDOUT`) and provider fallback chains.
+  - Resilience engine with deterministic same-provider bounded retries with exponential backoff and jitter on transient failures (`429`, `503`, `ETIMEDOUT`), and fallback across configured providers upon retry exhaustion.
   - Offline Socratic fallback engine (`model: 'socratic-engine'`) delivering deterministic responses when external API keys are unconfigured.
 - **Centralized Prompt Registry & Curriculum Context Isolation (`promptRegistry.js`)**:
   - `generalLearningPrompt.js`: Socratic, patient, and pedagogically structured guidance.
@@ -45,11 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rendered off-topic warning banner strictly from backend metadata (`knowledgeContext.relevance === 'off_topic'`).
   - Displayed calm pedagogical task metadata on assistant message bubbles.
 - **Testing & Verification**:
-  - 15 comprehensive unit and integration tests in `server/tests/aiGateway.test.js` (total 128 server tests passing 100%).
+  - 17 comprehensive unit and integration tests in `server/tests/aiGateway.test.js` (total 130 server tests passing 100%).
   - 46 frontend tests passing in `client/` (total 46 client tests passing 100%).
-  - Total automated monorepo tests increased to 174 tests (100% passing).
+  - Total automated monorepo tests increased to 176 tests (100% passing).
   - Clean Vite production build (`dist/` generated cleanly with 0 errors).
-  - Live Atlas API verification script (`verify_phase05_live.js`) exercising real Express HTTP APIs, Atlas database, and live Groq inference.
+  - Live Atlas API verification script (`verify_phase05_live.js`) exercising fail-closed verification of real Express HTTP APIs, Atlas database, and live Groq inference.
 
 ---
 

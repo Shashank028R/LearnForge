@@ -175,6 +175,19 @@ async function runLiveVerification() {
       throw new Error(`Sequence indexes are corrupt or non-sequential: expected 0 and 1, got ${userMsg.sequenceIndex} and ${assistantMsg.sequenceIndex}`);
     }
 
+    // Explicitly assert that chat generation executed via real Groq provider and configured model
+    console.log('\n  Asserting Live AI Provider Execution Metadata:');
+    if (!assistantMsg.metadata?.provider || assistantMsg.metadata.provider === 'fallback') {
+      throw new Error(`Chat assistant response used fallback engine instead of live Groq provider: ${JSON.stringify(assistantMsg.metadata)}`);
+    }
+    if (assistantMsg.metadata.provider !== 'groq') {
+      throw new Error(`Expected assistant provider to be "groq", got "${assistantMsg.metadata.provider}"`);
+    }
+    if (assistantMsg.metadata.model !== config.ai.groqModel) {
+      throw new Error(`Expected assistant model to be "${config.ai.groqModel}", got "${assistantMsg.metadata.model}"`);
+    }
+    console.log(`  ✓ Chat assistant verified: provider="${assistantMsg.metadata.provider}", model="${assistantMsg.metadata.model}"`);
+
     // Step 7: Off-Topic Knowledge Governance Verification
     console.log('\n[7/8] Testing Off-Topic Message & Knowledge Relevance Governance...');
     const chatIdStr = createdChat.id || createdChat._id;
@@ -189,41 +202,61 @@ async function runLiveVerification() {
     if (!offTopicRes.ok) throw new Error(`Failed to send off-topic message: ${JSON.stringify(offTopicData)}`);
 
     const latestAssistant = offTopicData.data.messages.find((m) => m.role === 'assistant' && m.sequenceIndex === 3);
-    console.log(`✓ Off-Topic exchange completed (seq=${latestAssistant?.sequenceIndex})`);
-    console.log(`  - Handled cleanly without creating canonical notes or polluting topic`);
-    console.log(`  - Relevance: ${latestAssistant?.knowledgeContext?.relevance || 'unclassified'}`);
-    console.log(`  - Disposition: ${latestAssistant?.knowledgeContext?.disposition || 'unclassified'}`);
-
-    // Step 8: External Live Provider Status Inspection & Groq Verification
-    console.log('\n[8/8] Inspecting Live AI Provider Credentials & Verification Status...');
-    
-    // Test Groq live generation if key is supplied
-    let groqLiveSuccess = false;
-    let groqLiveError = null;
-    if (config.ai?.groqApiKey && config.ai.groqApiKey !== 'placeholder') {
-      try {
-        console.log('  Testing live Groq API connection...');
-        const { GroqProvider } = await import('../src/ai/providers/groqProvider.js');
-        const liveGroq = new GroqProvider({ apiKey: config.ai.groqApiKey, model: config.ai.groqModel });
-        const liveRes = await liveGroq.generate({
-          task: AI_TASK_TYPES.GENERAL_CHAT,
-          messages: [{ role: 'user', content: 'Respond with exactly: "LearnForge Groq Live Verified"' }],
-          requestId: `live_groq_${Date.now()}`,
-        });
-        if (liveRes?.text) {
-          groqLiveSuccess = true;
-          console.log(`  ✓ GROQ LIVE VERIFIED: Model="${liveRes.model}" Latency=${liveRes.latencyMs}ms Tokens=${liveRes.usage?.totalTokens}`);
-        }
-      } catch (err) {
-        groqLiveError = err.message;
-        console.warn(`  ⚠ Groq Live verification failed: ${err.message}`);
-      }
+    if (!latestAssistant) {
+      throw new Error('Expected off-topic assistant reply at sequence index 3');
     }
+
+    console.log(`✓ Off-Topic exchange completed (seq=${latestAssistant.sequenceIndex})`);
+    console.log(`  - Handled cleanly without creating canonical notes or polluting topic`);
+    console.log(`  - Relevance: ${latestAssistant.knowledgeContext?.relevance}`);
+    console.log(`  - Disposition: ${latestAssistant.knowledgeContext?.disposition}`);
+
+    if (latestAssistant.knowledgeContext?.relevance !== 'off_topic') {
+      throw new Error(`Expected relevance to be "off_topic", got "${latestAssistant.knowledgeContext?.relevance}"`);
+    }
+    if (latestAssistant.knowledgeContext?.disposition !== 'excluded') {
+      throw new Error(`Expected disposition to be "excluded", got "${latestAssistant.knowledgeContext?.disposition}"`);
+    }
+
+    // Step 8: Direct Groq Live Provider Verification (FAIL-CLOSED)
+    console.log('\n[8/8] Executing Direct Groq Live API Verification (Fail-Closed)...');
+    
+    if (!config.ai?.groqApiKey || config.ai.groqApiKey === 'placeholder' || config.ai.groqApiKey === 'your_groq_api_key_placeholder') {
+      throw new Error('GROQ_API_KEY is not configured in local .env — cannot perform Phase 05 Live Verification');
+    }
+
+    const { GroqProvider } = await import('../src/ai/providers/groqProvider.js');
+    const liveGroq = new GroqProvider({ apiKey: config.ai.groqApiKey, model: config.ai.groqModel });
+    
+    const liveRes = await liveGroq.generate({
+      task: AI_TASK_TYPES.GENERAL_CHAT,
+      messages: [{ role: 'user', content: 'Respond with exactly: "LearnForge Groq Live Verified"' }],
+      requestId: `live_groq_${Date.now()}`,
+    });
+
+    if (!liveRes || !liveRes.text) {
+      throw new Error('Direct Groq live verification returned empty response');
+    }
+
+    if (liveRes.provider !== 'groq') {
+      throw new Error(`Expected live response provider to be "groq", got "${liveRes.provider}"`);
+    }
+
+    if (liveRes.model !== config.ai.groqModel) {
+      throw new Error(`Expected live response model to be "${config.ai.groqModel}", got "${liveRes.model}"`);
+    }
+
+    if (!liveRes.text.includes('LearnForge Groq Live Verified')) {
+      throw new Error(`Direct Groq response did not contain required marker "LearnForge Groq Live Verified". Got: "${liveRes.text}"`);
+    }
+
+    console.log(`✓ GROQ LIVE VERIFIED: Model="${liveRes.model}" Latency=${liveRes.latencyMs}ms Tokens=${liveRes.usage?.totalTokens}`);
+    console.log(`  Response Marker: "${liveRes.text.trim()}"`);
 
     console.log('\n  Provider Status Summary:');
     console.log(`  - GEMINI: ${config.ai?.geminiApiKey && config.ai.geminiApiKey !== 'placeholder' ? 'CONFIGURED' : 'IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED (No API Key)'}`);
     console.log(`  - OPENAI: ${config.ai?.openaiApiKey && config.ai.openaiApiKey !== 'placeholder' ? 'CONFIGURED' : 'IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED (No API Key)'}`);
-    console.log(`  - GROQ: ${groqLiveSuccess ? 'LIVE-VERIFIED (Active)' : groqLiveError ? `IMPLEMENTED — FAILED: ${groqLiveError}` : 'IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED'}`);
+    console.log(`  - GROQ: LIVE-VERIFIED (Active)`);
     console.log(`  - ANTHROPIC: DISABLED / NOT PART OF ACTIVE PHASE 05 PROVIDER SET (Not required)`);
 
     console.log('\n================================================================');

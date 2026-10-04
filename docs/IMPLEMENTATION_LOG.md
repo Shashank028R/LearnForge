@@ -19,7 +19,7 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - Established server-as-sole-trust-boundary: client never chooses models or providers; routing is governed automatically and deterministically by the `ModelRouter`.
    - Codified ADR-014 explaining the centralized gateway, provider adapters, task taxonomy, error normalization, and strict separation between conversational evidence and canonical topic knowledge.
 2. **AI Gateway & Provider Adapters**:
-   - `server/src/ai/gateway/aiGateway.js`: Central gateway coordinating schema validation, route selection, request execution, bounded retries with jitter, provider fallback chains, and telemetry recording.
+   - `server/src/ai/gateway/aiGateway.js`: Central gateway coordinating schema validation, route selection, request execution, deterministic same-provider retries with exponential backoff and jitter (`Math.min(1000, 100 * 2^attempt) + jitter`), provider fallback chains upon retry exhaustion, and telemetry recording.
    - `server/src/ai/schemas/aiRequest.js`: Validates and normalizes incoming requests into standard schema envelopes.
    - `server/src/ai/schemas/aiResponse.js`: Formats uniform, provider-agnostic response objects with routing metadata, token usage, latency, and request IDs.
    - `server/src/ai/providers/baseProvider.js`: Base adapter class with health state tracking (healthy/degraded), failure counters, and standardized error normalization (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
@@ -52,15 +52,15 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - Rendered off-topic warning banner strictly from backend metadata (`knowledgeContext.relevance === 'off_topic'`).
    - Displayed calm pedagogical task metadata on assistant message bubbles.
 6. **Testing & Verification**:
-   - Added 15 comprehensive unit and integration tests in `server/tests/aiGateway.test.js` covering schema normalization, provider adapters, task-based routing, Groq generation and classification parsing, retry/fallback behavior, prompt assembly, and telemetry (server total: 128 tests passing 100%).
+   - Added 17 comprehensive unit and integration tests in `server/tests/aiGateway.test.js` covering schema normalization, provider adapters, task-based routing, Groq generation and classification parsing, same-provider retry with backoff, fallback after retry exhaustion, non-retryable handling, prompt assembly, and telemetry (server total: 130 tests passing 100%).
    - All 46 frontend tests in `client/` passing (client total: 46 tests passing 100%).
-   - Total Monorepo Tests: 174 automated tests passing.
+   - Total Monorepo Tests: 176 automated tests passing.
    - Clean Vite production build (`dist/` generated cleanly with 0 errors).
-   - Live integration script `verify_phase05_live.js` fully verified against running backend (`http://localhost:5000`) and MongoDB Atlas cluster.
+   - Live integration script `verify_phase05_live.js` (Fail-Closed) fully verified against running backend (`http://localhost:5000`), MongoDB Atlas cluster, and live Groq API.
    - External Live Provider Status:
      - Gemini: `CONFIGURED` / `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`
      - OpenAI: `CONFIGURED` / `IMPLEMENTED — BLOCKED / NOT LIVE-VERIFIED`
-     - Groq: `LIVE-VERIFIED` (Instant completion tested with `GROQ_API_KEY` and `openai/gpt-oss-120b`)
+     - Groq: `LIVE-VERIFIED` (Tested live with `GROQ_API_KEY` and `openai/gpt-oss-120b`, exact marker `"LearnForge Groq Live Verified"` verified)
      - Anthropic: `DISABLED / DEFERRED` (Not part of active Phase 05 provider set)
 
 ---

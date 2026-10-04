@@ -37,7 +37,7 @@ LearnForge defines a structured task and capability taxonomy:
   - Automatically selects the optimal provider/model based on task capability requirements, configured priority order (`gemini`, `openai`, `groq`), and real-time provider health metrics.
   - **Zero Frontend Model Selection**: The client never chooses or specifies AI providers or model names. The server remains the sole trust and routing boundary.
 
-### 3. Resilient Multi-Provider Failure Handling & Retries
+### 3. Resilient Multi-Provider Failure Handling, Same-Provider Retries & Fallback
 - **Error Classification**: Normalized into standard error classes:
   - `AIAuthenticationError` (Permanent, 401/403, non-retryable)
   - `AIInvalidRequestError` (Permanent, 400, non-retryable)
@@ -45,8 +45,13 @@ LearnForge defines a structured task and capability taxonomy:
   - `AITimeoutError` (Transient, ETIMEDOUT, retryable)
   - `AIProviderUnavailableError` (Transient, 500/502/503/504, retryable)
   - `AIAllProvidersFailedError` (Terminal exhausted fallback error)
-- **Bounded Exponential Backoff with Jitter**: Retries transient failures up to `maxRetries` (default 2) with jitter.
-- **Automatic Fallback Chain**: If a provider fails transiently across retries or is degraded (≥3 consecutive failures), the Gateway transparently falls back to the next configured provider in the preference chain.
+- **Deterministic Same-Provider Retry**:
+  - When the currently selected provider encounters a retryable error (`AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`), the Gateway retries the *same* provider up to `maxRetries` (default 2) using bounded exponential backoff with randomized jitter (`Math.min(1000, 100 * 2^attempt) + jitter`).
+  - The provider is NOT excluded upon its first transient failure.
+- **Provider Fallback Chain**:
+  - If a provider exhausts its retry budget or encounters a non-retryable error, it is excluded from the current request's routing context.
+  - The Gateway then triggers **fallback** to the next healthy provider in the task's preference chain (`this.router.selectRoute(...)`).
+  - This progression continues across configured providers until a provider succeeds or all providers are exhausted, emitting `AIAllProvidersFailedError`.
 - **Socratic Engine Fallback**: In development/testing when external credentials are not supplied, the gateway gracefully falls back to a deterministic offline Socratic pedagogical engine.
 
 ### 4. Authoritative Curriculum Context Boundaries

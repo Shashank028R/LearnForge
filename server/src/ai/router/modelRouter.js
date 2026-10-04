@@ -83,7 +83,7 @@ export class ModelRouter {
 
     // 4. No configured provider available
     throw new AIAllProvidersFailedError(
-      'No configured and healthy AI provider is currently available to fulfill the request. Configure GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.',
+      'No configured and healthy AI provider is currently available to fulfill the request. Configure GEMINI_API_KEY, OPENAI_API_KEY, or GROQ_API_KEY.',
       { requestId }
     );
   }

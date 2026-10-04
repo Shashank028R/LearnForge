@@ -498,12 +498,13 @@ LearnForge establishes a typed task taxonomy in `server/src/ai/schemas/tasks.js`
 - `syllabus_generation` → Requires `structured_output`, `complex_reasoning` (Default preference: OpenAI → Gemini → Groq).
 - `knowledge_relevance_classification` → Requires `fast_classification`, `structured_output` (Default preference: Groq → Gemini → OpenAI).
 
-### Q67: How does the AI Gateway handle transient provider failures, rate limits, and retries?
+### Q67: How does the AI Gateway handle transient provider failures, rate limits, retries, and fallback?
 **Answer**:  
-1. **Error Normalization**: Providers normalize SDK exceptions into structured classes (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
-2. **Selective Retry**: Only retryable errors (`AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`) trigger retries. Non-retryable permanent errors (`401 Auth`, `400 Invalid Request`) terminate immediately without wasting resources.
-3. **Bounded Backoff with Jitter**: Retries apply exponential backoff plus randomized jitter up to `maxRetries` (default 2).
-4. **Degradation & Fallback Chain**: If a provider fails all retries or accumulates ≥3 consecutive failures, the Gateway marks it degraded and routes subsequent attempts to the next configured provider.
+1. **Error Normalization**: Providers normalize vendor SDK exceptions into structured domain classes (`AIAuthenticationError`, `AIInvalidRequestError`, `AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`).
+2. **Selective Same-Provider Retry**: When a provider encounters a transient, retryable error (`AIRateLimitedError`, `AITimeoutError`, `AIProviderUnavailableError`), the Gateway retries the *same* provider up to `maxRetries` (default 2) using bounded exponential backoff with randomized jitter (`Math.min(1000, 100 * 2^attempt) + jitter`). The provider is NOT excluded upon a single transient failure.
+3. **Non-Retryable Errors**: Fatal errors (`401/403 Authentication`, `400 Invalid Request`) are non-retryable and immediately trigger provider exclusion and fallback without wasting attempts.
+4. **Provider Fallback Chain**: When a provider exhausts its retry budget against the current request, the Gateway excludes it and falls back to the next available healthy provider in the task's preference chain (`this.router.selectRoute(...)`).
+5. **Terminal Normalization**: If all configured providers in the chain fail or are exhausted, the Gateway throws a normalized `AIAllProvidersFailedError`. If running without credentials, `chatController` safely catches this and delivers an offline Socratic response (`model: 'socratic-engine'`).
 
 ### Q68: How does the Gateway ensure that draft syllabi are not treated as authoritative curriculum?
 **Answer**:  

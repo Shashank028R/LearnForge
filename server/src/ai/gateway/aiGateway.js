@@ -14,12 +14,13 @@ export class AIGateway {
   constructor(options = {}) {
     const aiConfig = config.ai || {};
 
-    this.providers = {
-      gemini: new GeminiProvider({ apiKey: aiConfig.geminiApiKey, model: aiConfig.geminiModel }),
-      openai: new OpenAIProvider({ apiKey: aiConfig.openaiApiKey, model: aiConfig.openaiModel }),
-      groq: new GroqProvider({ apiKey: aiConfig.groqApiKey, model: aiConfig.groqModel }),
-      ...(options.customProviders || {}),
-    };
+    this.providers = options.customProviders
+      ? { ...options.customProviders }
+      : {
+          gemini: new GeminiProvider({ apiKey: aiConfig.geminiApiKey, model: aiConfig.geminiModel }),
+          openai: new OpenAIProvider({ apiKey: aiConfig.openaiApiKey, model: aiConfig.openaiModel }),
+          groq: new GroqProvider({ apiKey: aiConfig.groqApiKey, model: aiConfig.groqModel }),
+        };
 
     this.router = new ModelRouter(this.providers, {
       priorityOrder: aiConfig.defaultProviderPriority || ['gemini', 'openai', 'groq'],
@@ -31,18 +32,19 @@ export class AIGateway {
   }
 
   /**
-   * Generates a normalized AI response for a requested task
+   * Generates a normalized AI response for a requested task.
+   * Implements bounded retries with exponential backoff and jitter per provider,
+   * followed by fallback to subsequent healthy providers in the preference chain.
    */
   async generate(rawRequest = {}) {
     const request = validateAndNormalizeAIRequest(rawRequest);
     const excludeProviders = [];
     let lastError = null;
-    let attempts = 0;
+    let totalAttempts = 0;
 
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-      attempts += 1;
+    // Fallback Loop: Iterate through available providers in the task preference chain
+    while (true) {
       let route = null;
-
       try {
         route = this.router.selectRoute(request.task, {
           preferredProvider: request.preferredProvider,
@@ -50,72 +52,79 @@ export class AIGateway {
           requestId: request.requestId,
         });
       } catch (routingErr) {
+        // All configured providers have been exhausted
         if (lastError) throw lastError;
         throw routingErr;
       }
 
       const { provider, providerName, model, reason } = route;
 
-      this.telemetry.recordRequest({
-        task: request.task,
-        provider: providerName,
-        model,
-        requestId: request.requestId,
-      });
+      // Same-Provider Retry Loop: Bounded retry for transient failures on the currently selected provider
+      for (let providerAttempt = 0; providerAttempt <= this.maxRetries; providerAttempt++) {
+        totalAttempts += 1;
 
-      const startTime = Date.now();
-
-      try {
-        const response = await provider.generate(request);
-        const latencyMs = Date.now() - startTime;
-
-        response.routingMetadata = {
-          selectedProvider: providerName,
-          selectedModel: model,
-          reason,
-          attempts,
-        };
-
-        this.telemetry.recordSuccess({
+        this.telemetry.recordRequest({
           task: request.task,
           provider: providerName,
           model,
-          latencyMs,
-          usage: response.usage,
           requestId: request.requestId,
         });
 
-        return response;
-      } catch (err) {
-        const latencyMs = Date.now() - startTime;
-        lastError = err instanceof AIError ? err : provider.normalizeError(err, request.requestId);
+        const startTime = Date.now();
 
-        const willRetry = lastError.isRetryable && attempt < this.maxRetries;
+        try {
+          const response = await provider.generate(request);
+          const latencyMs = Date.now() - startTime;
 
-        this.telemetry.recordFailure({
-          task: request.task,
-          provider: providerName,
-          error: lastError,
-          latencyMs,
-          requestId: request.requestId,
-          attempt: attempt + 1,
-          willRetry,
-        });
+          response.routingMetadata = {
+            selectedProvider: providerName,
+            selectedModel: model,
+            reason,
+            attempts: totalAttempts,
+            retries: providerAttempt,
+          };
 
-        if (willRetry) {
-          // Exclude failing provider and apply exponential jitter before next attempt
-          excludeProviders.push(providerName);
-          const backoff = Math.floor(Math.random() * 100) + 100 * (attempt + 1);
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-          continue;
+          this.telemetry.recordSuccess({
+            task: request.task,
+            provider: providerName,
+            model,
+            latencyMs,
+            usage: response.usage,
+            requestId: request.requestId,
+          });
+
+          return response;
+        } catch (err) {
+          const latencyMs = Date.now() - startTime;
+          lastError = err instanceof AIError ? err : provider.normalizeError(err, request.requestId);
+
+          const willRetrySameProvider = lastError.isRetryable && providerAttempt < this.maxRetries;
+
+          this.telemetry.recordFailure({
+            task: request.task,
+            provider: providerName,
+            error: lastError,
+            latencyMs,
+            requestId: request.requestId,
+            attempt: totalAttempts,
+            willRetry: willRetrySameProvider,
+          });
+
+          if (willRetrySameProvider) {
+            // RETRY: Apply bounded exponential backoff with jitter on the SAME provider
+            const backoff = Math.min(1000, 100 * Math.pow(2, providerAttempt)) + Math.floor(Math.random() * 50);
+            await new Promise((resolve) => setTimeout(resolve, backoff));
+            continue; // Next attempt against the same provider
+          }
+
+          // Non-retryable error or retries exhausted for this provider
+          break; // Exit same-provider retry loop to trigger fallback to next provider
         }
-
-        // Non-retryable error or exhausted retries
-        throw lastError;
       }
-    }
 
-    throw lastError || new AIAllProvidersFailedError('AI generation failed after all attempts.', { requestId: request.requestId });
+      // FALLBACK: Retries exhausted or non-retryable error on this provider; exclude and select next provider
+      excludeProviders.push(providerName);
+    }
   }
 
   getHealth() {

@@ -32,7 +32,7 @@ graph TB
     subgraph PersistenceLayer ["Persistence & External Providers"]
         MongoDB[("MongoDB Database<br/>(Mongoose ODM)")]
         ObjectStorage[("Object Storage<br/>(Local Disk / S3 Assets)")]
-        AIProviders["External AI Providers<br/>(Gemini, OpenAI, Anthropic)"]
+        AIProviders["External AI Providers<br/>(Gemini, OpenAI, Groq)"]
         EmailProvider["Transactional Email<br/>(OTP Delivery)"]
     end
 

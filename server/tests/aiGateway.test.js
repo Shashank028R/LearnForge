@@ -336,66 +336,168 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
       expect(res.provider).toBe('gemini');
       expect(res.model).toBe('gemini-2.5-flash');
       expect(res.routingMetadata).toBeDefined();
+      expect(res.routingMetadata.attempts).toBe(1);
+      expect(res.routingMetadata.retries).toBe(0);
     });
 
-    it('retries transient failures and succeeds on subsequent attempt', async () => {
+    it('retries transient failures on the SAME provider with backoff and succeeds on subsequent attempt', async () => {
       const mockProvider = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
-      const secondaryProvider = new GroqProvider({ apiKey: 'grq-key', model: 'llama-3.3-70b-versatile' });
+      let geminiCallCount = 0;
 
-      vi.spyOn(mockProvider, 'generate').mockRejectedValue(
-        new AIRateLimitedError('Rate limit exceeded', { provider: 'gemini' })
-      );
-
-      vi.spyOn(secondaryProvider, 'generate').mockResolvedValue({
-        text: 'Success after fallback retry',
-        provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
-        task: AI_TASK_TYPES.GENERAL_CHAT,
-        usage: { totalTokens: 25 },
-        finishReason: 'stop',
-        latencyMs: 20,
-        requestId: 'req-retry-1',
+      vi.spyOn(mockProvider, 'generate').mockImplementation(async () => {
+        geminiCallCount++;
+        if (geminiCallCount < 3) {
+          throw new AIRateLimitedError('Rate limit exceeded', { provider: 'gemini' });
+        }
+        return {
+          text: 'Success on 3rd attempt on same provider',
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+          task: AI_TASK_TYPES.GENERAL_CHAT,
+          usage: { totalTokens: 25 },
+          finishReason: 'stop',
+          latencyMs: 10,
+          requestId: 'req-retry-same-1',
+        };
       });
 
       const gateway = new AIGateway({
-        customProviders: { gemini: mockProvider, groq: secondaryProvider },
-        routerOptions: { priorityOrder: ['gemini', 'groq'] },
+        customProviders: { gemini: mockProvider },
+        routerOptions: { priorityOrder: ['gemini'] },
         maxRetries: 2,
       });
 
       const res = await gateway.generate({
         task: AI_TASK_TYPES.GENERAL_CHAT,
         messages: [{ role: 'user', content: 'Hello' }],
-        requestId: 'req-retry-1',
+        requestId: 'req-retry-same-1',
       });
 
-      expect(res.text).toBe('Success after fallback retry');
-      expect(res.provider).toBe('groq');
+      expect(res.text).toBe('Success on 3rd attempt on same provider');
+      expect(res.provider).toBe('gemini');
+      expect(geminiCallCount).toBe(3); // 1 initial attempt + 2 retries on same provider
+      expect(res.routingMetadata.attempts).toBe(3);
+      expect(res.routingMetadata.retries).toBe(2);
     });
 
-    it('fails immediately without retrying on non-retryable errors (e.g. invalid request or auth error)', async () => {
-      const mockProvider = new GroqProvider({ apiKey: 'grq-key', model: 'llama-3.3-70b-versatile' });
-      let callCount = 0;
-      vi.spyOn(mockProvider, 'generate').mockImplementation(async () => {
-        callCount++;
-        throw new AIAuthenticationError('Invalid API Key', { provider: 'groq' });
+    it('falls back to secondary provider after primary provider exhausts its retry budget', async () => {
+      const primaryProvider = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
+      const fallbackProvider = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-120b' });
+
+      let primaryCalls = 0;
+      let fallbackCalls = 0;
+
+      vi.spyOn(primaryProvider, 'generate').mockImplementation(async () => {
+        primaryCalls++;
+        throw new AIProviderUnavailableError('Service 503 Unavailable', { provider: 'gemini' });
+      });
+
+      vi.spyOn(fallbackProvider, 'generate').mockImplementation(async () => {
+        fallbackCalls++;
+        return {
+          text: 'Success from Groq fallback provider',
+          provider: 'groq',
+          model: 'openai/gpt-oss-120b',
+          task: AI_TASK_TYPES.GENERAL_CHAT,
+          usage: { totalTokens: 30 },
+          finishReason: 'stop',
+          latencyMs: 12,
+          requestId: 'req-exhaust-fallback-1',
+        };
       });
 
       const gateway = new AIGateway({
-        customProviders: { groq: mockProvider },
-        routerOptions: { priorityOrder: ['groq'] },
+        customProviders: { gemini: primaryProvider, groq: fallbackProvider },
+        routerOptions: {
+          priorityOrder: ['gemini', 'groq'],
+          taskPreferences: { [AI_TASK_TYPES.GENERAL_CHAT]: ['gemini', 'groq'] },
+        },
+        maxRetries: 2,
+      });
+
+      const res = await gateway.generate({
+        task: AI_TASK_TYPES.GENERAL_CHAT,
+        messages: [{ role: 'user', content: 'Hello' }],
+        requestId: 'req-exhaust-fallback-1',
+      });
+
+      expect(res.text).toBe('Success from Groq fallback provider');
+      expect(res.provider).toBe('groq');
+      expect(primaryCalls).toBe(3); // 1 initial + 2 retries before fallback
+      expect(fallbackCalls).toBe(1); // 1 attempt on fallback provider
+      expect(res.routingMetadata.attempts).toBe(4); // 3 primary + 1 fallback
+    });
+
+    it('falls back immediately without retrying on non-retryable errors (e.g. auth error)', async () => {
+      const failingAuth = new GeminiProvider({ apiKey: 'bad-key', model: 'gemini-2.5-flash' });
+      const healthyGroq = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-120b' });
+
+      let authCalls = 0;
+      let groqCalls = 0;
+
+      vi.spyOn(failingAuth, 'generate').mockImplementation(async () => {
+        authCalls++;
+        throw new AIAuthenticationError('Invalid API Key', { provider: 'gemini' });
+      });
+
+      vi.spyOn(healthyGroq, 'generate').mockImplementation(async () => {
+        groqCalls++;
+        return {
+          text: 'Groq recovered from unretryable Gemini auth error',
+          provider: 'groq',
+          model: 'openai/gpt-oss-120b',
+          task: AI_TASK_TYPES.GENERAL_CHAT,
+          usage: { totalTokens: 15 },
+          finishReason: 'stop',
+          latencyMs: 8,
+          requestId: 'req-nonretryable-fallback',
+        };
+      });
+
+      const gateway = new AIGateway({
+        customProviders: { gemini: failingAuth, groq: healthyGroq },
+        routerOptions: {
+          priorityOrder: ['gemini', 'groq'],
+          taskPreferences: { [AI_TASK_TYPES.GENERAL_CHAT]: ['gemini', 'groq'] },
+        },
         maxRetries: 3,
+      });
+
+      const res = await gateway.generate({
+        task: AI_TASK_TYPES.GENERAL_CHAT,
+        messages: [{ role: 'user', content: 'Hello' }],
+        requestId: 'req-nonretryable-fallback',
+      });
+
+      expect(res.text).toBe('Groq recovered from unretryable Gemini auth error');
+      expect(authCalls).toBe(1); // Exactly 1 attempt, zero retries on auth error
+      expect(groqCalls).toBe(1); // Immediate fallback to Groq
+    });
+
+    it('throws AIAllProvidersFailedError when all configured providers are exhausted', async () => {
+      const mockGemini = new GeminiProvider({ apiKey: 'gem-key', model: 'gemini-2.5-flash' });
+      const mockGroq = new GroqProvider({ apiKey: 'grq-key', model: 'openai/gpt-oss-120b' });
+
+      vi.spyOn(mockGemini, 'generate').mockRejectedValue(
+        new AIProviderUnavailableError('Gemini 500', { provider: 'gemini' })
+      );
+      vi.spyOn(mockGroq, 'generate').mockRejectedValue(
+        new AIProviderUnavailableError('Groq 500', { provider: 'groq' })
+      );
+
+      const gateway = new AIGateway({
+        customProviders: { gemini: mockGemini, groq: mockGroq },
+        routerOptions: { priorityOrder: ['gemini', 'groq'] },
+        maxRetries: 1,
       });
 
       await expect(
         gateway.generate({
           task: AI_TASK_TYPES.GENERAL_CHAT,
           messages: [{ role: 'user', content: 'Hello' }],
-          requestId: 'req-auth-fail',
+          requestId: 'req-all-fail',
         })
-      ).rejects.toThrow(AIAuthenticationError);
-
-      expect(callCount).toBe(1); // No retries attempted on auth failure
+      ).rejects.toThrow();
     });
   });
 

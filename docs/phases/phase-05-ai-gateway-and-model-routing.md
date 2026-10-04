@@ -100,10 +100,10 @@ All adapters extend `BaseProvider` (`server/src/ai/providers/baseProvider.js`) a
 - **`AIProviderUnavailableError`** (HTTP 500/502/503/504) → **Transient / Retryable**.
 - **`AIAllProvidersFailedError`** → Terminal error when all configured providers are exhausted.
 
-### Bounded Retries with Exponential Jitter & Fallback
-1. If a primary provider encounters a retryable error, the Gateway retries up to `maxRetries` (default 2) with exponential backoff and randomized jitter.
-2. If retries are exhausted on a provider or the provider is marked degraded (≥3 consecutive failures), the Gateway dynamically falls back to the next provider in the preference chain.
-3. If no external API keys are configured (or in test environments), the Gateway automatically delivers an offline Socratic fallback response (`engine: 'socratic-engine'`), preventing chat disruption.
+### Bounded Same-Provider Retries with Exponential Jitter & Fallback Chain
+1. **Same-Provider Retry**: If the currently selected provider encounters a retryable error (`429 Rate Limit`, `ETIMEDOUT`, `5xx Unavailable`), the Gateway retries the *same* provider up to `maxRetries` (default 2) with exponential backoff and randomized jitter (`Math.min(1000, 100 * 2^attempt) + jitter`). The provider is NOT excluded after a single transient failure.
+2. **Provider Fallback**: If retries are exhausted on a provider or the provider hits a non-retryable error, the Gateway excludes that provider for the current request and transparently falls back to the next healthy provider in the task preference chain.
+3. **Offline Socratic Fallback**: If no external API keys are configured (or in test environments without credentials), the Gateway automatically delivers an offline Socratic fallback response (`engine: 'socratic-engine'`), preventing chat disruption.
 
 ---
 

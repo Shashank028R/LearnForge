@@ -69,7 +69,7 @@ Progress Telemetry & Review Signals
 | **Professional UI Shell** | *Planned (Phase 02)* | Distraction-free, restrained productivity UI without neon, glassmorphism, or decorative bloat. |
 | **Subject & Topic Hierarchy** | *Planned (Phase 03)* | Hierarchical knowledge organization mapping subjects, topics, and canonical concepts. |
 | **Conversational Engine** | *Planned (Phase 04)* | Streaming-ready message persistence and subject-scoped conversation contexts. |
-| **AI Gateway & Router** | *Planned (Phase 05)* | Multi-provider abstraction (Gemini, OpenAI, Anthropic) with automated model routing by task complexity. |
+| **AI Gateway & Router** | **Implemented** | Multi-provider abstraction (Gemini, OpenAI, Groq) with automated model routing by task complexity. |
 | **Knowledge Engine** | *Planned (Phase 06)* | Canonical concept extraction, deduplication, confidence scoring, and misconception logging. |
 | **Structured Notes Engine** | *Planned (Phase 07)* | Block-based structured notes with immutable version history and risk-based AI merge proposals. |
 | **Strict Study Mode** | *Planned (Phase 08)* | Adaptive teacher loop evaluating answer completeness, reasoning quality, and remediating weak points. |

@@ -69,17 +69,27 @@
 - **Knowledge Semantic Layers & Annotations**: 7 distinct semantic layers; complete `Annotation` model and REST API for user notes and tags.
 - **Interactive UI**: Syllabus governance panel, version history viewer, approval confirmation modal, and inline annotations.
 
+### Phase 05 (AI Gateway, Automatic Model Routing & Pedagogical Engine)
+- **Centralized AI Gateway**: Provider-neutral gateway (`server/src/ai/gateway/aiGateway.js`) implementing `generate(request)` with normalized envelopes (`AIResponse`).
+- **Official Provider Adapters**: Concrete adapters for Google Gemini (`@google/genai`), OpenAI (`openai`), and Groq (`groq-sdk`) with uniform error normalization and health monitoring. Anthropic marked `DISABLED / DEFERRED`.
+- **Task & Capability Taxonomy**: Typed task taxonomy (`general_chat`, `pedagogical_explanation`, `syllabus_generation`, `knowledge_relevance_classification`) mapped to capability requirements (`text_generation`, `structured_output`, `fast_classification`, `complex_reasoning`).
+- **Automatic Model Routing**: Server-side deterministic router (`ModelRouter`) selecting optimal models without exposing provider choices to frontend (`general_chat`: Gemini → Groq → OpenAI; `pedagogical_explanation` & `syllabus_generation`: OpenAI → Gemini → Groq; `knowledge_relevance_classification`: Groq → Gemini → OpenAI).
+- **Resilience Engine**: Deterministic same-provider bounded retries with exponential backoff and jitter on transient failures (`429`, `503`, `ETIMEDOUT`), provider fallback chains upon retry exhaustion, and offline Socratic engine fallback.
+- **Curriculum Context Isolation**: Strict prompt assembly ensuring only approved syllabi (`status: 'approved'`) are treated as authoritative curriculum.
+- **Knowledge Relevance Governance**: Automatic semantic relevance classification (`on_topic`, `off_topic`, `uncertain`) with `excluded` disposition for off-topic queries, preventing canonical note pollution.
+- **Observability & Security**: Request correlation via `X-Request-ID`, token telemetry (`AITelemetry`), rate limiting (`aiMessageRateLimiter`), and strict secret redaction.
+
 ---
 
 ## 4. Current Work
-- Phase 04.1 complete. Awaiting explicit project-owner authorization before beginning Phase 05.
+- Phase 05 complete. Awaiting explicit project-owner authorization before beginning Phase 06.
 
 ---
 
-## 5. Upcoming Work (Phase 05 — AI Gateway, Model Routing & Pedagogical Engine)
-- AI Gateway architecture with provider adapters (Gemini, OpenAI, Anthropic).
-- Task-based model routing and latency/cost optimization.
-- Socratic dialog prompts and off-topic guardrails.
+## 5. Upcoming Work (Phase 06 — Concept Extraction & Pedagogical Analysis)
+- Automatic concept and key insight extraction from conversational evidence.
+- Concept confidence scoring and misconception detection.
+- Learning event stream and mastery progression evaluation.
 
 ---
 
