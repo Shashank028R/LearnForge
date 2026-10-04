@@ -72,6 +72,31 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
       return null;
     });
 
+    vi.spyOn(Subject, 'findById').mockImplementation(async (id) => {
+      const s = subjectsStore.get(id?.toString());
+      if (!s) return null;
+      return {
+        ...s,
+        save: async function () {
+          subjectsStore.set(s._id.toString(), { ...s, ...this });
+          return this;
+        },
+      };
+    });
+
+    vi.spyOn(Subject, 'updateOne').mockImplementation(async (filter, update) => {
+      for (const [id, s] of subjectsStore.entries()) {
+        const idMatch = !filter._id || s._id.toString() === filter._id.toString();
+        const userMatch = !filter.userId || s.userId.toString() === filter.userId.toString();
+        if (idMatch && userMatch) {
+          if (update.$set) Object.assign(s, update.$set);
+          subjectsStore.set(id, s);
+          return { matchedCount: 1, modifiedCount: 1 };
+        }
+      }
+      return { matchedCount: 0, modifiedCount: 0 };
+    });
+
     // Mock Topic
     vi.spyOn(Topic, 'find').mockImplementation((query) => {
       const matched = [];
@@ -258,6 +283,18 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
           },
         }),
         then: (resolve) => exec().then(resolve),
+      };
+    });
+
+    vi.spyOn(SyllabusVersion, 'findById').mockImplementation(async (id) => {
+      const sv = syllabusStore.get(id?.toString());
+      if (!sv) return null;
+      return {
+        ...sv,
+        save: async function () {
+          syllabusStore.set(sv._id.toString(), { ...sv, ...this });
+          return this;
+        },
       };
     });
 
@@ -871,10 +908,21 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
     expect(approvedVersions.length).toBe(1);
     expect(supersededVersions.length).toBe(2);
 
+    const winningVersion = approvedVersions[0];
+
     // 4. Invariant: Subject activeSyllabusVersionId matches the single approved version ID
     const subjectDoc = subjectsStore.get(subjectA._id.toString());
-    expect(subjectDoc.activeSyllabusVersionId.toString()).toBe(approvedVersions[0]._id.toString());
+    expect(subjectDoc.activeSyllabusVersionId.toString()).toBe(winningVersion._id.toString());
     expect(subjectDoc.syllabusStatus).toBe('approved');
+
+    // 5. Invariant: Active canonical Topic records exactly match the winning syllabus version
+    const activeTopics = Array.from(topicsStore.values()).filter(
+      (t) => t.isActiveInSyllabus === true && t.subjectId.toString() === subjectA._id.toString()
+    );
+    expect(activeTopics.length).toBe(1);
+    const expectedWinningTopicTitle = winningVersion.sections[0].topics[0].title;
+    expect(activeTopics[0].title).toBe(expectedWinningTopicTitle);
+    expect(subjectDoc.topicsCount).toBe(activeTopics.length);
   });
 
   it('11. Enforces Subject.topicsCount contract: manual topic before approval has isActiveInSyllabus=false and topicsCount=0 until syllabus approval', async () => {
@@ -956,5 +1004,115 @@ describe('Syllabus Governance API (/api/v1/subjects/:subjectId/syllabus)', () =>
 
     const subjectAfterApprove = subjectsStore.get(subjectA._id.toString());
     expect(subjectAfterApprove.topicsCount).toBe(1);
+  });
+
+  it('12. Adversarial Interleaving: Prevents stale approval from mutating canonical state when delayed after version approval', async () => {
+    // 1. Create Draft Version 1 (containing Alpha & Beta)
+    const v1Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Curriculum v1 (Alpha & Beta)',
+        sections: [
+          {
+            title: 'Section 1',
+            topics: [
+              { title: 'Alpha Topic', description: 'Alpha topic description' },
+              { title: 'Beta Topic', description: 'Beta topic description' },
+            ],
+          },
+        ],
+      });
+    const v1Id = v1Res.body.data._id;
+
+    // 2. Create Draft Version 2 (containing Gamma & Delta)
+    const v2Res = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        title: 'Curriculum v2 (Gamma & Delta)',
+        sections: [
+          {
+            title: 'Section 2',
+            topics: [
+              { title: 'Gamma Topic', description: 'Gamma topic description' },
+              { title: 'Delta Topic', description: 'Delta topic description' },
+            ],
+          },
+        ],
+      });
+    const v2Id = v2Res.body.data._id;
+
+    // 3. Simulate adversarial delay during Request A (approving v1):
+    // After v1 is set to approved, pause Thread A before it finalizes topic reconciliation
+    let pauseThreadA = true;
+    let resumeThreadA;
+    const threadAPromise = new Promise((resolve) => {
+      resumeThreadA = resolve;
+    });
+
+    const originalTopicUpdateOne = Topic.updateOne.getMockImplementation();
+
+    // Hook Topic.updateOne to introduce an artificial delay on v1 topics
+    let interceptedOnce = false;
+    vi.spyOn(Topic, 'updateOne').mockImplementation(async (filter, update, options) => {
+      if (pauseThreadA && filter.normalizedTitle === 'alpha topic' && !interceptedOnce) {
+        interceptedOnce = true;
+        // Wait for Thread B to complete approving v2
+        await threadAPromise;
+      }
+      return originalTopicUpdateOne(filter, update, options);
+    });
+
+    // Launch Request A (approving v1) asynchronously
+    const requestAPromise = request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v1Id}/approve`)
+      .set('Cookie', sessionCookieA);
+
+    // Wait a brief tick to let Request A enter the approval and hit the interceptor
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Request B (approving v2) executes and completes while Request A is delayed
+    const resB = await request(app)
+      .post(`/api/v1/subjects/${subjectA._id}/syllabus/versions/${v2Id}/approve`)
+      .set('Cookie', sessionCookieA);
+    expect(resB.status).toBe(200);
+
+    // Unpause Request A so it attempts to finish its stale reconciliation
+    pauseThreadA = false;
+    resumeThreadA();
+    const resA = await requestAPromise;
+
+    // 4. Assert Invariants on the Final Database State
+    const allVersions = Array.from(syllabusStore.values()).filter(
+      (sv) => sv.subjectId.toString() === subjectA._id.toString()
+    );
+    const approvedVersions = allVersions.filter((sv) => sv.status === 'approved');
+    const supersededVersions = allVersions.filter((sv) => sv.status === 'superseded');
+
+    // Exactly ONE approved version exists
+    expect(approvedVersions.length).toBe(1);
+    const soleApprovedVersion = approvedVersions[0];
+    // All other versions are superseded
+    expect(supersededVersions.length).toBe(allVersions.length - 1);
+
+    // Subject metadata strictly matches the sole approved version
+    const subjectDoc = subjectsStore.get(subjectA._id.toString());
+    expect(subjectDoc.activeSyllabusVersionId.toString()).toBe(soleApprovedVersion._id.toString());
+    expect(subjectDoc.syllabusStatus).toBe('approved');
+
+    // Active canonical topics match ONLY the sole approved version
+    const activeTopics = Array.from(topicsStore.values()).filter(
+      (t) => t.isActiveInSyllabus === true && t.subjectId.toString() === subjectA._id.toString()
+    );
+    expect(subjectDoc.topicsCount).toBe(activeTopics.length);
+
+    const approvedNormalizedTitles = soleApprovedVersion.sections
+      .flatMap((s) => s.topics)
+      .map((t) => t.title.trim().toLowerCase());
+
+    for (const activeTopic of activeTopics) {
+      expect(approvedNormalizedTitles).toContain(activeTopic.normalizedTitle);
+    }
   });
 });

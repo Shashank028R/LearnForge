@@ -48,7 +48,10 @@ Phase 04.1 establishes the durable product, data model, and user experience foun
 - **Historical / Retired Topics**: Topics present in prior syllabus versions but omitted in the latest approved version are preserved with `isActiveInSyllabus: false`. Their stable `_id`, `description`, `knowledgeState` (mastery scores, key concepts, summaries), `notesCount`, and `chatsCount` remain permanently accessible.
 - **Topic Reactivation**: Re-adding a previously retired topic in a subsequent syllabus version restores its `isActiveInSyllabus: true` flag while maintaining its historical learning progress.
 - **Subject.topicsCount Contract**: Defined strictly as the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`), preventing historical or pre-governance records from inflating current curriculum metrics.
-- **Single Approved Version Invariant**: Structurally guaranteed at the MongoDB storage engine level via a Partial Unique Index `{ subjectId: 1, status: 1 }` (`unique: true, partialFilterExpression: { status: 'approved' }`). Concurrent approval attempts race safely against the unique constraint and are reconciled via an atomic transition retry loop.
+- **Single Approved Version Invariant & End-to-End Atomic Approval Pipeline**:
+  - Structurally guaranteed at the MongoDB storage engine level via a Partial Unique Index `{ subjectId: 1, status: 1 }` (`unique: true, partialFilterExpression: { status: 'approved' }`).
+  - End-to-end atomicity is achieved through MongoDB multi-document ACID transactions (on replica sets / Atlas) wrapping version superseding, approval, canonical topic reconciliation, and `Subject.activeSyllabusVersionId` / `Subject.topicsCount` updates in a single isolated transaction.
+  - In all environments, pre- and post-reconciliation CAS staleness guards verify that the target version has not lost an approval race to a concurrent request before mutating canonical state, auto-syncing canonical topics to the winning version if a race condition occurs.
 
 ## Cascading Entity Cleanup
 - `Subject` deletion cascades removal of all associated `Topic`, `Chat`, `Message`, `SyllabusVersion`, and `Annotation` documents.

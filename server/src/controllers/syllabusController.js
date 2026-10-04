@@ -263,6 +263,93 @@ export async function updateSyllabusDraft(req, res, next) {
 }
 
 /**
+ * Reconcile canonical topics and Subject metadata for an approved syllabus version atomically
+ */
+export async function reconcileCanonicalTopics(subjectId, userId, syllabusVersion, session = null) {
+  const activeSyllabusNormalizedTitles = [];
+  let globalOrder = 0;
+
+  for (const section of syllabusVersion.sections || []) {
+    for (const topicItem of section.topics || []) {
+      const normTitle = topicItem.title.trim().toLowerCase();
+      activeSyllabusNormalizedTitles.push(normTitle);
+
+      const updateQuery = {
+        subjectId,
+        userId,
+        normalizedTitle: normTitle,
+      };
+
+      const updateDoc = {
+        $set: {
+          title: topicItem.title.trim(),
+          orderIndex: globalOrder++,
+          isActiveInSyllabus: true,
+          ...(topicItem.description ? { description: topicItem.description.trim() } : {}),
+        },
+        $setOnInsert: {
+          status: 'not_started',
+          knowledgeState: { masteryScore: 0, keyConcepts: [], summary: '' },
+          notesCount: 0,
+          chatsCount: 0,
+        },
+      };
+
+      const opts = { upsert: true };
+      if (session) opts.session = session;
+
+      await Topic.updateOne(updateQuery, updateDoc, opts);
+    }
+  }
+
+  // Deactivate topics omitted from the approved syllabus
+  const deactivateOpts = session ? { session } : {};
+  await Topic.updateMany(
+    {
+      subjectId,
+      userId,
+      normalizedTitle: { $nin: activeSyllabusNormalizedTitles },
+    },
+    {
+      $set: {
+        isActiveInSyllabus: false,
+      },
+    },
+    deactivateOpts
+  );
+
+  // Compute active topics count
+  const countOpts = session ? { session } : {};
+  const activeTopicsCount = await Topic.countDocuments(
+    {
+      subjectId,
+      userId,
+      isActiveInSyllabus: true,
+    },
+    countOpts
+  );
+
+  // Atomically update Subject metadata
+  const subjectUpdateOpts = session ? { session } : {};
+  await Subject.updateOne(
+    {
+      _id: subjectId,
+      userId,
+    },
+    {
+      $set: {
+        topicsCount: activeTopicsCount,
+        syllabusStatus: 'approved',
+        activeSyllabusVersionId: syllabusVersion._id,
+      },
+    },
+    subjectUpdateOpts
+  );
+
+  return activeTopicsCount;
+}
+
+/**
  * POST /api/v1/subjects/:subjectId/syllabus/versions/:versionId/approve
  * Explicitly approve a syllabus version as the active curriculum contract and reconcile canonical Topics
  */
@@ -295,111 +382,172 @@ export async function approveSyllabusVersion(req, res, next) {
       });
     }
 
-    // Concurrency Hardening: Transition target version to approved while superseding others.
-    // The schema-level Partial Unique Index `{ subjectId: 1, status: 1 }` (status: 'approved')
-    // guarantees at the database storage engine layer that at most ONE approved version can exist.
-    const maxRetries = 3;
+    // Determine if MongoDB transactions are supported on the active connection
+    const supportsTransactions =
+      mongoose.connection.readyState === 1 &&
+      mongoose.connection.client &&
+      typeof mongoose.connection.client.startSession === 'function' &&
+      mongoose.connection.client.topology?.description?.type !== 'Single';
+
+    const maxRetries = 6;
+    let finalActiveCount = 0;
+    let approvalSucceeded = false;
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      let session = null;
       try {
-        // Mark previous approved versions as superseded
+        if (supportsTransactions) {
+          session = await mongoose.startSession();
+          session.startTransaction({
+            readConcern: { level: 'snapshot' },
+            writeConcern: { w: 'majority' },
+          });
+        }
+
+        const sessionOpts = session ? { session } : {};
+
+        // Reload target version inside session on each retry attempt
+        const freshTarget = await SyllabusVersion.findOne(
+          {
+            _id: versionId,
+            subjectId,
+            userId: req.user._id,
+          },
+          null,
+          sessionOpts
+        );
+
+        if (!freshTarget) {
+          if (session) await session.abortTransaction();
+          return res.status(404).json({ success: false, message: 'Syllabus version not found' });
+        }
+
+        // 1. Mark previous approved versions as superseded
         await SyllabusVersion.updateMany(
           {
             subjectId,
             userId: req.user._id,
             status: 'approved',
-            _id: { $ne: targetVersion._id },
+            _id: { $ne: freshTarget._id },
           },
           {
             $set: {
               status: 'superseded',
               supersededAt: new Date(),
             },
-          }
+          },
+          sessionOpts
         );
 
-        // Update target version to approved
-        targetVersion.status = 'approved';
-        targetVersion.approvedAt = new Date();
-        targetVersion.supersededAt = null;
-        await targetVersion.save();
+        // 2. Update fresh target version to approved
+        freshTarget.status = 'approved';
+        freshTarget.approvedAt = new Date();
+        freshTarget.supersededAt = null;
+        await freshTarget.save(sessionOpts);
+
+        // Pre-reconciliation CAS Guard: Ensure fresh target version is still the active approved version
+        const preCheck = await SyllabusVersion.findOne(
+          { subjectId, userId: req.user._id, status: 'approved' },
+          null,
+          sessionOpts
+        );
+        if (preCheck && preCheck._id.toString() !== freshTarget._id.toString()) {
+          // Lost race prior to topic reconciliation; abort this attempt
+          if (session) {
+            await session.abortTransaction();
+          }
+          if (attempt < maxRetries - 1) {
+            const jitter = Math.floor(Math.random() * 40) + 30 * (attempt + 1);
+            await new Promise((resolve) => setTimeout(resolve, jitter));
+            continue;
+          }
+          break;
+        }
+
+        // 3. Reconcile canonical topics, active topic count, and Subject metadata
+        finalActiveCount = await reconcileCanonicalTopics(
+          subjectId,
+          req.user._id,
+          freshTarget,
+          session
+        );
+
+        // Post-reconciliation CAS Guard: Verify no concurrent approval superseded this version during reconciliation
+        const postCheck = await SyllabusVersion.findOne(
+          { subjectId, userId: req.user._id, status: 'approved' },
+          null,
+          sessionOpts
+        );
+
+        if (postCheck && postCheck._id.toString() !== freshTarget._id.toString()) {
+          // A concurrent request won and superseded this version during reconciliation
+          // Re-sync canonical topics to the actual winning version to prevent stale state corruption
+          if (session) {
+            await session.abortTransaction();
+          } else {
+            await reconcileCanonicalTopics(subjectId, req.user._id, postCheck);
+          }
+
+          if (attempt < maxRetries - 1) {
+            const jitter = Math.floor(Math.random() * 40) + 30 * (attempt + 1);
+            await new Promise((resolve) => setTimeout(resolve, jitter));
+            continue;
+          }
+          break;
+        }
+
+        if (session) {
+          await session.commitTransaction();
+        }
+        approvalSucceeded = true;
         break;
       } catch (err) {
-        if (err.code === 11000 && attempt < maxRetries - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 30 * (attempt + 1)));
+        if (session) {
+          try {
+            await session.abortTransaction();
+          } catch (_) {}
+        }
+
+        const isRetryable =
+          err.code === 11000 ||
+          err.code === 112 ||
+          err.codeName === 'WriteConflict' ||
+          err.hasErrorLabel?.('TransientTransactionError') ||
+          err.errorLabels?.includes?.('TransientTransactionError') ||
+          err.errorLabels?.has?.('TransientTransactionError') ||
+          err.message?.includes('Write conflict') ||
+          err.message?.includes('WriteConflict') ||
+          err.message?.includes('E11000');
+
+        if (isRetryable && attempt < maxRetries - 1) {
+          const jitter = Math.floor(Math.random() * 50) + 40 * (attempt + 1);
+          await new Promise((resolve) => setTimeout(resolve, jitter));
           continue;
         }
         throw err;
+      } finally {
+        if (session) {
+          await session.endSession();
+        }
       }
     }
 
-    // Reconcile Canonical Topics using atomic database operations
-    // Flatten topics from all sections in order
-    const activeSyllabusNormalizedTitles = [];
-    let globalOrder = 0;
-    for (const section of targetVersion.sections || []) {
-      for (const topicItem of section.topics || []) {
-        const normTitle = topicItem.title.trim().toLowerCase();
-        activeSyllabusNormalizedTitles.push(normTitle);
-        
-        // Atomic upsert/update: activates topic, preserves existing _id, knowledgeState, notesCount, chatsCount
-        await Topic.updateOne(
-          {
-            subjectId,
-            userId: req.user._id,
-            normalizedTitle: normTitle,
-          },
-          {
-            $set: {
-              title: topicItem.title.trim(),
-              orderIndex: globalOrder++,
-              isActiveInSyllabus: true,
-              ...(topicItem.description ? { description: topicItem.description.trim() } : {}),
-            },
-            $setOnInsert: {
-              status: 'not_started',
-              knowledgeState: { masteryScore: 0, keyConcepts: [], summary: '' },
-              notesCount: 0,
-              chatsCount: 0,
-            },
-          },
-          { upsert: true }
-        );
-      }
-    }
-
-    // Mark existing topics NOT in the new syllabus as inactive/historical
-    // Retains stable _id, knowledgeState, notesCount, chatsCount, description
-    await Topic.updateMany(
-      {
-        subjectId,
-        userId: req.user._id,
-        normalizedTitle: { $nin: activeSyllabusNormalizedTitles },
-      },
-      {
-        $set: {
-          isActiveInSyllabus: false,
-        },
-      }
-    );
-
-    // Reconcile subject topicsCount strictly to active syllabus topics
-    const activeTopicsCount = await Topic.countDocuments({
+    // Always fetch the final authoritative database state
+    const currentApprovedVersion = await SyllabusVersion.findOne({
       subjectId,
       userId: req.user._id,
-      isActiveInSyllabus: true,
+      status: 'approved',
     });
-    subject.topicsCount = activeTopicsCount;
-    subject.syllabusStatus = 'approved';
-    subject.activeSyllabusVersionId = targetVersion._id;
-    await subject.save();
+
+    const updatedSubject = await Subject.findOne({ _id: subjectId, userId: req.user._id });
 
     return res.status(200).json({
       success: true,
-      message: `Syllabus version v${targetVersion.version} approved successfully`,
+      message: `Syllabus version v${targetVersion.version} approval processed`,
       data: {
-        subject,
-        version: targetVersion,
-        activeTopicsCount,
+        subject: updatedSubject,
+        version: currentApprovedVersion || targetVersion,
+        activeTopicsCount: updatedSubject ? updatedSubject.topicsCount : finalActiveCount,
       },
     });
   } catch (error) {

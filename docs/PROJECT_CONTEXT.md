@@ -63,7 +63,7 @@
 - **Interactive UI**: Two-pane workspace with search, status filters, message thread, auto-expanding composer, and topic/subject reassignment.
 
 ### Phase 04.1 (Syllabus & Knowledge Governance Foundation)
-- **Structural Single Approved Version Invariant**: MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` (`partialFilterExpression: { status: 'approved' }`) physically preventing multiple approved versions per subject, with atomic retry on concurrent approval races.
+- **End-to-End Atomic Approval & Structural Invariant**: MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` (`partialFilterExpression: { status: 'approved' }`) physically preventing multiple approved versions per subject, multi-document ACID transactions on replica sets / Atlas, and pre/post reconciliation CAS guards preventing stale mutator state corruption under concurrency.
 - **Subject `topicsCount` Semantic Contract**: Defined strictly as the count of active syllabus topics (`isActiveInSyllabus: true`). Subjects start with `no_syllabus` and `topicsCount: 0`. Pre-syllabus topics default to `isActiveInSyllabus: false`.
 - **Topic Reconciliation & History Preservation**: Preserves stable `_id` and learning history across revisions; omitted topics become historical (`isActiveInSyllabus: false`) and re-added topics reactivate seamlessly.
 - **Knowledge Semantic Layers & Annotations**: 7 distinct semantic layers; complete `Annotation` model and REST API for user notes and tags.

@@ -32,10 +32,11 @@ We needed a strict semantic separation between:
      - Topics present in the approved syllabus are marked active (`isActiveInSyllabus: true`).
      - Existing topics matching by normalized title preserve their stable `_id`, `description`, `knowledgeState`, `notesCount`, and `chatsCount`.
      - Topics omitted from a newly approved syllabus are **not deleted**; they are marked historical (`isActiveInSyllabus: false`) to preserve all learning history, notes, and conversation evidence.
-   - **Single Active Approved Version Invariant & Structural Concurrency Safety**:
+   - **Single Active Approved Version Invariant & End-to-End Concurrency Safety**:
      - Exactly one approved syllabus version exists per subject at any given time.
-     - Structurally enforced at the storage engine level by a MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` (`unique: true, partialFilterExpression: { status: 'approved' }`).
-     - Approving a new version marks all prior approved versions for that subject as `superseded` (`supersededAt: now`). Concurrent approval attempts race against the unique index constraint and are safely retried and reconciled.
+     - **Persistence Constraint**: Enforced at the database storage engine layer by a MongoDB Partial Unique Index `{ subjectId: 1, status: 1 }` (`unique: true, partialFilterExpression: { status: 'approved' }`).
+     - **End-to-End Atomic Approval Pipeline**: Multi-document ACID transactions (on replica sets / MongoDB Atlas) executing version superseding, target approval, canonical topic reconciliation, active count calculation, and `Subject.activeSyllabusVersionId` update in a single isolated atomic transaction with retry on transient write conflicts.
+     - **CAS Guard & Staleness Protection**: In all environments, pre- and post-reconciliation CAS checks verify that the target version has not lost an approval race to a concurrent request before mutating canonical state. If a stale approval is detected, canonical topics are immediately re-synced to the true winning approved version, preventing stale mutator corruption.
    - **Subject Topics Count Contract**:
      - `Subject.topicsCount` strictly reflects the count of **active syllabus topics** (`Topic.countDocuments({ subjectId, userId, isActiveInSyllabus: true })`), preventing historical topics from skewing curriculum metrics.
      - Newly manually created topics before syllabus approval default to `isActiveInSyllabus: false` and `Subject.topicsCount` remains 0 until governed by an approved syllabus.

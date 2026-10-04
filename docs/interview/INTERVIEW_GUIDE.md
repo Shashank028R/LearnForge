@@ -450,11 +450,13 @@ When a user deletes a `Subject`, LearnForge's controller executes coordinated ap
 - The parent `Subject` is deleted.
 Similarly, deleting a `Chat` purges its child `Message` and `Annotation` documents. Every deletion query is strictly scoped by `userId: req.user._id`, ensuring complete orphan prevention and bulletproof multi-tenant isolation.
 
-### Q61: How is the "single active approved syllabus version per subject" invariant structurally guaranteed against race conditions?
+### Q61: How is the "single active approved syllabus version per subject" invariant and end-to-end consistency guaranteed under concurrent approvals?
 **Answer**:  
-Rather than relying purely on sequential application logic (which could race under concurrent approvals), LearnForge enforces this at the database storage engine layer via a MongoDB **Partial Unique Index**:
-`syllabusVersionSchema.index({ subjectId: 1, status: 1 }, { unique: true, partialFilterExpression: { status: 'approved' } });`
-This structurally prevents MongoDB from ever storing more than one document with `{ subjectId, status: 'approved' }`. In `approveSyllabusVersion()`, previous approved versions are transitioned to `superseded` before setting the target to `approved`. In the event of an interleaved race condition, MongoDB rejects the competing attempt with `E11000 duplicate key error`, which is intercepted and resolved by an automatic retry loop that supersedes the competing version, guaranteeing atomicity and exactly one active approved syllabus.
+LearnForge enforces this through a defense-in-depth architecture:
+1. **Database Persistence Constraint**: A MongoDB **Partial Unique Index** (`{ subjectId: 1, status: 1 }` with `partialFilterExpression: { status: 'approved' }`) structurally prevents MongoDB from ever storing more than one document with `{ subjectId, status: 'approved' }` at the storage engine level.
+2. **Multi-Document ACID Transactions**: On replica sets / MongoDB Atlas, the entire approval flow (superseding prior versions, saving the target as approved, reconciling canonical topics, calculating active counts, and updating `Subject.activeSyllabusVersionId` / `Subject.topicsCount`) executes inside a single isolated transaction with automatic retry on transient write conflicts or E11000 index collisions.
+3. **CAS Staleness Guards**: In all environments (standalone or replica set), pre- and post-reconciliation CAS checks verify that the target version has not lost an approval race to a concurrent request before mutating canonical state. If an interleaved request is superseded during execution, it automatically re-syncs canonical topics to the true winning approved version, physically preventing stale mutator state corruption.
+This guarantees that after every approval (even under high concurrency), exactly one syllabus is approved, all other versions are superseded, `Subject.activeSyllabusVersionId` matches the sole approved version, and canonical topics and `Subject.topicsCount` strictly reflect that approved version.
 
 ### Q62: What happens to manually created Topics before an approved syllabus exists?
 **Answer**:  

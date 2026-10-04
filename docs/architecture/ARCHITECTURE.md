@@ -196,10 +196,11 @@ TopBar Header (Context/Theme/UserNav)     Sidebar Navigation (Desktop / Drawer)
 - Subjects start in `no_syllabus` state and do NOT require an approved syllabus for creation, chat exploration, or manual note management.
 - Draft syllabi are created with hierarchical sections and topics (`SyllabusVersion`, status: `draft`).
 - Multiple drafts can be edited safely without affecting canonical syllabus membership.
-- **Structural Single Approved Version Invariant (Partial Unique Index)**:
+- **End-to-End Atomic Approval Pipeline & Structural Invariants**:
   - The persistence layer structurally enforces *exactly ONE* approved syllabus version per `Subject` via a MongoDB Partial Unique Index:
     `{ subjectId: 1, status: 1 }` with `partialFilterExpression: { status: 'approved' }`.
-  - In `approveSyllabusVersion()`, prior approved versions are transitioned to `superseded` before saving the target version as `approved`. If concurrent approval requests race, the partial unique index immediately triggers an `E11000 duplicate key error` on whichever transaction lost the race, entering an automatic atomic retry loop that supersedes the winning version and approves the target version safely.
+  - In `approveSyllabusVersion()`, all operations (superseding prior versions, approving the target version, reconciling canonical topics, computing active topic counts, and updating `Subject.activeSyllabusVersionId` / `Subject.topicsCount`) execute within a single multi-document ACID transaction on replica sets / Atlas.
+  - In addition, pre- and post-reconciliation CAS guards ensure that if an approval request is superseded by a concurrent operation, it is prevented from mutating canonical state and automatically re-syncs canonical topics to the true winning version.
 - **Topic Reconciliation & History Preservation**:
   1. Matching topics remain active (`isActiveInSyllabus: true`) with stable `_id` and preserved learning history (`knowledgeState`, `chatsCount`, `notesCount`).
   2. Newly introduced topics are created with `isActiveInSyllabus: true`.

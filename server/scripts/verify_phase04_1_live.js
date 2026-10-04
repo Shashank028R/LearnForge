@@ -358,16 +358,28 @@ async function runLiveVerification() {
     }
 
     // Invariant Check 6: Guarantee exactly ONE approved version in Atlas, all others superseded
-    const approvedVersionsAtlas = await SyllabusVersion.find({ subjectId, userId: userA._id, status: 'approved' });
+    const [approvedVersionsAtlas, supersededVersionsAtlas, allVersionsAtlas] = await Promise.all([
+      SyllabusVersion.find({ subjectId, userId: userA._id, status: 'approved' }),
+      SyllabusVersion.find({ subjectId, userId: userA._id, status: 'superseded' }),
+      SyllabusVersion.find({ subjectId, userId: userA._id }),
+    ]);
+
     if (approvedVersionsAtlas.length !== 1) {
       throw new Error(`CONCURRENCY INVARIANT VIOLATION: Found ${approvedVersionsAtlas.length} approved versions in Atlas! Must be exactly 1.`);
     }
+    if (supersededVersionsAtlas.length !== allVersionsAtlas.length - 1) {
+      throw new Error(`CONCURRENCY INVARIANT VIOLATION: Expected ${allVersionsAtlas.length - 1} superseded versions, found ${supersededVersionsAtlas.length}`);
+    }
+
     const winningApprovedVersion = approvedVersionsAtlas[0];
     const subjectAfterConcurrency = await Subject.findById(subjectId);
     if (subjectAfterConcurrency.activeSyllabusVersionId.toString() !== winningApprovedVersion._id.toString()) {
       throw new Error(`Subject.activeSyllabusVersionId (${subjectAfterConcurrency.activeSyllabusVersionId}) does not match winning approved version (${winningApprovedVersion._id})`);
     }
-    console.log(`✓ Invariant 6: Concurrency Safety Verified — Exactly ONE approved version (${winningApprovedVersion.title}) active in Atlas, all other versions superseded.`);
+    if (subjectAfterConcurrency.syllabusStatus !== 'approved') {
+      throw new Error(`Subject.syllabusStatus is '${subjectAfterConcurrency.syllabusStatus}', expected 'approved'`);
+    }
+    console.log(`✓ Invariant 6: Concurrency Safety Verified — Exactly ONE approved version (${winningApprovedVersion.title}) active in Atlas, all ${supersededVersionsAtlas.length} other versions superseded.`);
 
     // Invariant Check 7: Topic Lifecycle & History Preservation Verified
     const paxosInAtlas = await Topic.findById(paxosId);
@@ -383,11 +395,23 @@ async function runLiveVerification() {
       }
     }
 
-    // Invariant Check 8: Subject.topicsCount reflects ONLY active syllabus topics
-    const actualActiveCount = await Topic.countDocuments({ subjectId, userId: userA._id, isActiveInSyllabus: true });
+    // Invariant Check 8: Subject.topicsCount reflects ONLY active syllabus topics and active topic set matches winning syllabus
+    const activeTopicsAtlas = await Topic.find({ subjectId, userId: userA._id, isActiveInSyllabus: true });
+    const actualActiveCount = activeTopicsAtlas.length;
     if (subjectAfterConcurrency.topicsCount !== actualActiveCount) {
       throw new Error(`Subject.topicsCount (${subjectAfterConcurrency.topicsCount}) does not match actual active topics count (${actualActiveCount})`);
     }
+
+    const expectedActiveTitles = winningApprovedVersion.sections
+      .flatMap((s) => s.topics)
+      .map((t) => t.title.trim().toLowerCase());
+
+    for (const activeTopic of activeTopicsAtlas) {
+      if (!expectedActiveTitles.includes(activeTopic.normalizedTitle)) {
+        throw new Error(`Topic '${activeTopic.title}' is marked active but not present in winning approved syllabus!`);
+      }
+    }
+
     console.log(`✓ Invariant 7: Topic Lifecycle & Learning History Verified — Stable ID preserved (${vectorClockId}), historical learning data intact, and Subject.topicsCount (${subjectAfterConcurrency.topicsCount}) strictly matches active topics.`);
 
     // 8. Create Chat & Messages & User Annotations via API
