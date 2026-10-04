@@ -28,10 +28,10 @@ This log is the permanent chronological engineering journal for the LearnForge p
 5. **Knowledge REST APIs (`server/src/controllers/knowledgeController.js` & `server/src/routes/knowledgeRoutes.js`)**:
    - Mounted `GET /api/v1/topics/:topicId/concepts`, `GET /api/v1/concepts/:conceptId`, `GET /api/v1/topics/:topicId/learning-events`, and hardened `POST /api/v1/topics/:topicId/extract-knowledge` validating server-loaded persisted Message documents.
 6. **Testing & Verification**:
-   - Added 28 automated unit/integration tests in `server/tests/knowledgeEngine.test.js` (server total: 158 tests passing 100%).
+   - Added 31 automated unit/integration tests in `server/tests/knowledgeEngine.test.js` (server total: 161 tests passing 100%).
    - All 46 client tests passing (client total: 46 tests passing 100%).
-   - Total Monorepo Automated Tests: 204 / 204 passing (100%).
-   - Live integration script `verify_phase06_live.js` fully passed all 19 fail-closed verification gates (MongoDB Atlas, Express API, and real application AI extraction with live Groq API `openai/gpt-oss-120b`).
+   - Total Monorepo Automated Tests: 207 / 207 passing (100%).
+   - Live integration script `verify_phase06_live.js` fully passed all verification gates (MongoDB Atlas, Express API, real application AI extraction with live Groq API `openai/gpt-oss-120b`, hard >= 3 multi-event threshold, concurrent idempotency determinism, and correction recovery with misconception payloads).
    - Phase boundary verified: 0 `NoteDocument` / `NoteVersion` created.
 
 ---

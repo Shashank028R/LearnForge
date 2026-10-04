@@ -251,17 +251,19 @@ async function runLiveVerification() {
       sourceMessageId: multiAssistantMsg.id,
     });
 
-    console.log(`✓ Multi-event exchange generated ${multiEvents.length} LearningEvent(s) from single message exchange`);
-    if (multiEvents.length < 2) {
-      console.log(`  (Exchange generated ${multiEvents.length} events; verifying multi-event idempotency on all generated events)`);
+    if (multiEvents.length < 3) {
+      throw new Error(
+        `FAIL-CLOSED: Expected at least 3 LearningEvents from one exchange, received ${multiEvents.length}`
+      );
     }
+    console.log(`✓ FAIL-CLOSED GATE PASSED: Multi-event exchange generated ${multiEvents.length} LearningEvents (>= 3 required)`);
 
     // Capture exact state before re-extraction
     const totalEventsBeforeReprocess = await LearningEvent.countDocuments({ userId: testUser._id });
     const totalConceptsBeforeReprocess = await Concept.countDocuments({ userId: testUser._id });
     const preReprocessConceptDoc = await Concept.findOne({ userId: testUser._id, topicId: topic._id });
 
-    // Re-process the identical exchange on manual extraction endpoint
+    // Re-process the identical exchange on manual extraction endpoint (Serial Idempotency Check)
     const reprocessRes = await fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
       method: 'POST',
       headers: authHeaders,
@@ -297,7 +299,50 @@ async function runLiveVerification() {
     if (postReprocessConceptDoc?.confidenceScore !== preReprocessConceptDoc?.confidenceScore) {
       throw new Error('FAIL-CLOSED: Concept confidence score mutated during duplicate re-processing');
     }
-    console.log(`✓ End-to-end multi-event idempotency verified: exact event count (${totalEventsAfterReprocess}) and concept score preserved`);
+    console.log(`✓ End-to-end serial multi-event idempotency verified: exact event count (${totalEventsAfterReprocess}) and concept score preserved`);
+
+    // Concurrent duplicate extraction verification
+    console.log('  Testing concurrent identical extraction requests...');
+    const [concurrentRes1, concurrentRes2] = await Promise.all([
+      fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          chatId: multiChat.id,
+          userMessageId: multiUserMsg.id,
+          assistantMessageId: multiAssistantMsg.id,
+        }),
+      }),
+      fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          chatId: multiChat.id,
+          userMessageId: multiUserMsg.id,
+          assistantMessageId: multiAssistantMsg.id,
+        }),
+      }),
+    ]);
+
+    if (concurrentRes1.status !== 200 || concurrentRes2.status !== 200) {
+      throw new Error(
+        `FAIL-CLOSED: Concurrent extraction requests failed with HTTP statuses ${concurrentRes1.status} and ${concurrentRes2.status}`
+      );
+    }
+    const concurrentData1 = await concurrentRes1.json();
+    const concurrentData2 = await concurrentRes2.json();
+
+    if (!concurrentData1.data?.duplicate || !concurrentData2.data?.duplicate) {
+      throw new Error('FAIL-CLOSED: Expected both concurrent repeat extractions to resolve as duplicates');
+    }
+
+    const totalEventsAfterConcurrent = await LearningEvent.countDocuments({ userId: testUser._id });
+    if (totalEventsAfterConcurrent !== totalEventsAfterReprocess) {
+      throw new Error(
+        `FAIL-CLOSED: Concurrent extraction created duplicate LearningEvents: ${totalEventsAfterReprocess} -> ${totalEventsAfterConcurrent}`
+      );
+    }
+    console.log('✓ Concurrent idempotency verified: 0 duplicate events, 0 E11000 leaks, all resolved deterministically');
 
     // 8. Assertive Misconception Live Verification
     console.log('\n[8/14] Asserting Misconception Detection & Transition to NEEDS_REVIEW (Fail-Closed)...');
@@ -589,6 +634,7 @@ async function runLiveVerification() {
     const liveGroq = new GroqProvider({ apiKey: groqKey, model: expectedModel });
     const directRes = await liveGroq.generate({
       task: AI_TASK_TYPES.KNOWLEDGE_EVENT_EXTRACTION,
+      maxTokens: 500,
       messages: [
         {
           role: 'user',

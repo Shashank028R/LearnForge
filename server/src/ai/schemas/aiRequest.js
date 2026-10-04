@@ -59,7 +59,7 @@ export function validateAndNormalizeAIRequest(rawRequest = {}) {
         }
       : null,
     temperature: typeof rawRequest.temperature === 'number' ? Math.max(0, Math.min(2, rawRequest.temperature)) : 0.7,
-    maxTokens: typeof rawRequest.maxTokens === 'number' ? Math.max(1, Math.min(8192, rawRequest.maxTokens)) : 800,
+    maxTokens: typeof rawRequest.maxTokens === 'number' ? Math.max(1, Math.min(8192, rawRequest.maxTokens)) : 3000,
     timeoutMs: typeof rawRequest.timeoutMs === 'number' ? rawRequest.timeoutMs : 30000,
     metadata: rawRequest.metadata && typeof rawRequest.metadata === 'object' ? rawRequest.metadata : {},
     requestId: String(rawRequest.requestId || `ai_req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),

@@ -40,7 +40,7 @@ export class GroqProvider extends BaseProvider {
         model: modelName,
         messages,
         temperature: normalizedRequest.temperature,
-        max_tokens: normalizedRequest.maxTokens,
+        max_tokens: Math.min(normalizedRequest.maxTokens || 800, 800),
       });
 
       const latencyMs = Date.now() - startTime;

@@ -44,7 +44,7 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
           syllabusContext,
           topicContext,
           temperature: 0.1,
-          maxTokens: 1500,
+          maxTokens: 800,
         });
       }
     } catch (err) {
@@ -190,40 +190,59 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
 
       const evidenceText = (ev.evidenceText || ev.conceptName || 'Chat evidence statement').trim().slice(0, 1000);
 
-      const hasMisconception = Boolean(
-        (ev.misconception && (ev.misconception.hasMisconception || ev.misconception.misconceptionText)) ||
-        ev.eventType === 'misconception_detected' ||
-        ev.eventType === 'concept_misunderstood' ||
-        ev.suggestedStatus === 'NEEDS_REVIEW' ||
-        /misconception|misunderstood|incorrect|confuse|mistake|firmly believe/i.test(evidenceText)
-      );
+      // Authoritative Classification Order:
+      // 1. Explicit correction
+      // 2. Explicit conflict
+      // 3. Explicit misconception
+      // 4. Normal learning event
 
-      const isCorrection =
-        !hasMisconception &&
-        (ev.eventType === 'concept_corrected' ||
-          ev.classificationOutcome === 'CORRECTION' ||
-          /understand the correction|correcting my previous|correction for|now understand that|now see the difference/i.test(evidenceText));
+      const isExplicitCorrection =
+        ev.eventType === 'concept_corrected' ||
+        ev.classificationOutcome === 'CORRECTION' ||
+        /understand the correction|correcting my previous|correction for|now understand that|now see the difference/i.test(evidenceText);
+
+      const isExplicitConflict =
+        !isExplicitCorrection &&
+        (ev.eventType === 'concept_conflict' || ev.classificationOutcome === 'CONFLICT');
+
+      const isExplicitMisconception =
+        !isExplicitCorrection &&
+        !isExplicitConflict &&
+        (ev.eventType === 'misconception_detected' ||
+          ev.eventType === 'concept_misunderstood' ||
+          ev.suggestedStatus === 'NEEDS_REVIEW' ||
+          (Boolean(ev.misconception?.hasMisconception) && !isExplicitCorrection) ||
+          /misconception|misunderstood|incorrect|confuse|mistake|firmly believe/i.test(evidenceText));
 
       let eventType = validEventTypes.includes(ev.eventType) ? ev.eventType : 'concept_explained';
-      if (hasMisconception && eventType !== 'concept_misunderstood' && eventType !== 'misconception_detected') {
-        eventType = 'misconception_detected';
-      } else if (isCorrection) {
-        eventType = 'concept_corrected';
-      }
-
       let classificationOutcome = validOutcomes.includes(ev.classificationOutcome) ? ev.classificationOutcome : 'EXISTING';
-      if (isCorrection) {
+
+      if (isExplicitCorrection) {
+        eventType = 'concept_corrected';
         classificationOutcome = 'CORRECTION';
+      } else if (isExplicitConflict) {
+        eventType = 'concept_conflict';
+        classificationOutcome = 'CONFLICT';
+      } else if (isExplicitMisconception) {
+        eventType = 'misconception_detected';
       }
 
-      const misconceptionText = (ev.misconception?.misconceptionText || (hasMisconception ? ev.evidenceText : '')).trim().slice(0, 500);
-      const misconception = hasMisconception
-        ? {
-            misconceptionText: misconceptionText || 'Conceptual misunderstanding detected in conversation',
-            correctionText: (ev.misconception?.correctionText || '').trim().slice(0, 500),
-            severity: ['low', 'medium', 'high'].includes(ev.misconception?.severity) ? ev.misconception.severity : 'medium',
-          }
-        : { misconceptionText: '', correctionText: '', severity: null };
+      const misconceptionText = (ev.misconception?.misconceptionText || (isExplicitMisconception ? ev.evidenceText : '')).trim().slice(0, 500);
+      const correctionText = (ev.misconception?.correctionText || '').trim().slice(0, 500);
+      const severity = ['low', 'medium', 'high'].includes(ev.misconception?.severity)
+        ? ev.misconception.severity
+        : isExplicitMisconception
+        ? 'medium'
+        : null;
+
+      const misconception =
+        isExplicitMisconception || isExplicitCorrection || Boolean(misconceptionText) || Boolean(correctionText)
+          ? {
+              misconceptionText,
+              correctionText,
+              severity,
+            }
+          : { misconceptionText: '', correctionText: '', severity: null };
 
       normalized.push({
         conceptName,
@@ -231,7 +250,7 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
         eventType,
         classificationOutcome,
         evidenceText,
-        suggestedStatus: ev.suggestedStatus || null,
+        suggestedStatus: isExplicitCorrection ? 'LEARNING' : isExplicitMisconception ? 'NEEDS_REVIEW' : ev.suggestedStatus || null,
         confidenceDelta: typeof ev.confidenceDelta === 'number' ? Math.max(0, Math.min(30, ev.confidenceDelta)) : 15,
         misconception,
       });

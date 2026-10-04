@@ -43,8 +43,8 @@ The following boundaries were strictly observed:
    - Classifies relationships: `NEW`, `EXISTING`, `DUPLICATE`, `COMPLEMENTARY`, `CORRECTION`, `CONFLICT`.
 3. **`LearningStateMachine` (`state/learningStateMachine.js`)**:
    - Governs deterministic, bounded state transitions with explicit precedence:
-     1. **Misconception Precedence**: `misconception_detected` / `concept_misunderstood` / active misconceptions evaluate first, setting `NEEDS_REVIEW` with deterministic penalties (-15 to -30) and preserving `NEEDS_REVIEW` until an explicit `concept_corrected` / `CORRECTION` event occurs.
-     2. **Correction Precedence**: Valid `concept_corrected` / `CORRECTION` recovers from `NEEDS_REVIEW` to `LEARNING` (or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`).
+     1. **Explicit Correction Precedence**: Valid `concept_corrected` / `CORRECTION` classification evaluates first, recovering from `NEEDS_REVIEW` to `LEARNING` (or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`) and resolving active misconceptions. Correction events may contain a misconception payload describing the prior misconception being corrected without re-triggering `NEEDS_REVIEW`.
+     2. **Explicit Conflict / Misconception**: `concept_conflict` / `CONFLICT` or `misconception_detected` / `concept_misunderstood` sets `NEEDS_REVIEW` with deterministic penalties (-15 to -30) and preserves `NEEDS_REVIEW` until an explicit correction occurs.
      3. **Normal Progression**:
         - `NOT_STARTED` → `INTRODUCED` on first evidence encounter (`evidenceCount = 1`, score 25).
         - `INTRODUCED` → `LEARNING` when `evidenceCount >= 2` and `confidenceScore >= 40`.

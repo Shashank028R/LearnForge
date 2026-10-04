@@ -73,6 +73,11 @@ When candidate concepts are extracted:
 | `STRONG` | Mastery demonstrated across multiple observations | Misconception or confusion → `NEEDS_REVIEW` |
 | `NEEDS_REVIEW` | Misconception or conflict detected | Valid correction (`concept_corrected`) → `LEARNING` (or `UNDERSTOOD` if `E >= 3` and score ≥ 70) |
 
+### State Transition Precedence Hierarchy
+1. **Explicit Correction Precedence (`concept_corrected`, `CORRECTION`)**: Evaluated first. Recovers concept state from `NEEDS_REVIEW` to `LEARNING` (+15 points, or `UNDERSTOOD` if `evidenceCount >= 3` and `confidenceScore >= 70`) and marks existing active misconceptions as resolved. Note: A valid correction payload may describe the prior misconception being corrected without re-flagging the concept as a new active misconception.
+2. **Explicit Conflict / Misconception (`concept_conflict`, `CONFLICT`, `misconception_detected`, `concept_misunderstood`)**: Evaluated second. Transitions concept to `NEEDS_REVIEW` with deterministic score penalties (-15 to -30) and appends active misconception details.
+3. **Normal Progression (`concept_introduced`, `concept_explained`, `concept_recalled`, `concept_reinforced`)**: Governed by evidence count and confidence score thresholds.
+
 ---
 
 ## 6. Bounded Confidence Model & Ledger Immutability

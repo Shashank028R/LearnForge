@@ -194,28 +194,26 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       },
     }));
 
-    vi.spyOn(Concept, 'find').mockImplementation((query) => ({
-      session: async () => {
+    vi.spyOn(Concept, 'find').mockImplementation((query) => {
+      const getResults = () => {
         const results = [];
         for (const c of conceptsStore.values()) {
-          if (c.userId.toString() === query.userId?.toString() && c.topicId.toString() === query.topicId?.toString()) {
-            results.push(c);
-          }
+          if (query.userId && c.userId.toString() !== query.userId.toString()) continue;
+          if (query.topicId && c.topicId.toString() !== query.topicId.toString()) continue;
+          if (query.normalizedName && c.normalizedName !== query.normalizedName) continue;
+          results.push(c);
         }
         return results;
-      },
-      sort: () => ({
-        lean: async () => {
-          const results = [];
-          for (const c of conceptsStore.values()) {
-            if (c.userId.toString() === query.userId?.toString() && c.topicId.toString() === query.topicId?.toString()) {
-              results.push(c);
-            }
-          }
-          return results;
-        },
-      }),
-    }));
+      };
+      const ret = {
+        session: async () => getResults(),
+        sort: () => ({
+          lean: async () => getResults(),
+        }),
+        then: (resolve, reject) => Promise.resolve(getResults()).then(resolve, reject),
+      };
+      return ret;
+    });
 
     vi.spyOn(LearningEvent, 'findOne').mockImplementation(async (query) => {
       for (const ev of learningEventsStore.values()) {
@@ -236,43 +234,97 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       return null;
     });
 
-    vi.spyOn(LearningEvent, 'find').mockImplementation((query) => ({
-      sort: () => ({
-        limit: () => ({
-          lean: async () => {
-            const results = [];
-            for (const ev of learningEventsStore.values()) {
-              if (ev.userId.toString() === query.userId?.toString()) {
-                if (!query.topicId || ev.topicId.toString() === query.topicId.toString()) {
-                  if (!query.conceptId || ev.conceptId?.toString() === query.conceptId.toString()) {
-                    results.push(ev);
-                  }
-                }
-              }
-            }
-            return results;
-          },
+    vi.spyOn(LearningEvent, 'find').mockImplementation((query) => {
+      const getResults = () => {
+        const results = [];
+        for (const ev of learningEventsStore.values()) {
+          if (query.userId && ev.userId.toString() !== query.userId.toString()) continue;
+          if (query.topicId && ev.topicId && ev.topicId.toString() !== query.topicId.toString()) continue;
+          if (query.conceptId && ev.conceptId && ev.conceptId.toString() !== query.conceptId.toString()) continue;
+          if (query.sourceMessageId && ev.sourceMessageId && ev.sourceMessageId.toString() !== query.sourceMessageId.toString()) continue;
+          results.push(ev);
+        }
+        return results;
+      };
+      const ret = {
+        session: () => ret,
+        sort: () => ({
+          limit: () => ({
+            lean: async () => getResults(),
+          }),
         }),
-      }),
-    }));
+        then: (resolve, reject) => Promise.resolve(getResults()).then(resolve, reject),
+      };
+      return ret;
+    });
 
-    vi.spyOn(mongoose, 'startSession').mockImplementation(async () => ({
-      startTransaction: vi.fn(),
-      commitTransaction: vi.fn(),
-      abortTransaction: vi.fn(),
-      endSession: vi.fn(),
-    }));
+    vi.spyOn(Concept, 'findById').mockImplementation(async (id) => conceptsStore.get(id?.toString()) || null);
+    vi.spyOn(Concept, 'countDocuments').mockImplementation(async (query) => {
+      let count = 0;
+      for (const c of conceptsStore.values()) {
+        if (query.userId && c.userId.toString() !== query.userId.toString()) continue;
+        if (query.topicId && c.topicId?.toString() !== query.topicId?.toString()) continue;
+        count++;
+      }
+      return count;
+    });
 
-    vi.spyOn(Concept.prototype, 'save').mockImplementation(async function () {
-      conceptsStore.set(this._id.toString(), this);
+    vi.spyOn(LearningEvent, 'countDocuments').mockImplementation(async (query) => {
+      let count = 0;
+      for (const ev of learningEventsStore.values()) {
+        if (query.userId && ev.userId.toString() !== query.userId.toString()) continue;
+        if (query.sourceMessageId && ev.sourceMessageId?.toString() !== query.sourceMessageId?.toString()) continue;
+        if (query.topicId && ev.topicId?.toString() !== query.topicId?.toString()) continue;
+        count++;
+      }
+      return count;
+    });
+
+    vi.spyOn(mongoose, 'startSession').mockImplementation(async () => {
+      const sessionRollbacks = [];
+      return {
+        startTransaction: vi.fn(),
+        commitTransaction: vi.fn(),
+        abortTransaction: vi.fn().mockImplementation(async () => {
+          while (sessionRollbacks.length > 0) {
+            const rollback = sessionRollbacks.pop();
+            rollback();
+          }
+        }),
+        endSession: vi.fn(),
+        _trackWrite: (rollbackFn) => sessionRollbacks.push(rollbackFn),
+      };
+    });
+
+    vi.spyOn(Concept.prototype, 'save').mockImplementation(async function (options) {
+      const key = this._id.toString();
+      const existed = conceptsStore.has(key);
+      const prev = conceptsStore.get(key);
+      conceptsStore.set(key, this);
+      if (options?.session?._trackWrite) {
+        options.session._trackWrite(() => {
+          if (existed) conceptsStore.set(key, prev);
+          else conceptsStore.delete(key);
+        });
+      }
       return this;
     });
 
-    vi.spyOn(LearningEvent.prototype, 'save').mockImplementation(async function () {
+    vi.spyOn(LearningEvent.prototype, 'save').mockImplementation(async function (options) {
       if (!this.isNew && this.isNew !== undefined) {
         throw new Error('LearningEvent is an immutable append-only audit ledger and cannot be updated, replaced, or modified.');
       }
+      if (learningEventsStore.has(this.idempotencyKey)) {
+        const dupErr = new Error('E11000 duplicate key error collection: learningevents index: userId_1_idempotencyKey_1 dup key');
+        dupErr.code = 11000;
+        throw dupErr;
+      }
       learningEventsStore.set(this.idempotencyKey, this);
+      if (options?.session?._trackWrite) {
+        options.session._trackWrite(() => {
+          learningEventsStore.delete(this.idempotencyKey);
+        });
+      }
       return this;
     });
   });
@@ -1056,6 +1108,219 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       });
       expect(t_conflict.newStatus).toBe(LEARNING_STATES.NEEDS_REVIEW);
       expect(t_conflict.confidenceScore).toBe(75); // 95 - 20 = 75
+    });
+
+    it('P0-Regression: Correctly processes exact correction payload containing misconception details', async () => {
+      const fakeGateway = {
+        generate: vi.fn(),
+      };
+      const engine = new KnowledgeEngineService(fakeGateway);
+      const sourceMsgId = new mongoose.Types.ObjectId();
+      const chatId = new mongoose.Types.ObjectId();
+
+      // First create a concept in NEEDS_REVIEW with an active misconception
+      const concept = new Concept({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        name: 'Syntactic Grammar Analysis',
+        normalizedName: 'syntactic grammar analysis',
+        status: 'NEEDS_REVIEW',
+        confidenceScore: 20,
+        evidenceCount: 1,
+        misconceptions: [
+          {
+            misconceptionText: "Learner's previous incorrect belief",
+            correctionText: 'Initial incorrect state',
+            detectedAt: new Date(),
+            isActive: true,
+          },
+        ],
+      });
+      await concept.save();
+
+      // Exactly the specified semantic payload shape
+      const exactPayload = {
+        eventType: 'concept_corrected',
+        classificationOutcome: 'CORRECTION',
+        misconception: {
+          misconceptionText: "Learner's previous incorrect belief",
+          correctionText: 'Correct explanation',
+          severity: 'medium',
+        },
+      };
+
+      // 1. Verify EventExtractor keeps it as concept_corrected / CORRECTION without stripping misconception
+      const normalizedEvents = engine.extractor._validateAndNormalizeEvents(
+        [{ ...exactPayload, conceptName: 'Syntactic Grammar Analysis', evidenceText: 'Learner understood correction' }],
+        { title: 'Syntactic Grammar Analysis' }
+      );
+      expect(normalizedEvents[0].eventType).toBe('concept_corrected');
+      expect(normalizedEvents[0].classificationOutcome).toBe('CORRECTION');
+      expect(normalizedEvents[0].misconception.misconceptionText).toBe("Learner's previous incorrect belief");
+      expect(normalizedEvents[0].misconception.correctionText).toBe('Correct explanation');
+
+      // 2. Mock AI Gateway returning the exact payload
+      fakeGateway.generate.mockResolvedValueOnce({
+        text: JSON.stringify({
+          events: [
+            {
+              conceptName: 'Syntactic Grammar Analysis',
+              ...exactPayload,
+              evidenceText: 'I now understand that AST discards whitespace tokens.',
+            },
+          ],
+        }),
+        provider: 'groq',
+        model: 'qwen/qwen3.8-27b',
+      });
+
+      // 3. Process the correction exchange through KnowledgeEngineService
+      const res = await engine.processExchangeEvidence({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'I understand the correction now: AST removes punctuation.' },
+        assistantMessage: { content: 'Correct, AST removes redundant syntax.' },
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.learningEvents.length).toBe(1);
+      expect(res.learningEvents[0].eventType).toBe('concept_corrected');
+      expect(res.learningEvents[0].newStatus).toBe('LEARNING');
+
+      // 4. Verify Concept state: recovered from NEEDS_REVIEW, score increased, active misconceptions resolved, NO new active misconception
+      const updatedConcept = await Concept.findById(concept._id);
+      expect(updatedConcept.status).toBe('LEARNING');
+      expect(updatedConcept.confidenceScore).toBe(35); // 20 + 15
+      expect(updatedConcept.evidenceCount).toBe(2);
+
+      const activeMisconceptions = updatedConcept.misconceptions.filter((m) => m.isActive);
+      expect(activeMisconceptions.length).toBe(0);
+      expect(updatedConcept.misconceptions.every((m) => m.isActive === false)).toBe(true);
+      expect(updatedConcept.misconceptions.every((m) => m.resolvedAt !== null)).toBe(true);
+    });
+
+    it('P1-ConcurrentIdempotency: Resolves concurrent identical extraction attempts deterministically without E11000 leakage', async () => {
+      const fakeGateway = {
+        generate: vi.fn(),
+      };
+      const engine = new KnowledgeEngineService(fakeGateway);
+      const sourceMsgId = new mongoose.Types.ObjectId();
+      const chatId = new mongoose.Types.ObjectId();
+
+      fakeGateway.generate.mockResolvedValue({
+        text: JSON.stringify({
+          events: [
+            {
+              conceptName: 'Concurrent Extraction Target',
+              eventType: 'concept_introduced',
+              classificationOutcome: 'NEW',
+              evidenceText: 'Concurrent test evidence statement',
+            },
+          ],
+        }),
+        provider: 'groq',
+        model: 'qwen/qwen3.8-27b',
+      });
+
+      // Issue TWO concurrent requests for the exact same exchange
+      const reqArgs = {
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'Concurrent message prompt' },
+        assistantMessage: { content: 'Concurrent message response' },
+      };
+
+      const [res1, res2] = await Promise.all([
+        engine.processExchangeEvidence(reqArgs),
+        engine.processExchangeEvidence(reqArgs),
+      ]);
+
+      // Exactly one request must succeed with mutation, the other must resolve safely as duplicate
+      const successCount = [res1, res2].filter((r) => r.success === true).length;
+      const duplicateCount = [res1, res2].filter((r) => r.duplicate === true).length;
+
+      expect(successCount).toBe(1);
+      expect(duplicateCount).toBe(1);
+
+      // Verify no duplicate LearningEvents created
+      const eventsInDb = await LearningEvent.find({
+        userId: userA._id,
+        sourceMessageId: sourceMsgId,
+      });
+      expect(eventsInDb.length).toBe(1);
+
+      // Verify no duplicate concepts created
+      const conceptsInDb = await Concept.find({
+        userId: userA._id,
+        topicId: topicA._id,
+        normalizedName: 'concurrent extraction target',
+      });
+      expect(conceptsInDb.length).toBe(1);
+      expect(conceptsInDb[0].confidenceScore).toBe(25); // not doubled
+    });
+
+    it('P1-10Events: Enforces exchange-level idempotency on 10 extracted events', async () => {
+      const fakeGateway = {
+        generate: vi.fn(),
+      };
+      const engine = new KnowledgeEngineService(fakeGateway);
+      const sourceMsgId = new mongoose.Types.ObjectId();
+      const chatId = new mongoose.Types.ObjectId();
+
+      const tenEvents = Array.from({ length: 10 }, (_, i) => ({
+        conceptName: `10-Event Concept ${i + 1}`,
+        eventType: 'concept_introduced',
+        classificationOutcome: 'NEW',
+        evidenceText: `Evidence text for concept ${i + 1}`,
+      }));
+
+      fakeGateway.generate.mockResolvedValueOnce({
+        text: JSON.stringify({ events: tenEvents }),
+        provider: 'groq',
+        model: 'qwen/qwen3.8-27b',
+      });
+
+      const res1 = await engine.processExchangeEvidence({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'Explain 10 concepts.' },
+        assistantMessage: { content: 'Here are 10 concepts.' },
+      });
+
+      expect(res1.success).toBe(true);
+      expect(res1.learningEvents.length).toBe(10);
+
+      // Second attempt must return duplicate
+      const res2 = await engine.processExchangeEvidence({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'Explain 10 concepts.' },
+        assistantMessage: { content: 'Here are 10 concepts.' },
+      });
+
+      expect(res2.skipped).toBe(true);
+      expect(res2.duplicate).toBe(true);
+      expect(res2.reason).toBe('already_processed');
+
+      // Total events in DB remain exactly 10
+      const totalEvents = await LearningEvent.countDocuments({
+        userId: userA._id,
+        sourceMessageId: sourceMsgId,
+      });
+      expect(totalEvents).toBe(10);
     });
   });
 });

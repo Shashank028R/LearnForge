@@ -67,6 +67,6 @@ export const aiMessageRateLimiter = rateLimit({
   max: config.isTest ? 500 : 30,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => (config.isTest || process.env.NODE_ENV === 'development') && req.headers['x-bypass-rate-limit'] === 'test-bypass',
+  skip: (req) => (config.isTest || config.isDevelopment) && req.headers['x-bypass-rate-limit'] === 'test-bypass',
   handler: createRateLimitHandler('AI_RATE_LIMITED', 'Too many AI requests. Please slow down and try again in a moment.'),
 });

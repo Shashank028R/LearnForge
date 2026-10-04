@@ -71,6 +71,16 @@ export class BaseProvider {
       });
     }
 
+    // Quota exhausted / billing failure (non-retryable)
+    if (msg.includes('no credits remaining') || msg.includes('insufficient_quota') || msg.includes('billing')) {
+      return new AIRateLimitedError(`Quota exhausted for provider ${this.name}: ${msg}`, {
+        provider: this.name,
+        requestId,
+        isRetryable: false,
+        cause: error,
+      });
+    }
+
     // Rate limits (429, RESOURCE_EXHAUSTED)
     if (status === 429 || code === 'rate_limit_exceeded' || msg.includes('rate limit') || msg.includes('RESOURCE_EXHAUSTED')) {
       return new AIRateLimitedError(`Rate limit exceeded for provider ${this.name}: ${msg}`, {
@@ -89,8 +99,8 @@ export class BaseProvider {
       });
     }
 
-    // Bad requests / schema errors (400)
-    if (status === 400 || msg.includes('invalid_request') || msg.includes('bad request')) {
+    // Bad requests / schema errors / model unavailable (400, 404)
+    if (status === 400 || status === 404 || msg.includes('invalid_request') || msg.includes('bad request') || msg.includes('no longer available') || msg.includes('not found')) {
       return new AIInvalidRequestError(`Invalid request for provider ${this.name}: ${msg}`, {
         provider: this.name,
         requestId,

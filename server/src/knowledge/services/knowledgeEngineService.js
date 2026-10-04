@@ -164,6 +164,34 @@ export class KnowledgeEngineService {
       try {
         await session.abortTransaction();
       } catch (_) {}
+
+      // Handle concurrent duplicate insertion race gracefully:
+      // If two identical extraction requests arrive concurrently for the same exchange,
+      // one commits and the other hits MongoDB unique key constraint E11000.
+      const isDuplicateKeyError =
+        err.code === 11000 ||
+        err.codeName === 'DuplicateKey' ||
+        /E11000|duplicate key/i.test(err.message || '');
+
+      if (isDuplicateKeyError) {
+        const confirmedEvent = await LearningEvent.findOne({
+          userId,
+          $or: [
+            { idempotencyKey },
+            { idempotencyKey: `${idempotencyKey}:e0` },
+            { sourceMessageId, 'metadata.extractionVersion': this.version },
+          ],
+        });
+        if (confirmedEvent) {
+          return {
+            skipped: true,
+            duplicate: true,
+            reason: 'already_processed',
+            idempotencyKey,
+          };
+        }
+      }
+
       throw err;
     } finally {
       await session.endSession();
@@ -209,15 +237,24 @@ export class KnowledgeEngineService {
         eventData,
       });
 
-      const isMisconception =
-        eventData.eventType === 'misconception_detected' ||
-        eventData.eventType === 'concept_misunderstood' ||
-        transition.newStatus === 'NEEDS_REVIEW' ||
-        Boolean(eventData.misconception?.misconceptionText);
-
+      // Explicit Classification Order:
+      // 1. Explicit correction
+      // 2. Explicit conflict
+      // 3. Explicit misconception
+      // 4. Normal learning event
       const isCorrection =
-        !isMisconception &&
-        (eventData.classificationOutcome === 'CORRECTION' || eventData.eventType === 'concept_corrected');
+        eventData.eventType === 'concept_corrected' || eventData.classificationOutcome === 'CORRECTION';
+
+      const isConflict =
+        !isCorrection &&
+        (eventData.eventType === 'concept_conflict' || eventData.classificationOutcome === 'CONFLICT');
+
+      const isMisconception =
+        !isCorrection &&
+        !isConflict &&
+        (eventData.eventType === 'misconception_detected' ||
+          eventData.eventType === 'concept_misunderstood' ||
+          transition.newStatus === 'NEEDS_REVIEW');
 
       const effectiveMisconceptionText =
         eventData.misconception?.misconceptionText ||
@@ -247,6 +284,16 @@ export class KnowledgeEngineService {
                     detectedAt: new Date(),
                     resolvedAt: isCorrection ? new Date() : null,
                     isActive: !isCorrection,
+                  },
+                ]
+              : isCorrection && effectiveMisconceptionText
+              ? [
+                  {
+                    misconceptionText: effectiveMisconceptionText,
+                    correctionText: eventData.misconception?.correctionText || '',
+                    detectedAt: new Date(),
+                    resolvedAt: new Date(),
+                    isActive: false,
                   },
                 ]
               : [],
