@@ -24,7 +24,7 @@ The AI operates as a strict instructor prioritizing **demonstrated conceptual ma
 - **Syllabus & Knowledge Integration**: Grounding study sessions in approved `SyllabusVersion` and canonical `Concept` entities (including active misconceptions).
 - **Curriculum Pinning**: Sessions permanently pin their approved `SyllabusVersion` at creation time.
 - **AI Gateway Integration**: Provider-agnostic task routing for `STUDY_QUESTION_GENERATION`, `STUDY_ANSWER_EVALUATION`, and `STUDY_REMEDIATION` with strict schema validation and deterministic rule-based fallbacks.
-- **Deterministic Concurrency & Idempotency**: Multi-document transaction boundaries, optimistic sequence/version locking, crash-safe evaluation leases, and duplicate submission protections.
+- **Fenced Concurrency & Idempotency**: Multi-document transaction boundaries, optimistic sequence/version locking, authoritative `operationId` lease fencing, single-slot evaluation state tracking, and intra-session historical idempotency.
 - **Restrained Frontend Workspace**: Calm, high-density study canvas with question view, answer composer, structured evaluation feedback, remediation panel, and WCAG AA keyboard ergonomics.
 - **Fail-Closed Verification**: Automated unit/integration test suites and live verification against MongoDB Atlas replica set transactions and live AI inference.
 
@@ -97,20 +97,27 @@ File: `server/src/models/StudySession.js`
 ```javascript
 import mongoose from 'mongoose';
 
+/**
+ * StudyTurn Schema
+ * Embedded subdocument within StudySession.turns (NOT a standalone registered Mongoose model).
+ * Tracks individual initial or follow-up question/answer attempts.
+ */
 const studyTurnSchema = new mongoose.Schema(
   {
     turnIndex: { type: Number, required: true, min: 0 },
-    clientTurnId: { type: String, required: true }, // Idempotency key from client
+    clientTurnId: { type: String, required: true }, // Client-generated idempotency key
     attemptType: {
       type: String,
       enum: ['INITIAL', 'FOLLOW_UP'],
       required: true,
       default: 'INITIAL',
     },
+    // Note: StudyTurn is an embedded subdocument.
+    // parentTurnId references another StudySession.turns._id within the SAME StudySession document.
+    // Explicitly contains NO `ref: 'StudyTurn'` because StudyTurn is not a registered Mongoose model.
     parentTurnId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'StudyTurn',
-      default: null, // null for INITIAL attempt, references parent turn for FOLLOW_UP
+      default: null,
     },
     question: {
       questionId: { type: String, required: true },
@@ -171,6 +178,11 @@ const studyTurnSchema = new mongoose.Schema(
   { _id: true }
 );
 
+/**
+ * EvaluationState Schema (Single-Slot Active Operation Tracker)
+ * Tracks ONLY the currently active in-flight submission operation.
+ * Completed historical idempotency is resolved from StudySession.turns.
+ */
 const evaluationStateSchema = new mongoose.Schema(
   {
     status: {
@@ -178,7 +190,7 @@ const evaluationStateSchema = new mongoose.Schema(
       enum: ['IDLE', 'RECEIVED', 'EVALUATING', 'COMPLETED', 'FAILED'],
       default: 'IDLE',
     },
-    operationId: { type: String, default: null },
+    operationId: { type: String, default: null }, // Authoritative fencing token for the active evaluation lease
     clientTurnId: { type: String, default: null },
     questionId: { type: String, default: null },
     answerFingerprint: { type: String, default: null }, // SHA-256 of trimmed answer
@@ -193,6 +205,10 @@ const evaluationStateSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/**
+ * StudySession Schema
+ * Root domain aggregate for topic-scoped strict study sessions.
+ */
 const studySessionSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -224,7 +240,7 @@ const studySessionSchema = new mongoose.Schema(
       default: null,
     },
     sessionVersion: { type: Number, default: 1, min: 1 }, // Optimistic concurrency lock
-    sequenceCounter: { type: Number, default: 0, min: 0 }, // Monotonic turn index
+    sequenceCounter: { type: Number, default: 0, min: 0 }, // Monotonic turn sequence index
     activeQuestion: { type: studyTurnSchema.tree.question, default: null },
     evaluationState: { type: evaluationStateSchema, default: () => ({ status: 'IDLE' }) },
     turns: [studyTurnSchema],
@@ -247,12 +263,16 @@ const studySessionSchema = new mongoose.Schema(
 studySessionSchema.index({ userId: 1, topicId: 1, status: 1 });
 studySessionSchema.index({ userId: 1, status: 1, lastActivityAt: -1 });
 studySessionSchema.index({ userId: 1, subjectId: 1, lastActivityAt: -1 });
+
+// Note: 'turns.clientTurnId' index is a multikey index used strictly for query acceleration.
+// Uniqueness of clientTurnId is session-scoped and strictly enforced through application-level
+// conditional persistence and idempotency validation logic, NOT by this MongoDB index.
 studySessionSchema.index({ 'turns.clientTurnId': 1 });
 ```
 
 ---
 
-## 5. Complete Pedagogical State Machine & Pause Invariants
+## 5. Complete Pedagogical State Machine, Failure Recovery & Pause Invariants
 
 ```
                            ┌────────────────┐
@@ -280,7 +300,12 @@ studySessionSchema.index({ 'turns.clientTurnId': 1 });
           │                │   EVALUATING   │                   │ - REMEDIATING
           │                └───────┬────────┘                   │ - RECHECKING
           │                        │                            │ (PAUSE during EVALUATING
-       [ADVANCE]                   ├────────────────────────────┤  throws HTTP 409)
+          │                        │ [CATASTROPHIC FAILURE]     │  throws HTTP 409)
+          │                        ├───────────────────────────►│ (Transitions back to
+          │                        │ (FAILED -> QUESTIONING /   │  QUESTIONING or RECHECKING)
+          │                        │  RECHECKING retry-safe)    │
+       [ADVANCE]                   │                            │
+          │                        ├────────────────────────────┤
           │                        │ [REMEDIATE / PROBE / RETRY]│
           ▼                        ▼                            │
    ┌─────────────┐          ┌─────────────┐                     │
@@ -308,11 +333,11 @@ studySessionSchema.index({ 'turns.clientTurnId': 1 });
 | State | Valid Incoming | Valid Outgoing | Database Mutation Occurring | Invalid Transition Handling |
 | :--- | :--- | :--- | :--- | :--- |
 | **`ORIENTING`** | *Creation* | `QUESTIONING` | Session initialized; topic concepts and pinned syllabus loaded; initial `activeQuestion` attached; `sessionVersion` = 1. | Rejects answers (`INVALID_STUDY_STATE`). |
-| **`QUESTIONING`** | `ORIENTING`, `ADVANCING` | `ANSWER_PENDING`, `PAUSED`, `EXITED` | Active question presented to student; waiting for initial student answer. | Duplicate question generation blocked. |
-| **`ANSWER_PENDING`** | `QUESTIONING`, `RECHECKING` | `EVALUATING` | Student answer received; `sessionVersion` incremented; `evaluationState.status` set to `EVALUATING` with 30s lease. | Duplicate submissions throw 409 `STALE_STUDY_STATE`. |
-| **`EVALUATING`** | `ANSWER_PENDING` | `ADVANCING`, `REMEDIATING`, `COMPLETED`, `EXITED` *(PAUSE NOT ALLOWED)* | AI evaluation executed; structured evaluation subdocument attached; turn appended to `turns`; metrics updated; `evaluationState.status` set to `COMPLETED`. | Pausing during evaluation returns 409 `CANNOT_PAUSE_DURING_EVALUATION`. |
+| **`QUESTIONING`** | `ORIENTING`, `ADVANCING`, `EVALUATING` *(on failure)* | `ANSWER_PENDING`, `PAUSED`, `EXITED` | Active question presented to student; waiting for initial student answer. | Duplicate question generation blocked. |
+| **`ANSWER_PENDING`** | `QUESTIONING`, `RECHECKING` | `EVALUATING` | Student answer received; `sessionVersion` incremented; `evaluationState.status` set to `EVALUATING` with 30s lease and unique `operationId`. | Duplicate submissions throw 409 `STALE_STUDY_STATE`. |
+| **`EVALUATING`** | `ANSWER_PENDING` | `ADVANCING`, `REMEDIATING`, `QUESTIONING` *(on failure)*, `RECHECKING` *(on failure)*, `COMPLETED`, `EXITED` *(PAUSE NOT ALLOWED)* | AI evaluation executed; structured evaluation subdocument attached; turn appended to `turns`; metrics updated; `evaluationState.status` set to `COMPLETED` (or `FAILED` on unrecoverable error). | Pausing during evaluation returns 409 `CANNOT_PAUSE_DURING_EVALUATION`. |
 | **`REMEDIATING`** | `EVALUATING` | `RECHECKING`, `PAUSED`, `EXITED` | Socratic remediation text and follow-up prompt generated; attached to turn remediation subdocument. | Advancing without remediation blocked. |
-| **`RECHECKING`** | `REMEDIATING` | `ANSWER_PENDING`, `PAUSED`, `EXITED` | Follow-up question presented to student; waiting for follow-up answer attempt (`attemptType: 'FOLLOW_UP'`). | Bypassing follow-up blocked. |
+| **`RECHECKING`** | `REMEDIATING`, `EVALUATING` *(on failure)* | `ANSWER_PENDING`, `PAUSED`, `EXITED` | Follow-up question presented to student; waiting for follow-up answer attempt (`attemptType: 'FOLLOW_UP'`). | Bypassing follow-up blocked. |
 | **`ADVANCING`** | `EVALUATING` | `QUESTIONING`, `COMPLETED` | Understanding demonstrated; turn finalized; next concept query staged. | Submitting answer while advancing blocked. |
 | **`PAUSED`** | `QUESTIONING`, `RECHECKING`, `REMEDIATING` | `QUESTIONING`, `RECHECKING`, `REMEDIATING`, `EXITED` | Session frozen; `pausedFromStatus` stored; `lastActivityAt` updated; resumes to exact `pausedFromStatus`. | Submitting answers while paused throws 400. |
 | **`EXITED`** | Any non-terminal | *None (Terminal)* | Session marked closed (`status: 'EXITED'`); zero further state transitions allowed. | Post-exit mutations throw 400. |
@@ -322,21 +347,21 @@ studySessionSchema.index({ 'turns.clientTurnId': 1 });
 
 ## 6. Follow-Up Answer Persistence & Turn Model
 
-### A. Turn Separation & Hierarchy
+### A. Turn Separation & Embedded Intra-Session Hierarchy
 1. **Initial Question & Answer**:
    - `attemptType: 'INITIAL'`
    - `parentTurnId: null`
    - `turnIndex: 0`
-   - Records student's initial answer and evaluation.
-   - If evaluation is `PARTIALLY_CORRECT` or `INCORRECT`, `remediation` is populated with `remediationText` and `followUpQuestion`.
+   - Stores student's initial answer and evaluation.
+   - If evaluation indicates gaps (`PARTIALLY_CORRECT` or `INCORRECT`), `remediation` is populated with `remediationText` and `followUpQuestion`.
 2. **Follow-Up Answer & Evaluation**:
    - `attemptType: 'FOLLOW_UP'`
-   - `parentTurnId: ObjectId(turn[0]._id)`
+   - `parentTurnId: ObjectId(turns[0]._id)` (referencing the initial turn's `_id` in the **same session**)
    - `turnIndex: 1`
    - `question`: Embedded copy of the follow-up question.
    - `userAnswer`: Student's response to the Socratic follow-up probe.
    - `evaluation`: Multi-criteria evaluation of the follow-up attempt.
-   - Both turns remain **permanently recoverable** in `StudySession.turns`.
+   - **Persistence Invariant**: Both turns remain permanently preserved in `StudySession.turns`. Follow-up answers never overwrite the initial answer or evaluation.
 
 ### B. Metrics Counting Rules
 - `totalQuestionsAsked`: Incremented when an initial question or follow-up question is presented.
@@ -348,48 +373,89 @@ studySessionSchema.index({ 'turns.clientTurnId': 1 });
 
 ---
 
-## 7. Crash-Safe Evaluation, Idempotency & Concurrency Contract
+## 7. Fenced Lease Protocol, Concurrency & Idempotency Contract
 
-### A. Durable Submission & Lease Protocol
-1. **Answer Fingerprinting**: `answerFingerprint = crypto.createHash('sha256').update(answer.trim()).digest('hex')`.
-2. **Atomic Transition & Lease**:
-   ```javascript
-   const session = await StudySession.findOneAndUpdate(
-     {
-       _id: sessionId,
-       userId: userId,
-       sessionVersion: expectedSessionVersion,
-       status: { $in: ['QUESTIONING', 'RECHECKING'] },
-       'activeQuestion.questionId': questionId,
-     },
-     {
-       $set: {
-         status: 'ANSWER_PENDING',
-         'evaluationState.status': 'EVALUATING',
-         'evaluationState.operationId': uuidv4(),
-         'evaluationState.clientTurnId': clientTurnId,
-         'evaluationState.questionId': questionId,
-         'evaluationState.answerFingerprint': answerFingerprint,
-         'evaluationState.startedAt': new Date(),
-         'evaluationState.leaseExpiresAt': new Date(Date.now() + 30000), // 30s lease
-         lastActivityAt: new Date(),
+### A. Authoritative Lease Fencing & Stale Worker Protection
+To prevent an expired/lagging evaluator (Worker A) from committing its evaluation after another evaluator (Worker B) has taken over:
+
+1. **Authoritative Operation Owner (`evaluationState.operationId`)**:
+   - Every evaluation lifecycle operation creates a cryptographically random UUID v4 `operationId`.
+   - The initial submission atomically sets `evaluationState.operationId = operationId_A` and `evaluationState.leaseExpiresAt = now + 30000ms`.
+2. **Atomic Lease Recovery & Takeover**:
+   - When a lease expires (i.e., `evaluationState.leaseExpiresAt < now`), any takeover or recovery worker atomically claims the evaluation by issuing:
+     ```javascript
+     const session = await StudySession.findOneAndUpdate(
+       {
+         _id: sessionId,
+         userId: userId,
+         status: 'EVALUATING',
+         'evaluationState.leaseExpiresAt': { $lt: new Date() },
        },
-       $inc: { sessionVersion: 1 },
-     },
-     { new: true, session: dbSession }
-   );
-   ```
+       {
+         $set: {
+           'evaluationState.operationId': newOperationId, // Atomically replaces expired operationId
+           'evaluationState.startedAt': new Date(),
+           'evaluationState.leaseExpiresAt': new Date(Date.now() + 30000),
+           'evaluationState.lastError': null,
+           lastActivityAt: new Date(),
+         },
+         $inc: { sessionVersion: 1 },
+       },
+       { new: true, session: dbSession }
+     );
+     ```
+3. **Fenced Finalization Writes**:
+   - Every database write that finalizes or mutates an evaluation (`ADVANCING`, `REMEDIATING`, `FAILED`) **MUST** condition on the currently authoritative `operationId`:
+     ```javascript
+     const finalResult = await StudySession.updateOne(
+       {
+         _id: sessionId,
+         userId: userId,
+         status: 'EVALUATING',
+         'evaluationState.operationId': currentOperationId, // FENCING CONDITION
+       },
+       {
+         $set: {
+           status: nextStatus,
+           'evaluationState.status': 'COMPLETED',
+           lastActivityAt: new Date(),
+         },
+         $push: { turns: evaluatedTurn },
+         $inc: { sequenceCounter: 1, sessionVersion: 1 },
+       },
+       { session: dbSession }
+     );
+     ```
+4. **Stale Worker Race Resolution**:
+   - **Race Sequence**:
+     1. Worker A acquires lease with `operationId_A`.
+     2. Worker A experiences network delay or pause; lease expires after 30s.
+     3. Worker B detects expired lease, takes over, claims `operationId_B`, evaluates, and commits successfully.
+     4. Worker A finally returns late and attempts to commit using `operationId_A`.
+   - **Application Behavior**:
+     - Worker A's `updateOne` matches **0 documents** (`matchedCount === 0`) because `evaluationState.operationId` is no longer `operationId_A`.
+     - Worker A detects that its lease was revoked/superseded, discards its stale result, logs `STALE_EVALUATION_WORKER_DISCARDED`, and exits harmlessly without throwing an unhandled exception or mutating the session.
 
-### B. Strict Retry & Idempotency Rules
-- **Idempotent Match**: If a request arrives with `clientTurnId` matching an existing turn in `turns`:
-  - If `questionId` and `answerFingerprint` match: Return existing evaluated turn with HTTP 200 (safe retry).
-  - If `questionId` or `answerFingerprint` differs: Reject with `HTTP 409 IDEMPOTENCY_KEY_REUSE_CONFLICT`.
-- **Double-Click / Concurrent Race**:
-  - Request A matches `sessionVersion: N`, transitions state, increments `sessionVersion` to `N + 1`.
-  - Request B (with stale version $N$) matches 0 documents and fails closed with `HTTP 409 STALE_STUDY_STATE`.
-- **Crash Recovery**:
-  - If the server crashes during AI execution, `evaluationState.leaseExpiresAt` expires after 30s.
-  - When the student retries or refreshes, the backend detects expired lease and executes a deterministic fallback evaluation or retries cleanly, resetting `evaluationState`.
+### B. Single-Slot `evaluationState` Semantics & Historical Idempotency
+- **Single-Slot Semantics**: `evaluationState` represents **ONLY** the active in-flight submission. It is not an unbounded array and does not store historical turns.
+- **Historical Turn Idempotency**:
+  - Completed turn history is resolved by querying `StudySession.turns.find(t => t.clientTurnId === clientTurnId)`.
+  - **Same `clientTurnId` + matching payload (`questionId` + `answerFingerprint`)**: Returns the already persisted turn document with `HTTP 200` (safe replay/retry).
+  - **Same `clientTurnId` + conflicting payload**: Rejects immediately with `HTTP 409 IDEMPOTENCY_KEY_REUSE_CONFLICT`.
+  - **Replay after later turns exist**: If a client retransmits `clientTurnId_0` when the session is already at `turnIndex: 3`, the session inspects `turns`, identifies the matching turn, and returns it with `HTTP 200` without rewinding session state.
+- **Multikey Indexing**: The index on `turns.clientTurnId` is for query lookup acceleration. Uniqueness is session-scoped and guaranteed by application-level conditional queries within MongoDB transactions.
+
+### C. Failed Evaluation Session Transition & Authoritative Recovery
+The session must **never** remain permanently stranded in `EVALUATING`. If an evaluation fails catastrophically:
+1. **Provider Failure**: Primary AI provider fails $\rightarrow$ ModelRouter falls back to secondary provider $\rightarrow$ if all providers fail $\rightarrow$ executes rule-based deterministic fallback (`_buildDeterministicEvaluation`).
+2. **Catastrophic / Fallback Failure**: If even the deterministic fallback encounters an unrecoverable exception:
+   - `evaluationState.status` is set to `'FAILED'`.
+   - `evaluationState.lastError` records `{ code: 'EVALUATION_ERROR', message: error.message, attemptCount: attemptCount + 1 }`.
+   - The session transitions out of `EVALUATING` back to its retry-safe state:
+     - To `QUESTIONING` if the active question was an `INITIAL` attempt.
+     - To `RECHECKING` if the active question was a `FOLLOW_UP` attempt.
+   - `activeQuestion` remains preserved on the session.
+3. **Student Retry**: The student receives a structured error message (`EVALUATION_FAILED_RETRY_SAFE`) and can immediately resubmit their answer without losing their session context or encountering an unrecoverable `STALE_STUDY_STATE`.
 
 ---
 
@@ -476,7 +542,7 @@ Base Path: `/api/v1`
 | `POST` | `/api/v1/topics/:topicId/study/sessions` | Create new session or resume active session (pins syllabus) | 201, 200, 404, 401 |
 | `GET` | `/api/v1/study-sessions` | List user's active and recent study sessions | 200, 401 |
 | `GET` | `/api/v1/study-sessions/:id` | Retrieve full study session document including turn history | 200, 404, 401 |
-| `POST` | `/api/v1/study-sessions/:id/answer` | Submit answer for active question (optimistic lock & lease) | 200, 400, 404, 409 |
+| `POST` | `/api/v1/study-sessions/:id/answer` | Submit answer for active question (optimistic lock & fenced lease) | 200, 400, 404, 409 |
 | `POST` | `/api/v1/study-sessions/:id/continue` | Advance already-evaluated session (`ADVANCING` $\rightarrow$ next question; `REMEDIATING` $\rightarrow$ follow-up question) | 200, 400, 404, 409 |
 | `POST` | `/api/v1/study-sessions/:id/pause` | Pause session (allowed only from `QUESTIONING`, `REMEDIATING`, `RECHECKING`) | 200, 400, 404, 409 |
 | `POST` | `/api/v1/study-sessions/:id/resume` | Resume session to exact `pausedFromStatus` | 200, 400, 404 |
@@ -490,15 +556,22 @@ Explicit test cases to implement:
 1. **Duplicate Initial Answer Race**: Rapid double-submit produces exactly one evaluated turn; second fails with HTTP 409 `STALE_STUDY_STATE`.
 2. **Duplicate Follow-Up Answer Race**: Double-submit on follow-up question safely handled with single turn insertion.
 3. **Idempotency Key Reuse Conflict**: Submitting same `clientTurnId` with modified answer payload rejects with HTTP 409 `IDEMPOTENCY_KEY_REUSE_CONFLICT`.
-4. **Idempotent Retry**: Submitting same `clientTurnId` with identical payload returns existing evaluated turn (HTTP 200).
-5. **Process Crash & Lease Recovery**: Simulating crash during `EVALUATING` recovers via lease expiration upon subsequent request.
-6. **Pause During Evaluation Blocked**: Attempting to pause while `status: 'EVALUATING'` returns HTTP 409 `CANNOT_PAUSE_DURING_EVALUATION`.
-7. **Pause and Resume from Remediation**: Pausing from `REMEDIATING` stores `pausedFromStatus: 'REMEDIATING'` and resumes cleanly.
-8. **Follow-Up Answer Persistence**: Follow-up turn persisted with `attemptType: 'FOLLOW_UP'`, `parentTurnId` pointing to initial turn, preserving complete history.
-9. **Syllabus Version Pinning**: Approving a new syllabus version does not alter an existing active session's pinned `syllabusVersionId`.
-10. **Hallucinated Concept Stripping**: Out-of-scope/hallucinated concept names in AI output are stripped and normalized strictly to canonical topic concepts.
-11. **Stale Concurrent Tab Submission**: Out-of-order sequence index submission from concurrent tab rejected with HTTP 409.
-12. **Cross-Tenant Security**: Other tenant user cannot access or submit answers to session (HTTP 404).
+4. **Idempotent Retry on Completed Turn**: Submitting same `clientTurnId` with identical payload returns existing evaluated turn (HTTP 200).
+5. **Idempotent Retry After Subsequent Turns Exist**: Submitting an old `clientTurnId` when the session has already advanced past it returns the original turn without rolling back or corrupting state.
+6. **Lease Fencing & Stale Evaluator Takeover**:
+   - Worker A acquires lease (`operationId_A`).
+   - Lease expires; Worker B takes over (`operationId_B`) and commits.
+   - Worker A returns late and attempts completion with `operationId_A`.
+   - Worker A's commit matches 0 documents, rejects harmlessly, and does not overwrite Worker B's result.
+7. **Old OperationId Cannot Overwrite EvaluationState**: Attempting to write `evaluationState` with a superseded `operationId` fails closed.
+8. **Failed Evaluation Recovery**: Simulating catastrophic AI and fallback failure sets `evaluationState.status = 'FAILED'` and transitions session safely to `QUESTIONING` (or `RECHECKING`), allowing subsequent student submission.
+9. **Pause During Evaluation Blocked**: Attempting to pause while `status: 'EVALUATING'` returns HTTP 409 `CANNOT_PAUSE_DURING_EVALUATION`.
+10. **Pause and Resume from Remediation**: Pausing from `REMEDIATING` stores `pausedFromStatus: 'REMEDIATING'` and resumes cleanly.
+11. **Follow-Up Answer Persistence**: Follow-up turn persisted with `attemptType: 'FOLLOW_UP'`, `parentTurnId` pointing to initial turn `_id`, preserving complete history.
+12. **Syllabus Version Pinning**: Approving a new syllabus version does not alter an existing active session's pinned `syllabusVersionId`.
+13. **Hallucinated Concept Stripping**: Out-of-scope/hallucinated concept names in AI output are stripped and normalized strictly to canonical topic concepts.
+14. **Stale Concurrent Tab Submission**: Out-of-order sequence index submission from concurrent tab rejected with HTTP 409.
+15. **Cross-Tenant Security**: Other tenant user cannot access or submit answers to session (HTTP 404).
 
 ---
 
@@ -520,7 +593,7 @@ Execution against live Express API, MongoDB Atlas replica set, and Groq/OpenAI A
 12. `[12/18]` `[PEDAGOGY]` Verify Demonstrated Understanding & Advancement (`CORRECT` $\rightarrow$ `ADVANCE`).
 13. `[13/18]` `[HTTP API]` Fetch Next Question (`POST /study-sessions/:id/continue`).
 14. `[14/18]` `[DOMAIN-SERVICE CONCURRENCY]` Proving Real Live Concurrency: Duplicate Answer Submission Race with Synchronization Barrier.
-15. `[15/18]` `[DOMAIN-SERVICE CONCURRENCY]` Stale Sequence Index Collision Rejection (HTTP 409).
+15. `[15/18]` `[LEASE FENCING & RECOVERY]` Proving Lease Takeover & Stale Worker Rejection (Late worker matches 0 documents).
 16. `[16/18]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404 on other user session).
-17. `[17/18]` `[AI GATEWAY]` Safe Fallback Execution on AI Provider Outage.
+17. `[17/18]` `[AI GATEWAY]` Safe Fallback Execution & Non-Stranding Error Recovery on AI Provider Outage.
 18. `[18/18]` `[TEARDOWN]` Immutability-Safe Native Driver Test Teardown.
