@@ -71,21 +71,32 @@ The following boundaries were strictly observed:
 
 ## 5. Verification Summary
 
-- **Automated Backend Tests**: **158 / 158 passed (100%)** across 11 test files (`server/tests/knowledgeEngine.test.js`, `server/tests/chats.test.js`, etc.).
-- **Automated Frontend Tests**: **46 / 46 passed (100%)** (`client/src/App.test.jsx`, etc.).
-- **Total Monorepo Tests**: **204 / 204 passed (100%)**.
-- **Live Integration Verification (`server/scripts/verify_phase06_live.js` - All 14 Assertive Gates Passed)**:
+- **Automated Backend Tests**: **166 / 166 passed (100%)** across 11 test files (`server/tests/knowledgeEngine.test.js`, `server/tests/aiGateway.test.js`, `server/tests/chats.test.js`, etc.).
+- **Automated Frontend Tests**: **46 / 46 passed (100%)** (`client/src/App.test.jsx`, `client/src/pages/Subjects.test.jsx`, etc.).
+- **Total Monorepo Tests**: **212 / 212 passed (100%)**.
+- **Live Integration Verification (`server/scripts/verify_phase06_live.js` - All 14 Assertive Fail-Closed Gates Passed)**:
   1. Live Express API health verified (`GET /api/v1/health` status `healthy`).
   2. MongoDB Atlas replica set connected.
   3. Multi-document MongoDB transactions confirmed supported.
   4. Authenticated test users established.
   5. Authoritative subject and approved syllabus v1 established.
-  6. **REAL AI Extraction Pipeline Verified**: Real chat exchange executed through `chatController` → `KnowledgeEngineService` → `EventExtractor` → `AIGateway` using live provider `groq` and model `qwen/qwen3.8-27b`.
-  7. **Multi-Event Extraction & Idempotency Verified**: Multi-concept exchange extracted 3 events, and re-processing verified exact 0 duplicate event and concept score mutation.
+  6. **REAL AI Extraction Pipeline Verified**: Real chat exchange executed through `chatController` → `KnowledgeEngineService` → `EventExtractor` → `AIGateway` using live provider `groq` and model `openai/gpt-oss-20b`.
+  7. **Multi-Event Extraction (>= 3 Gate) & Fresh-Exchange Concurrent Idempotency Verified**:
+     - Multi-concept exchange generated >=3 LearningEvents (fail-closed gate asserted).
+     - Serial re-processing verified exact 0 duplicate events and preserved concept score.
+     - **Fresh-Exchange Concurrent Idempotency**: Verified against a completely fresh exchange with `Promise.all()`, proving exact 1 mutation result, 1 duplicate/already_processed, 0 raw E11000 leaks, 0 duplicate events, and no score doubling.
   8. **Assertive Misconception Verification**: Hard-asserted transition to `NEEDS_REVIEW`, confidence score reduction, and active misconception tracking.
   9. **Assertive Correction Recovery**: Hard-asserted recovery to `LEARNING`, resolution of active misconceptions, and confidence score increase.
   10. **Assertive Off-Topic Governance**: Hard-asserted `relevance === 'off_topic'` and `disposition === 'excluded'` with exact 0 mutation on `LearningEvent` and `Concept` counts.
   11. **Ledger Immutability & bulkWrite Guard**: Schema pre-hooks and static `bulkWrite` override strictly reject `updateOne`, `updateMany`, `replaceOne`, `deleteOne`, `deleteMany`, `findOneAndDelete`, and update/delete `bulkWrite` operations.
   12. **Security Trust Boundaries**: Forged message IDs rejected (`HTTP 400 INVALID_EVIDENCE`) and cross-tenant access blocked (`HTTP 404`).
   13. **Hard Phase Boundaries**: Exactly 0 `NoteDocument` and 0 `NoteVersion` records created.
-  14. **Direct Groq Provider Health**: Verified direct provider execution on `qwen/qwen3.8-27b`.
+  14. **Direct Groq Provider Health**: Verified direct provider execution on `openai/gpt-oss-20b`.
+
+---
+
+## 6. Known Limitations & Architectural Notes
+- **AI Task Token Scoping**: The 800-token completion limit is task-scoped specifically to `knowledge_event_extraction` to ensure fast structured JSON extraction while general chat and other tasks retain their full unconstrained token allocations.
+- **Provider Failover Gracefulness**: When an AI provider returns rate limits or service unavailability, `AIGateway` attempts secondary configured providers before gracefully falling back to deterministic heuristic parsing without failing client chat requests.
+- **Phase Boundary Integrity**: Notes, note versions, study sessions, and quizzes remain strictly deferred to subsequent phases.
+

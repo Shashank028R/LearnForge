@@ -36,12 +36,21 @@ export class GroqProvider extends BaseProvider {
 
       const client = this.client || new Groq({ apiKey: this.config.apiKey });
 
-      const response = await client.chat.completions.create({
+      const requestParams = {
         model: modelName,
         messages,
         temperature: normalizedRequest.temperature,
-        max_tokens: Math.min(normalizedRequest.maxTokens || 800, 800),
-      });
+        max_tokens:
+          normalizedRequest.task === 'knowledge_event_extraction'
+            ? Math.min(normalizedRequest.maxTokens || 800, 800)
+            : normalizedRequest.maxTokens,
+      };
+
+      if (modelName.includes('gpt-oss')) {
+        requestParams.reasoning_effort = 'low';
+      }
+
+      const response = await client.chat.completions.create(requestParams);
 
       const latencyMs = Date.now() - startTime;
       this.recordSuccess();

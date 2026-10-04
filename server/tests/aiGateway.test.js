@@ -246,6 +246,52 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
       expect(res.classification).toBeDefined();
       expect(res.classification.relevance).toBe('off_topic');
     });
+
+    it('GroqProvider preserves generic maxTokens for general tasks and enforces 800 token cap only on knowledge_event_extraction', async () => {
+      const groq = new GroqProvider({
+        apiKey: 'test-groq-key',
+        model: 'openai/gpt-oss-120b',
+      });
+
+      const mockCreate = vi.fn().mockResolvedValue({
+        choices: [{ message: { content: 'test response' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      });
+
+      groq.client = {
+        chat: { completions: { create: mockCreate } },
+      };
+
+      // 1. General chat task with 3000 maxTokens -> passes 3000 untouched
+      const generalReq = validateAndNormalizeAIRequest({
+        task: AI_TASK_TYPES.GENERAL_CHAT,
+        messages: [{ role: 'user', content: 'Explain rust ownership.' }],
+        maxTokens: 3000,
+        requestId: 'req-groq-general',
+      });
+      await groq.generate(generalReq);
+
+      expect(mockCreate).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          max_tokens: 3000,
+        })
+      );
+
+      // 2. Knowledge event extraction task with 1500 maxTokens -> caps at 800
+      const extractReq = validateAndNormalizeAIRequest({
+        task: AI_TASK_TYPES.KNOWLEDGE_EVENT_EXTRACTION,
+        messages: [{ role: 'user', content: 'Extract concepts.' }],
+        maxTokens: 1500,
+        requestId: 'req-groq-extract',
+      });
+      await groq.generate(extractReq);
+
+      expect(mockCreate).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          max_tokens: 800,
+        })
+      );
+    });
   });
 
   describe('3. Task-Based Model Router', () => {
@@ -573,6 +619,50 @@ describe('AI Gateway & Task-Based Model Routing (Gemini, OpenAI, Groq)', () => {
       const metrics = aiTelemetry.getMetrics();
       expect(metrics.totalRequests).toBeGreaterThan(0);
       expect(metrics.successCount).toBeGreaterThan(0);
+    });
+
+    it('preserves generic maxTokens for normal Groq requests and enforces task-specific budget for knowledge extraction', async () => {
+      const groq = new GroqProvider({ apiKey: 'gsk-test', model: 'openai/gpt-oss-20b' });
+      let capturedChatOptions = null;
+      let capturedExtractionOptions = null;
+
+      groq.client = {
+        chat: {
+          completions: {
+            create: vi.fn().mockImplementation(async (options) => {
+              if (options.messages.some((m) => m.content.includes('Pedagogical Knowledge Extraction'))) {
+                capturedExtractionOptions = options;
+              } else {
+                capturedChatOptions = options;
+              }
+              return {
+                choices: [{ message: { content: '{"events":[]}' } }],
+                usage: { total_tokens: 10, prompt_tokens: 5, completion_tokens: 5 },
+              };
+            }),
+          },
+        },
+      };
+
+      // 1. General Chat request with generic 3000 maxTokens - MUST NOT BE REGRESSED/CAPPED TO 800
+      await groq.generate({
+        task: AI_TASK_TYPES.GENERAL_CHAT,
+        messages: [{ role: 'user', content: 'Explain quicksort algorithm' }],
+        maxTokens: 3000,
+      });
+
+      expect(capturedChatOptions).toBeDefined();
+      expect(capturedChatOptions.max_tokens).toBe(3000);
+
+      // 2. Knowledge extraction request with 3000 requested tokens - MUST BE CAPPED BY TASK SAFEGUARD
+      await groq.generate({
+        task: AI_TASK_TYPES.KNOWLEDGE_EVENT_EXTRACTION,
+        messages: [{ role: 'user', content: 'Exchange evidence' }],
+        maxTokens: 3000,
+      });
+
+      expect(capturedExtractionOptions).toBeDefined();
+      expect(capturedExtractionOptions.max_tokens).toBe(800);
     });
   });
 });

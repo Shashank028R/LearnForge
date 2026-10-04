@@ -165,30 +165,38 @@ export class KnowledgeEngineService {
         await session.abortTransaction();
       } catch (_) {}
 
-      // Handle concurrent duplicate insertion race gracefully:
+      // Handle concurrent duplicate insertion race or write conflict gracefully:
       // If two identical extraction requests arrive concurrently for the same exchange,
-      // one commits and the other hits MongoDB unique key constraint E11000.
-      const isDuplicateKeyError =
+      // one commits and the other hits MongoDB unique key constraint E11000 or WriteConflict.
+      const isDuplicateKeyOrConflict =
         err.code === 11000 ||
+        err.code === 112 ||
         err.codeName === 'DuplicateKey' ||
-        /E11000|duplicate key/i.test(err.message || '');
+        err.codeName === 'WriteConflict' ||
+        err.hasErrorLabel?.('TransientTransactionError') ||
+        /E11000|duplicate key|WriteConflict/i.test(err.message || '');
 
-      if (isDuplicateKeyError) {
-        const confirmedEvent = await LearningEvent.findOne({
-          userId,
-          $or: [
-            { idempotencyKey },
-            { idempotencyKey: `${idempotencyKey}:e0` },
-            { sourceMessageId, 'metadata.extractionVersion': this.version },
-          ],
-        });
-        if (confirmedEvent) {
-          return {
-            skipped: true,
-            duplicate: true,
-            reason: 'already_processed',
-            idempotencyKey,
-          };
+      if (isDuplicateKeyOrConflict) {
+        // Allow winner transaction up to 300ms to finalize commit if racing simultaneously
+        for (let retryCount = 0; retryCount < 6; retryCount++) {
+          const confirmedEvent = await LearningEvent.findOne({
+            userId,
+            $or: [
+              { idempotencyKey },
+              { idempotencyKey: `${idempotencyKey}:e0` },
+              { sourceMessageId, 'metadata.extractionVersion': this.version },
+            ],
+          });
+          if (confirmedEvent) {
+            return {
+              success: true,
+              skipped: true,
+              duplicate: true,
+              reason: 'already_processed',
+              idempotencyKey,
+            };
+          }
+          await new Promise((r) => setTimeout(r, 50));
         }
       }
 

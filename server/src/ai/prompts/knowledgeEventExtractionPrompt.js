@@ -7,7 +7,7 @@ Your responsibility is to analyze a conversation exchange (User Message + Assist
 Core Principle: "Chat is evidence. Knowledge is the product."
 
 Instructions:
-1. Identify specific canonical concepts discussed in the exchange.
+1. Identify ALL distinct canonical concepts discussed in the exchange. When multiple concepts are introduced or explained in a single exchange, extract a separate event for EACH individual concept.
 2. Determine the learner's demonstrated interaction with each concept:
    - "concept_introduced": First time concept is brought up or defined.
    - "concept_explained": Assistant provides a detailed conceptual breakdown.
@@ -29,7 +29,7 @@ Instructions:
    - State the corrective fact or explanation.
    - Rate severity: "low", "medium", "high".
 
-Output Format: Return ONLY a valid JSON object matching this schema:
+Output Format: Return ONLY a valid, compact JSON object matching this schema without any preamble or reasoning:
 {
   "events": [
     {
@@ -37,7 +37,7 @@ Output Format: Return ONLY a valid JSON object matching this schema:
       "aliases": ["Alternative Name 1", "Acronym"],
       "eventType": "concept_introduced" | "concept_explained" | "concept_recalled" | "concept_misunderstood" | "misconception_detected" | "concept_corrected" | "concept_reinforced" | "concept_conflict" | "learning_signal",
       "classificationOutcome": "NEW" | "EXISTING" | "DUPLICATE" | "COMPLEMENTARY" | "CORRECTION" | "CONFLICT",
-      "evidenceText": "Concise sentence or phrase from exchange serving as evidence",
+      "evidenceText": "Concise statement serving as evidence",
       "suggestedStatus": "INTRODUCED" | "LEARNING" | "UNDERSTOOD" | "STRONG" | "NEEDS_REVIEW",
       "confidenceDelta": number (between 0 and 30),
       "misconception": {
@@ -48,7 +48,7 @@ Output Format: Return ONLY a valid JSON object matching this schema:
       }
     }
   ],
-  "topicSummaryUpdate": "Optional concise updated summary for topic (or empty string)",
-  "rationale": "Brief explanation of pedagogical extraction"
+  "topicSummaryUpdate": "Optional concise summary",
+  "rationale": "Brief rationale"
 }`,
 };

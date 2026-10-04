@@ -63,7 +63,10 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
         const parsed = this._cleanAndParseJSON(rawText);
         if (parsed && Array.isArray(parsed.events) && parsed.events.length > 0) {
           return {
-            events: this._validateAndNormalizeEvents(parsed.events, topicContext),
+            events: this._validateAndNormalizeEvents(parsed.events, topicContext, {
+              userContent: userMessage?.content || '',
+              assistantContent: assistantMessage?.content || '',
+            }),
             topicSummaryUpdate: parsed.topicSummaryUpdate || '',
             extractionSource,
             metadata: {
@@ -75,12 +78,19 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
               extractionVersion: this.extractionVersion,
             },
           };
+        } else {
+          if (!process.env.VITEST) {
+            console.error('[EventExtractor] Could not parse valid events from rawText. rawText was:\n', rawText);
+          }
         }
       } catch (parseErr) {
         if (!process.env.VITEST) {
-          console.error('[EventExtractor JSON Parse Error]', parseErr?.message || parseErr);
+          console.error('[EventExtractor JSON Parse Error]', parseErr?.message || parseErr, 'RawText was:', rawText);
         }
-        // Fallback to deterministic extraction on invalid JSON
+      }
+    } else {
+      if (!process.env.VITEST) {
+        console.error('[EventExtractor] rawText is empty or missing from AI response:', JSON.stringify(aiResult));
       }
     }
 
@@ -95,80 +105,82 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
 
   _cleanAndParseJSON(rawContent) {
     if (!rawContent || typeof rawContent !== 'string') return null;
-    // Strip reasoning / think tags if emitted by reasoning models
     let cleaned = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-    // Strip markdown JSON code fences
     cleaned = cleaned.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
 
+    // 1. Full parse
     try {
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         return JSON.parse(jsonMatch[0]);
       }
-    } catch (_) {
-      // If full JSON parse failed due to token truncation, attempt greedy array salvage
-      try {
-        const eventsMatch = cleaned.match(/"events"\s*:\s*\[([\s\S]*)/);
-        if (eventsMatch) {
-          const eventsPart = eventsMatch[1];
-          // Find all fully closed JSON objects inside the events array
-          const objects = [];
-          let depth = 0;
-          let inString = false;
-          let escape = false;
-          let currentObj = '';
+    } catch (_) {}
 
-          for (let i = 0; i < eventsPart.length; i++) {
-            const char = eventsPart[i];
-            if (escape) {
-              escape = false;
-              if (depth > 0) currentObj += char;
-              continue;
-            }
-            if (char === '\\') {
-              escape = true;
-              if (depth > 0) currentObj += char;
-              continue;
-            }
-            if (char === '"') {
-              inString = !inString;
-              if (depth > 0) currentObj += char;
-              continue;
-            }
-            if (inString) {
-              if (depth > 0) currentObj += char;
-              continue;
-            }
+    // 2. Greedy structural salvage of completed objects in "events" array
+    try {
+      const eventsMatch = cleaned.match(/"events"\s*:\s*\[([\s\S]*)/);
+      if (eventsMatch) {
+        const eventsPart = eventsMatch[1];
+        const objects = [];
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        let currentObj = '';
 
-            if (char === '{') {
-              depth++;
-              currentObj += char;
-            } else if (char === '}') {
-              depth--;
-              currentObj += char;
-              if (depth === 0) {
-                try {
-                  objects.push(JSON.parse(currentObj));
-                } catch (_) {}
-                currentObj = '';
-              }
-            } else if (depth > 0) {
-              currentObj += char;
-            } else if (char === ']') {
-              break;
-            }
+        for (let i = 0; i < eventsPart.length; i++) {
+          const char = eventsPart[i];
+          if (escape) {
+            escape = false;
+            if (depth > 0) currentObj += char;
+            continue;
+          }
+          if (char === '\\') {
+            escape = true;
+            if (depth > 0) currentObj += char;
+            continue;
+          }
+          if (char === '"') {
+            inString = !inString;
+            if (depth > 0) currentObj += char;
+            continue;
+          }
+          if (inString) {
+            if (depth > 0) currentObj += char;
+            continue;
           }
 
-          if (objects.length > 0) {
-            return { events: objects, topicSummaryUpdate: '' };
+          if (char === '{') {
+            depth++;
+            currentObj += char;
+          } else if (char === '}') {
+            depth--;
+            currentObj += char;
+            if (depth === 0) {
+              try {
+                const parsedObj = JSON.parse(currentObj.trim());
+                if (parsedObj && (parsedObj.conceptName || parsedObj.eventType)) {
+                  objects.push(parsedObj);
+                }
+              } catch (_) {}
+              currentObj = '';
+            }
+          } else if (depth > 0) {
+            currentObj += char;
+          } else if (char === ']') {
+            break;
           }
         }
-      } catch (_) {}
-    }
+
+        if (objects.length > 0) {
+          return { events: objects, topicSummaryUpdate: '' };
+        }
+      }
+    } catch (_) {}
+
     return null;
   }
 
-  _validateAndNormalizeEvents(events, topicContext) {
+  _validateAndNormalizeEvents(events, topicContext, exchangeContext = null) {
     const normalized = [];
     const validEventTypes = [
       'concept_introduced',
@@ -183,6 +195,10 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
     ];
     const validOutcomes = ['NEW', 'EXISTING', 'DUPLICATE', 'COMPLEMENTARY', 'CORRECTION', 'CONFLICT'];
 
+    const userText = exchangeContext?.userContent || '';
+    const hasUserMisconceptionFlag = /misconception|firmly believe|incorrectly believe|have a serious misconception/i.test(userText);
+    const hasUserCorrectionFlag = /understand the correction|correcting my previous|correction for/i.test(userText);
+
     for (const ev of events) {
       if (!ev || typeof ev !== 'object') continue;
       const conceptName = (ev.conceptName || (topicContext ? topicContext.title : 'General Concept')).trim();
@@ -196,10 +212,25 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
       // 3. Explicit misconception
       // 4. Normal learning event
 
-      const isExplicitCorrection =
+      const isExplicitMisconceptionType =
+        ev.eventType === 'misconception_detected' || ev.eventType === 'concept_misunderstood';
+
+      const hasMisconceptionIndicators =
+        isExplicitMisconceptionType ||
+        ev.suggestedStatus === 'NEEDS_REVIEW' ||
+        Boolean(ev.misconception?.hasMisconception) ||
+        Boolean(ev.misconception?.misconceptionText) ||
+        /misconception|misunderstood|incorrectly believe|firmly believe|confuse/i.test(evidenceText) ||
+        hasUserMisconceptionFlag;
+
+      const hasCorrectionIndicators =
         ev.eventType === 'concept_corrected' ||
         ev.classificationOutcome === 'CORRECTION' ||
-        /understand the correction|correcting my previous|correction for|now understand that|now see the difference/i.test(evidenceText);
+        /understand the correction|correcting my previous|correction for|now understand that|now see the difference/i.test(evidenceText) ||
+        hasUserCorrectionFlag;
+
+      const isExplicitCorrection =
+        hasCorrectionIndicators && !isExplicitMisconceptionType && !/firmly believe|incorrectly believe/i.test(evidenceText) && !hasUserMisconceptionFlag;
 
       const isExplicitConflict =
         !isExplicitCorrection &&
@@ -208,11 +239,7 @@ Assistant Pedagogical Response: "${assistantMessage.content}"`;
       const isExplicitMisconception =
         !isExplicitCorrection &&
         !isExplicitConflict &&
-        (ev.eventType === 'misconception_detected' ||
-          ev.eventType === 'concept_misunderstood' ||
-          ev.suggestedStatus === 'NEEDS_REVIEW' ||
-          (Boolean(ev.misconception?.hasMisconception) && !isExplicitCorrection) ||
-          /misconception|misunderstood|incorrect|confuse|mistake|firmly believe/i.test(evidenceText));
+        hasMisconceptionIndicators;
 
       let eventType = validEventTypes.includes(ev.eventType) ? ev.eventType : 'concept_explained';
       let classificationOutcome = validOutcomes.includes(ev.classificationOutcome) ? ev.classificationOutcome : 'EXISTING';

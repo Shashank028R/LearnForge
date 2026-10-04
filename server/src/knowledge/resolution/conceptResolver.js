@@ -59,11 +59,19 @@ export class ConceptResolver {
       };
     }
 
-    // 3. No match found: Treat as NEW Concept
+    // 3. No match found: Brand new concept
+    // Preserve explicit authoritative classifications (CORRECTION, CONFLICT), otherwise default to NEW
+    const resolvedOutcome =
+      proposedOutcome === 'CORRECTION' || proposedOutcome === 'CONFLICT'
+        ? proposedOutcome
+        : proposedOutcome === 'EXISTING' || !proposedOutcome
+        ? 'NEW'
+        : proposedOutcome;
+
     return {
       concept: null,
       isNew: true,
-      classificationOutcome: 'NEW',
+      classificationOutcome: resolvedOutcome,
       resolvedName: candidateName,
       newAliasesAdded: aliases,
     };

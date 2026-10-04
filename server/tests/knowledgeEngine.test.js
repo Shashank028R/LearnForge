@@ -1243,10 +1243,10 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
       ]);
 
       // Exactly one request must succeed with mutation, the other must resolve safely as duplicate
-      const successCount = [res1, res2].filter((r) => r.success === true).length;
+      const mutationCount = [res1, res2].filter((r) => r.success === true && !r.duplicate).length;
       const duplicateCount = [res1, res2].filter((r) => r.duplicate === true).length;
 
-      expect(successCount).toBe(1);
+      expect(mutationCount).toBe(1);
       expect(duplicateCount).toBe(1);
 
       // Verify no duplicate LearningEvents created
@@ -1321,6 +1321,146 @@ describe('Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis', () =
         sourceMessageId: sourceMsgId,
       });
       expect(totalEvents).toBe(10);
+    });
+
+    it('P1-NewConceptSemantics: Preserves CORRECTION classification on brand-new concept', async () => {
+      const fakeGateway = {
+        generate: vi.fn(),
+      };
+      const engine = new KnowledgeEngineService(fakeGateway);
+      const sourceMsgId = new mongoose.Types.ObjectId();
+      const chatId = new mongoose.Types.ObjectId();
+
+      fakeGateway.generate.mockResolvedValueOnce({
+        text: JSON.stringify({
+          events: [
+            {
+              conceptName: 'Brand New Corrected Concept',
+              eventType: 'concept_corrected',
+              classificationOutcome: 'CORRECTION',
+              evidenceText: 'Clarified parsing grammar semantics',
+              misconception: {
+                misconceptionText: 'Ambiguous grammar assumption',
+                correctionText: 'LL(1) grammars require deterministic lookahead',
+              },
+            },
+          ],
+        }),
+        provider: 'groq',
+        model: 'qwen/qwen3.8-27b',
+      });
+
+      const res = await engine.processExchangeEvidence({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'I corrected my belief about ambiguous grammars.' },
+        assistantMessage: { content: 'Correct, LL(1) grammars must be unambiguous.' },
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.learningEvents.length).toBe(1);
+      expect(res.learningEvents[0].classificationOutcome).toBe('CORRECTION');
+      expect(res.learningEvents[0].eventType).toBe('concept_corrected');
+
+      const savedConcept = await Concept.findById(res.learningEvents[0].conceptId);
+      expect(savedConcept).toBeDefined();
+      expect(savedConcept.name).toBe('Brand New Corrected Concept');
+      expect(savedConcept.status).toBe('LEARNING');
+      expect(savedConcept.misconceptions.every((m) => m.isActive === false)).toBe(true);
+    });
+
+    it('P1-NewConceptSemantics: Preserves CONFLICT classification and flags conflictState on brand-new concept', async () => {
+      const fakeGateway = {
+        generate: vi.fn(),
+      };
+      const engine = new KnowledgeEngineService(fakeGateway);
+      const sourceMsgId = new mongoose.Types.ObjectId();
+      const chatId = new mongoose.Types.ObjectId();
+
+      fakeGateway.generate.mockResolvedValueOnce({
+        text: JSON.stringify({
+          events: [
+            {
+              conceptName: 'Brand New Conflicted Concept',
+              eventType: 'concept_conflict',
+              classificationOutcome: 'CONFLICT',
+              evidenceText: 'Statement directly contradicts language specification',
+            },
+          ],
+        }),
+        provider: 'groq',
+        model: 'qwen/qwen3.8-27b',
+      });
+
+      const res = await engine.processExchangeEvidence({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'Rust allows multiple mutable references at the same time.' },
+        assistantMessage: { content: 'That violates the aliasing XOR mutability invariant.' },
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.learningEvents.length).toBe(1);
+      expect(res.learningEvents[0].classificationOutcome).toBe('CONFLICT');
+      expect(res.learningEvents[0].eventType).toBe('concept_conflict');
+      expect(res.learningEvents[0].newStatus).toBe('NEEDS_REVIEW');
+
+      const savedConcept = await Concept.findById(res.learningEvents[0].conceptId);
+      expect(savedConcept).toBeDefined();
+      expect(savedConcept.name).toBe('Brand New Conflicted Concept');
+      expect(savedConcept.status).toBe('NEEDS_REVIEW');
+      expect(savedConcept.conflictState.hasConflict).toBe(true);
+      expect(savedConcept.conflictState.description).toContain('contradicts');
+    });
+
+    it('P1-NewConceptSemantics: Preserves normal NEW classification on brand-new concept', async () => {
+      const fakeGateway = {
+        generate: vi.fn(),
+      };
+      const engine = new KnowledgeEngineService(fakeGateway);
+      const sourceMsgId = new mongoose.Types.ObjectId();
+      const chatId = new mongoose.Types.ObjectId();
+
+      fakeGateway.generate.mockResolvedValueOnce({
+        text: JSON.stringify({
+          events: [
+            {
+              conceptName: 'Standard New Concept',
+              eventType: 'concept_introduced',
+              classificationOutcome: 'NEW',
+              evidenceText: 'First introduction to syntax trees',
+            },
+          ],
+        }),
+        provider: 'groq',
+        model: 'qwen/qwen3.8-27b',
+      });
+
+      const res = await engine.processExchangeEvidence({
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        chatId,
+        sourceMessageId: sourceMsgId,
+        userMessage: { content: 'What is a syntax tree?' },
+        assistantMessage: { content: 'A syntax tree represents source code structure.' },
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.learningEvents.length).toBe(1);
+      expect(res.learningEvents[0].classificationOutcome).toBe('NEW');
+      expect(res.learningEvents[0].newStatus).toBe('INTRODUCED');
+
+      const savedConcept = await Concept.findById(res.learningEvents[0].conceptId);
+      expect(savedConcept).toBeDefined();
+      expect(savedConcept.status).toBe('INTRODUCED');
+      expect(savedConcept.confidenceScore).toBe(25);
     });
   });
 });

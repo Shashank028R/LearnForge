@@ -129,6 +129,7 @@ async function generateAIExchange({
         topicContext: topicDoc,
         requestId,
         timeoutMs: 10000,
+        maxTokens: 200,
       });
 
       if (classRes?.classification?.relevance) {
@@ -161,10 +162,11 @@ async function generateAIExchange({
       syllabusContext: activeSyllabusDoc,
       topicContext: topicDoc,
       requestId,
+      maxTokens: 800,
     });
   } catch (err) {
-    // If AI providers are unconfigured or failed with authentication/all-providers-failed error, fallback gracefully
-    if (err.code === 'AI_ALL_PROVIDERS_FAILED' || err.code === 'AI_AUTHENTICATION_FAILED') {
+    // If AI providers are unconfigured or failed with any AI error, fallback gracefully
+    if (err instanceof AIError || err.code === 'AI_ALL_PROVIDERS_FAILED' || err.code === 'AI_AUTHENTICATION_FAILED' || err.code === 'AI_RATE_LIMITED' || err.code === 'AI_PROVIDER_UNAVAILABLE' || err.code === 'AI_INVALID_REQUEST') {
       const fallbackText = generateAssistantPrompt(userContent.trim(), subjectDoc?.name, topicDoc?.title);
       aiResponse = {
         text: fallbackText,

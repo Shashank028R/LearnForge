@@ -301,25 +301,71 @@ async function runLiveVerification() {
     }
     console.log(`✓ End-to-end serial multi-event idempotency verified: exact event count (${totalEventsAfterReprocess}) and concept score preserved`);
 
-    // Concurrent duplicate extraction verification
-    console.log('  Testing concurrent identical extraction requests...');
+    // 7.1 Concurrent Extraction Verification on Fresh Exchange (Exercises Real Transaction/Unique-Index Race)
+    console.log('  Testing concurrent identical extraction requests on a COMPLETELY FRESH exchange...');
+    const freshConcurrentChat = await Chat.create({
+      userId: testUser._id,
+      subjectId: subject._id,
+      topicId: topic._id,
+      title: 'Concurrency Test Chat',
+      status: 'active',
+      sequenceCounter: 2,
+      messagesCount: 2,
+    });
+
+    const freshUserMsg = await Message.create({
+      chatId: freshConcurrentChat._id,
+      userId: testUser._id,
+      role: 'user',
+      content: 'Explain the difference between Top-Down and Bottom-Up parsing techniques in compilers.',
+      sequenceIndex: 1,
+      status: 'sent',
+    });
+
+    const freshAssistantMsg = await Message.create({
+      chatId: freshConcurrentChat._id,
+      userId: testUser._id,
+      role: 'assistant',
+      content: 'Top-down parsing builds the parse tree from the root down to the leaves using LL grammars. Bottom-up parsing starts from the tokens and applies shift-reduce operations towards the root using LR grammars.',
+      sequenceIndex: 2,
+      status: 'sent',
+      knowledgeContext: {
+        relevance: 'on_topic',
+        subjectId: subject._id,
+        topicId: topic._id,
+        disposition: 'candidate',
+      },
+    });
+
+    // Verify 0 LearningEvents exist for this fresh exchange prior to running the concurrent race
+    const preConcurrentEventsForMsg = await LearningEvent.countDocuments({
+      userId: testUser._id,
+      sourceMessageId: freshAssistantMsg._id,
+    });
+    if (preConcurrentEventsForMsg !== 0) {
+      throw new Error('FAIL-CLOSED: Expected 0 events for fresh concurrency exchange prior to extraction');
+    }
+
+    const eventsBeforeConcurrency = await LearningEvent.countDocuments({ userId: testUser._id });
+
+    // Launch TWO identical POST /extract-knowledge requests with Promise.all()
     const [concurrentRes1, concurrentRes2] = await Promise.all([
       fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
         method: 'POST',
         headers: authHeaders,
         body: JSON.stringify({
-          chatId: multiChat.id,
-          userMessageId: multiUserMsg.id,
-          assistantMessageId: multiAssistantMsg.id,
+          chatId: freshConcurrentChat._id.toString(),
+          userMessageId: freshUserMsg._id.toString(),
+          assistantMessageId: freshAssistantMsg._id.toString(),
         }),
       }),
       fetch(`${API_BASE}/topics/${topic._id}/extract-knowledge`, {
         method: 'POST',
         headers: authHeaders,
         body: JSON.stringify({
-          chatId: multiChat.id,
-          userMessageId: multiUserMsg.id,
-          assistantMessageId: multiAssistantMsg.id,
+          chatId: freshConcurrentChat._id.toString(),
+          userMessageId: freshUserMsg._id.toString(),
+          assistantMessageId: freshAssistantMsg._id.toString(),
         }),
       }),
     ]);
@@ -332,17 +378,44 @@ async function runLiveVerification() {
     const concurrentData1 = await concurrentRes1.json();
     const concurrentData2 = await concurrentRes2.json();
 
-    if (!concurrentData1.data?.duplicate || !concurrentData2.data?.duplicate) {
-      throw new Error('FAIL-CLOSED: Expected both concurrent repeat extractions to resolve as duplicates');
-    }
+    const results = [concurrentData1.data, concurrentData2.data];
+    const successResults = results.filter((r) => r.success === true && !r.duplicate);
+    const duplicateResults = results.filter((r) => r.duplicate === true);
 
-    const totalEventsAfterConcurrent = await LearningEvent.countDocuments({ userId: testUser._id });
-    if (totalEventsAfterConcurrent !== totalEventsAfterReprocess) {
+    // Hard Gate: Exactly 1 request succeeds with mutation, exactly 1 resolves safely as duplicate
+    if (successResults.length !== 1 || duplicateResults.length !== 1) {
       throw new Error(
-        `FAIL-CLOSED: Concurrent extraction created duplicate LearningEvents: ${totalEventsAfterReprocess} -> ${totalEventsAfterConcurrent}`
+        `FAIL-CLOSED: Expected exactly 1 successful extraction and 1 duplicate resolution in fresh concurrency test. Received: successes=${successResults.length}, duplicates=${duplicateResults.length}`
       );
     }
-    console.log('✓ Concurrent idempotency verified: 0 duplicate events, 0 E11000 leaks, all resolved deterministically');
+
+    if (duplicateResults[0].reason !== 'already_processed') {
+      throw new Error(
+        `FAIL-CLOSED: Expected duplicate reason 'already_processed', received '${duplicateResults[0].reason}'`
+      );
+    }
+
+    // Assert database state: exactly one logical set of LearningEvents exists
+    const persistedConcurrentEvents = await LearningEvent.find({
+      userId: testUser._id,
+      sourceMessageId: freshAssistantMsg._id,
+    });
+
+    const expectedNewCount = successResults[0].learningEvents?.length || 1;
+    if (persistedConcurrentEvents.length !== expectedNewCount) {
+      throw new Error(
+        `FAIL-CLOSED: Expected ${expectedNewCount} LearningEvents in DB for fresh exchange, found ${persistedConcurrentEvents.length}`
+      );
+    }
+
+    const eventsAfterConcurrency = await LearningEvent.countDocuments({ userId: testUser._id });
+    if (eventsAfterConcurrency !== eventsBeforeConcurrency + expectedNewCount) {
+      throw new Error(
+        `FAIL-CLOSED: Concurrent extraction created extra duplicate LearningEvents (expected +${expectedNewCount}, got +${eventsAfterConcurrency - eventsBeforeConcurrency})`
+      );
+    }
+
+    console.log(`✓ Fresh-exchange concurrent idempotency verified: exactly 1 mutation, 1 duplicate/already_processed, 0 raw E11000 leaks, ${persistedConcurrentEvents.length} events created`);
 
     // 8. Assertive Misconception Live Verification
     console.log('\n[8/14] Asserting Misconception Detection & Transition to NEEDS_REVIEW (Fail-Closed)...');

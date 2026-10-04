@@ -42,7 +42,7 @@ export const config = {
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     openaiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     groqApiKey: process.env.GROQ_API_KEY || '',
-    groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+    groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
     defaultTimeoutMs: parseInt(process.env.AI_DEFAULT_TIMEOUT_MS || '30000', 10),
     maxRetries: parseInt(process.env.AI_MAX_RETRIES || '2', 10),
     defaultProviderPriority: (process.env.AI_PROVIDER_PRIORITY || 'gemini,openai,groq').split(',').map((p) => p.trim()),

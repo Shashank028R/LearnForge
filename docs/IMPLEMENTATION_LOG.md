@@ -28,10 +28,10 @@ This log is the permanent chronological engineering journal for the LearnForge p
 5. **Knowledge REST APIs (`server/src/controllers/knowledgeController.js` & `server/src/routes/knowledgeRoutes.js`)**:
    - Mounted `GET /api/v1/topics/:topicId/concepts`, `GET /api/v1/concepts/:conceptId`, `GET /api/v1/topics/:topicId/learning-events`, and hardened `POST /api/v1/topics/:topicId/extract-knowledge` validating server-loaded persisted Message documents.
 6. **Testing & Verification**:
-   - Added 31 automated unit/integration tests in `server/tests/knowledgeEngine.test.js` (server total: 161 tests passing 100%).
+   - Added 34 automated unit/integration tests in `server/tests/knowledgeEngine.test.js` and 19 in `server/tests/aiGateway.test.js` (server total: 166 tests passing 100%).
    - All 46 client tests passing (client total: 46 tests passing 100%).
-   - Total Monorepo Automated Tests: 207 / 207 passing (100%).
-   - Live integration script `verify_phase06_live.js` fully passed all verification gates (MongoDB Atlas, Express API, real application AI extraction with live Groq API `openai/gpt-oss-120b`, hard >= 3 multi-event threshold, concurrent idempotency determinism, and correction recovery with misconception payloads).
+   - Total Monorepo Automated Tests: 212 / 212 passing (100%).
+   - Live integration script `verify_phase06_live.js` fully passed all 14 fail-closed verification gates (MongoDB Atlas replica set, Express API, real application AI extraction with live Groq API `openai/gpt-oss-20b`, hard >= 3 multi-event threshold, fresh-exchange concurrent idempotency with `Promise.all()`, brand-new concept `CORRECTION`/`CONFLICT` classification semantics, and correction recovery with misconception payloads).
    - Phase boundary verified: 0 `NoteDocument` / `NoteVersion` created.
 
 ---
