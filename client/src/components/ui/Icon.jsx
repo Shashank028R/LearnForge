@@ -220,6 +220,78 @@ export function Icon({ name, size = 20, className = '', ...props }) {
         d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
       />
     ),
+    history: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+      />
+    ),
+    save: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M16.5 3.75H7.5A3.75 3.75 0 003.75 7.5v9A3.75 3.75 0 007.5 20.25h9A3.75 3.75 0 0020.25 16.5v-9A3.75 3.75 0 0016.5 3.75zM7.5 3.75V7.5h9V3.75M7.5 20.25v-6h9v6"
+      />
+    ),
+    'rotate-ccw': (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
+      />
+    ),
+    'chevron-up': (
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
+    ),
+    'alert-circle': (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+      />
+    ),
+    'file-text': (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
+      />
+    ),
+    type: (
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 6.75h15M12 6.75v10.5m-3 0h6" />
+    ),
+    list: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"
+      />
+    ),
+    'list-ordered': (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M4.5 5.25v3M3.75 8.25h1.5M3.75 12.75h1.5a.75.75 0 000-1.5H3.75v-.75h1.5M3.75 16.5h1.5v2.25H3.75"
+      />
+    ),
+    code: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"
+      />
+    ),
+    'message-square': (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.269z"
+      />
+    ),
+    minus: (
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" />
+    ),
   };
 
   // Aliases for camelCase/domain variations
@@ -227,11 +299,15 @@ export function Icon({ name, size = 20, className = '', ...props }) {
   icons.chats = icons.chat;
   icons.quizzes = icons.quiz;
   icons.profile = icons.user;
+  icons.x = icons.close;
   icons.chevronRight = icons['chevron-right'];
   icons.chevronLeft = icons['chevron-left'];
   icons.chevronDown = icons['chevron-down'];
+  icons.chevronUp = icons['chevron-up'];
   icons.arrowLeft = icons['arrow-left'];
   icons.alertCircle = icons.alert;
+  icons['alert-triangle'] = icons.alert;
+  icons.rotateCcw = icons['rotate-ccw'];
 
   const selectedPath = icons[name];
 

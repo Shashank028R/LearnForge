@@ -2,6 +2,43 @@
 
 This log is the permanent chronological engineering journal for the LearnForge project. Every phase records its objective, work performed, architectural decisions, testing, problems, and solutions.
 
+## [Phase 07] Structured Notes Engine & Immutable Versioning
+
+- **Date**: October 5, 2026
+- **Status**: Completed
+- **Phase**: Phase 07 — Structured Notes Engine
+- **Core Invariant**: *"Raw Conversation → Learning Evidence (LearningEvent) → Canonical Knowledge (Concept) → Structured Notes (NoteDocument & NoteVersion). Notes are synthesized from canonical concepts, topic context, and approved syllabus facts, NOT raw conversation transcripts."*
+- **Objective**: Build the production-grade Structured Notes Engine for LearnForge with typed block schemas, immutable append-only version history, optimistic concurrency control, user-authored block protection, and risk-managed AI merge proposals.
+
+### Work Performed
+1. **Architectural Foundations & ADR-016**:
+   - Designed and documented ADR-016 (`docs/decisions/ADR-016-structured-notes-engine.md`) governing typed block hierarchies, immutable version snapshots, optimistic concurrency control, and deterministic collision handling.
+2. **Domain Persistence Models**:
+   - `server/src/models/blocks/blockSchema.js`: Strictly typed pedagogical block schema supporting 9 block types (`heading`, `paragraph`, `bullet_list`, `numbered_list`, `code`, `quote`, `callout`, `table`, `divider`) with stable IDs and single authoritative provenance (`origin: 'user' | 'ai' | 'system'`).
+   - `server/src/models/NoteDocument.js`: Topic-anchored note container with compound unique index `{ userId: 1, topicId: 1 }` and `currentVersionId` pointer.
+   - `server/src/models/NoteVersion.js`: Append-only immutable version snapshot with compound unique index `{ noteDocumentId: 1, version: 1 }`. Immutability guards block `save()` on existing records, query updates (`updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace`), query deletes (`deleteOne`, `deleteMany`, `findOneAndDelete`), and prohibited operations via `bulkWrite`.
+   - `server/src/models/NoteProposal.js`: Staging model for candidate AI updates with diff computation, risk assessment, and provenance.
+3. **Dedicated Notes Subsystem (`server/src/notes/`)**:
+   - `risk/riskClassifier.js`: Computes structured block diff and deterministic risk classification (`LOW`, `MEDIUM`, `HIGH`). Enforces user-authored block protection (`HIGH` risk), code block invariant checks, and active concept conflict warnings.
+   - `services/notesService.js`: Master orchestrator coordinating initial topic note creation, optimistic manual revisions, immutable version restores, AI note proposal synthesis, and risk-based merge approval in MongoDB multi-document transactions.
+4. **AI Gateway Integration**:
+   - Registered `NOTE_SYNTHESIS` task mapped to `[STRUCTURED_OUTPUT, COMPLEX_REASONING]` with `NOTE_SYNTHESIS_PROMPT_V1` and default Groq model `openai/gpt-oss-20b`.
+5. **REST APIs (`server/src/controllers/notesController.js` & `server/src/routes/notesRoutes.js`)**:
+   - Mounted authenticated routes under `/api/v1/notes` and `/api/v1/topics/:topicId/note` with optimistic concurrency validation and domain HTTP 409 conflict mapping (`STALE_BASE_VERSION`, `STALE_PROPOSAL_BASE`).
+6. **Frontend Notes Workspace**:
+   - `client/src/pages/NotesPage.jsx`: Reading canvas with topic directory, structured block rendering, version badges, and proposal review banner.
+   - `client/src/components/notes/BlockRenderer.jsx`: Type-safe rendering of all 9 block variants with provenance badges.
+   - `client/src/components/notes/BlockEditor.jsx`: Interactive structured block editor with live preview, block reordering, and optimistic revision saves.
+   - `client/src/components/notes/VersionHistoryDrawer.jsx`: History inspector for viewing immutable snapshots and restoring versions.
+   - `client/src/components/notes/ProposalReviewModal.jsx`: Risk-informed proposal diff review and approval modal.
+7. **Testing & Verification**:
+   - Added 29 automated unit/integration tests in `server/tests/notes.test.js` (total 196 backend tests passing 100%).
+   - Added 5 frontend tests in `client/src/pages/Notes.test.jsx` (total 51 client tests passing 100%).
+   - Total Monorepo Automated Tests: 247 / 247 passing (100%).
+   - Fail-closed live verification script `server/scripts/verify_phase07_live.js` fully passed all 16 verification gates.
+
+---
+
 ## [Phase 06] Knowledge Extraction Engine & Pedagogical Analysis
 
 - **Date**: October 4, 2026

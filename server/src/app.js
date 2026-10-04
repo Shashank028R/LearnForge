@@ -13,6 +13,7 @@ import chatsRouter from './routes/chats.js';
 import syllabusRouter from './routes/syllabus.js';
 import annotationsRouter from './routes/annotations.js';
 import knowledgeRouter from './routes/knowledgeRoutes.js';
+import notesRouter from './routes/notesRoutes.js';
 
 export function createApp() {
   const app = express();
@@ -42,6 +43,7 @@ export function createApp() {
   apiRouter.use(syllabusRouter);
   apiRouter.use(annotationsRouter);
   apiRouter.use(knowledgeRouter);
+  apiRouter.use(notesRouter);
 
   app.use(config.apiPrefix, apiRouter);
 

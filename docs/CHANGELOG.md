@@ -5,6 +5,33 @@ All notable changes to the LearnForge project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-05
+
+### Phase 07 — Structured Notes Engine & Immutable Versioning
+
+#### Added
+- **Domain Models**:
+  - `blockSchema.js`: Strictly typed pedagogical block schema supporting 9 block types (`heading`, `paragraph`, `bullet_list`, `numbered_list`, `code`, `quote`, `callout`, `table`, `divider`) with stable IDs and single authoritative provenance (`origin: 'user' | 'ai' | 'system'`).
+  - `NoteDocument.js`: Topic-anchored note container with compound unique index on `{ userId: 1, topicId: 1 }` and `currentVersionId` / `currentVersionNumber` pointers.
+  - `NoteVersion.js`: Append-only immutable version snapshot with compound unique index `{ noteDocumentId: 1, version: 1 }` and full middleware/bulkWrite immutability guards blocking all update and delete mutations.
+  - `NoteProposal.js`: Staging model for AI synthesis proposals with baseVersion tracking, structured diff, risk assessment, and provenance.
+- **Notes Subsystem (`server/src/notes/`)**:
+  - `riskClassifier.js`: Block differ and deterministic risk classifier enforcing user-authored block protection (`HIGH` risk), code invariant checks, and active concept conflict detection.
+  - `notesService.js`: Master orchestrator coordinating initial topic note creation, optimistic manual revisions, immutable version restores, AI note proposal synthesis, and risk-based merge approval in multi-document transactions.
+- **AI Task Registration**: Registered `NOTE_SYNTHESIS` task mapped to `[STRUCTURED_OUTPUT, COMPLEX_REASONING]` with `NOTE_SYNTHESIS_PROMPT_V1`.
+- **REST APIs**:
+  - Authenticated endpoints mounted under `/api/v1/notes` and `/api/v1/topics/:topicId/note` with optimistic concurrency control and domain HTTP 409 conflict mapping (`STALE_BASE_VERSION`, `STALE_PROPOSAL_BASE`).
+- **Frontend Notes Workspace**:
+  - `NotesPage.jsx`: Reading canvas with topic directory, structured block rendering, version badges, and proposal review banner.
+  - `BlockRenderer.jsx`: Type-safe rendering of all 9 block variants with provenance badges.
+  - `BlockEditor.jsx`: Interactive structured block editor with live preview, block reordering, and optimistic revision saves.
+  - `VersionHistoryDrawer.jsx`: History inspector for viewing immutable snapshots and restoring versions.
+  - `ProposalReviewModal.jsx`: Risk-informed proposal diff review and approval modal.
+- **Automated & Live Verification**: 29 unit/integration tests in `server/tests/notes.test.js`, 5 frontend tests in `client/src/pages/Notes.test.jsx` (total 247 monorepo tests passing 100%), and fail-closed live verification script `server/scripts/verify_phase07_live.js`.
+- **Architecture Record**: Documented in `docs/decisions/ADR-016-structured-notes-engine.md`.
+
+---
+
 ## [0.7.0] - 2026-10-04
 
 ### Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis

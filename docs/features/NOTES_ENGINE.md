@@ -1,143 +1,65 @@
-# Notes Engine
+# Structured Notes Engine (Phase 07)
 
-## 1. Purpose
+## Overview
 
-Turn knowledge into structured, editable, versioned study material without destroying user work.
+The **Structured Notes Engine** compiles learning milestones into persistent, structured study notes. Rather than producing ungrounded summaries of raw conversations, notes are synthesized strictly from **canonical concepts**, **topic metadata**, and **approved syllabus versions** (outputs of Phase 05 & Phase 06).
 
-## 2. Structured Document Model
+## Core Architecture & Invariants
 
-A note is composed of typed blocks rather than an arbitrary HTML string.
-
-Potential block types:
-
-- heading;
-- paragraph;
-- bulletList;
-- numberedList;
-- code;
-- table;
-- quote;
-- callout;
-- diagram;
-- image;
-- equation where supported;
-- Q&A;
-- checklist;
-- divider.
-
-The exact editor library must be selected during implementation and documented.
-
-## 3. Sources
-
-Each meaningful block or generated section should be attributable where practical:
-
-- user;
-- AI;
-- import;
-- quiz;
-- system.
-
-## 4. Automatic Note Update Flow
-
-```text
-Learning Event
-      |
-      v
-Note Context Retrieval
-      |
-      v
-AI Note Update Analysis
-      |
-      v
-Change Proposal
-      |
-      +--> add block
-      +--> update block
-      +--> merge block
-      +--> flag conflict
-      |
-      v
-Diff Generation
-      |
-      v
-Policy Check
-      |
-      +--> auto-apply low-risk change
-      +--> require review for high-risk change
-      |
-      v
-New Note Version
+```
+               ┌───────────────────────┐
+               │    Raw Conversation   │
+               └───────────┬───────────┘
+                           │ (Phase 06 Extraction)
+                           ▼
+               ┌───────────────────────┐
+               │     LearningEvent     │
+               └───────────┬───────────┘
+                           │ (Phase 06 Resolution)
+                           ▼
+               ┌───────────────────────┐
+               │   Canonical Concept   │
+               └───────────┬───────────┘
+                           │ (Phase 07 Synthesis)
+                           ▼
+               ┌───────────────────────┐
+               │  NoteDocument (vN)    │
+               │  ┌─────────────────┐  │
+               │  │   NoteVersion   │  │
+               │  │  (Append-Only)  │  │
+               │  └─────────────────┘  │
+               └───────────────────────┘
 ```
 
-## 5. AI vs User Authority
+### 1. Document & Version Decoupling
+- `NoteDocument`: Topic-level anchor document (`userId`, `subjectId`, `topicId`, `title`, `currentVersionNumber`, `currentVersionId`, `metadata`). Unique index on `{ userId: 1, topicId: 1 }`.
+- `NoteVersion`: Append-only immutable snapshot (`noteDocumentId`, `userId`, `version`, `parentVersionId`, `blocks`, `sourceType`, `changeSummary`, `provenance`). Unique index on `{ noteDocumentId: 1, version: 1 }`.
 
-User-authored edits have higher authority than speculative AI text.
+### 2. Strict Immutability
+`NoteVersion` records cannot be updated or deleted once committed. The model enforces:
+- `pre('save')` check blocking `!this.isNew`.
+- `pre` hooks blocking `updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace`, `deleteOne`, `deleteMany`, `findOneAndDelete`.
+- Static `bulkWrite` interceptor blocking update/delete operations.
 
-The system must not overwrite user-authored content merely because a new AI response phrases it differently.
+### 3. Typed Block Hierarchy
+Notes are composed of 9 typed blocks with strict schema validation:
+- `heading` (level 1-6, text)
+- `paragraph` (text)
+- `bullet_list` (items array)
+- `numbered_list` (items array)
+- `code` (language, code, caption)
+- `quote` (text, citation)
+- `callout` (variant: `info`|`warning`|`tip`|`key_takeaway`, title, text)
+- `table` (headers, rows)
+- `divider`
 
-## 6. Versioning
+Each block maintains an authoritative `origin: 'user' | 'ai' | 'system'`, and provenance metadata.
 
-Every material change creates an immutable version snapshot.
+### 4. Risk Classification & Staging
+Candidate AI updates are staged in `NoteProposal` records:
+- **`HIGH RISK`**: Modifies user-authored blocks, modifies code, or touches active concept conflicts. Always requires explicit approval.
+- **`MEDIUM RISK`**: Modifies or removes existing AI-authored explanation blocks. Requires explicit approval.
+- **`LOW RISK`**: Pure additions to AI-authored sections.
 
-Users should be able to:
-
-- view history;
-- compare changes;
-- revert;
-- identify source;
-- understand why a change occurred.
-
-## 7. Change Levels
-
-### Low-risk
-
-Appending a new clearly attributable key point to an existing AI-generated section.
-
-### Medium-risk
-
-Rewording or restructuring an existing AI-generated section.
-
-### High-risk
-
-Deleting, replacing, or substantially changing user-authored content.
-
-The implementation should prefer automatic low-risk updates and review workflows for higher-risk updates.
-
-## 8. Manual Editing
-
-User must be able to:
-
-- add;
-- edit;
-- delete;
-- reorder;
-- highlight;
-- organize blocks.
-
-Destructive actions require confirmation.
-
-## 9. Rendering
-
-The web UI should render structured blocks consistently. PDF export should consume the same structured source.
-
-## 10. Search / Navigation
-
-Future note search should be based on subject/topic/concept metadata first, with full-text or semantic search added when needed.
-
-## 11. Export
-
-PDF export should:
-
-- preserve headings;
-- preserve code formatting;
-- preserve tables where possible;
-- preserve diagrams/images when supported;
-- include subject/topic title;
-- remain readable in print.
-
-## 12. Interview Questions
-
-- Why structured blocks instead of raw HTML?
-- How do AI note updates avoid data loss?
-- How do you implement note history?
-- How do you generate a PDF from the note model?
+### 5. Optimistic Concurrency & Transactions
+All revisions, restores, and proposal approvals execute inside MongoDB multi-document transactions validating `baseVersion === currentVersionNumber`. Concurrency collisions map cleanly to domain HTTP 409 conflict errors (`STALE_BASE_VERSION` / `STALE_PROPOSAL_BASE`).

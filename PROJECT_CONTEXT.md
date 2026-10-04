@@ -10,8 +10,8 @@
 
 ## 2. Current Phase Status
 
-- **Current Phase**: **Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis (COMPLETED)**
-- **Next Phase**: **Phase 07 — Structured Notes Engine (Awaiting authorization)**
+- **Current Phase**: **Phase 07 — Structured Notes Engine (COMPLETED & SEALED)**
+- **Next Phase**: **Phase 08 — Adaptive Study Sessions & Socratic Tutoring (Awaiting authorization)**
 - **Repository Remote**: `https://github.com/Shashank028R/LearnForge.git`
 - **Default Branch**: `main`
 
@@ -88,17 +88,23 @@
 - **Idempotency & Transaction Boundaries**: Compound unique index `{ userId: 1, idempotencyKey: 1 }` prevents duplicate event processing; multi-document ACID transactions atomically update `LearningEvent`, `Concept`, and `Topic.knowledgeState`.
 - **Strict Phase Boundary**: Zero `NoteDocument` or `NoteVersion` records created (deferred to Phase 07).
 
+### Phase 07 (Structured Notes Engine)
+- **Architectural Principle**: *"Raw Conversation → Learning Evidence (LearningEvent) → Canonical Knowledge (Concept) → Structured Notes (NoteDocument & NoteVersion)."*
+- **Domain Persistence**: `NoteDocument` and immutable append-only `NoteVersion` with compound unique index `{ noteDocumentId: 1, version: 1 }` and comprehensive immutability guards against all update/delete mutations.
+- **Dedicated Subsystem**: `server/src/notes/` with `riskClassifier.js` and `notesService.js`.
+- **Concurrency & Transactions**: Optimistic concurrency control using `baseVersion` inside MongoDB multi-document transactions with domain HTTP 409 conflict mapping (`STALE_BASE_VERSION`, `STALE_PROPOSAL_BASE`).
+- **Interactive UI**: `NotesPage.jsx`, `BlockRenderer.jsx`, `BlockEditor.jsx`, `VersionHistoryDrawer.jsx`, and `ProposalReviewModal.jsx`.
+
 ---
 
 ## 4. Current Work
-- Phase 06 complete. Awaiting explicit project-owner authorization before beginning Phase 07.
+- Phase 07 complete and sealed. Awaiting explicit project-owner authorization before beginning Phase 08.
 
 ---
 
-## 5. Upcoming Work (Phase 07 — Structured Notes Engine)
-- Block-based structured notes schema (`NoteDocument` and `NoteVersion`).
-- Immutable note snapshot versioning and audit trails.
-- Risk-based AI merge proposals and diff previews.
+## 5. Upcoming Work (Phase 08 — Adaptive Study Sessions & Socratic Tutoring)
+- Active retrieval practice sessions and Socratic tutoring dialogue.
+- Flashcard generation and adaptive review queues.
 
 ---
 
@@ -119,6 +125,7 @@
 - **ADR-013**: Syllabus Governance, Immutability and Topic Reconciliation.
 - **ADR-014**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
 - **ADR-015**: Knowledge Extraction, Concept Resolution & Learning State.
+- **ADR-016**: Structured Notes Engine & Immutable Versioning Architecture.
 
 ---
 
