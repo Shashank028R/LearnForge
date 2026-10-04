@@ -22,8 +22,9 @@ The AI operates as a strict instructor prioritizing **demonstrated conceptual ma
 - **Topic-Scoped Study Sessions**: `StudySession` domain entity tracking session lifecycle, question progression, and turn history.
 - **Pedagogical Loop**: Active recall question generation, multi-criteria answer evaluation, Socratic remediation, and rechecking.
 - **Syllabus & Knowledge Integration**: Grounding study sessions in approved `SyllabusVersion` and canonical `Concept` entities (including active misconceptions).
+- **Curriculum Pinning**: Sessions permanently pin their approved `SyllabusVersion` at creation time.
 - **AI Gateway Integration**: Provider-agnostic task routing for `STUDY_QUESTION_GENERATION`, `STUDY_ANSWER_EVALUATION`, and `STUDY_REMEDIATION` with strict schema validation and deterministic rule-based fallbacks.
-- **Deterministic Concurrency & Idempotency**: Multi-document transaction boundaries, optimistic sequence/version locking, and duplicate submission protections.
+- **Deterministic Concurrency & Idempotency**: Multi-document transaction boundaries, optimistic sequence/version locking, crash-safe evaluation leases, and duplicate submission protections.
 - **Restrained Frontend Workspace**: Calm, high-density study canvas with question view, answer composer, structured evaluation feedback, remediation panel, and WCAG AA keyboard ergonomics.
 - **Fail-Closed Verification**: Automated unit/integration test suites and live verification against MongoDB Atlas replica set transactions and live AI inference.
 
@@ -48,7 +49,7 @@ The AI operates as a strict instructor prioritizing **demonstrated conceptual ma
 ├───────────────────────────────────┼────────────────────────────────────────────────────┤
 │ Phase 03: Subjects & Topics       │ Study sessions anchor to Subject & Topic           │
 ├───────────────────────────────────┼────────────────────────────────────────────────────┤
-│ Phase 04.1: Syllabus Governance   │ Approved SyllabusVersion provides curriculum scope │
+│ Phase 04.1: Syllabus Governance   │ Approved SyllabusVersion pinned at session creation│
 ├───────────────────────────────────┼────────────────────────────────────────────────────┤
 │ Phase 05: AI Gateway & Router     │ ModelRouter executes study tasks with fallbacks   │
 ├───────────────────────────────────┼────────────────────────────────────────────────────┤
@@ -58,15 +59,20 @@ The AI operates as a strict instructor prioritizing **demonstrated conceptual ma
 └───────────────────────────────────┴────────────────────────────────────────────────────┘
 ```
 
-### A. Syllabus Governance Boundary (Phase 04.1)
-- Authoritative curriculum scope is queried via `SyllabusVersion.findOne({ subjectId, userId, status: 'approved' })`.
-- If an approved syllabus exists, its sections, topic learning objectives, and ordering inform question generation.
-- If no approved syllabus exists, Study Mode functions within the standalone `Topic` context. Draft and superseded syllabus versions are never used as authoritative context.
+### A. Syllabus Governance & Version Pinning (Phase 04.1)
+- **Session Pinning**: When a study session is created, the system checks for an approved syllabus:
+  - If `SyllabusVersion.findOne({ subjectId, userId, status: 'approved' })` exists, `StudySession.syllabusVersionId` is stored and `StudySession.syllabusVersionNumber` is pinned (e.g., `syllabusVersionNumber: 1`).
+  - The study session remains **permanently pinned** to that exact syllabus version throughout its lifecycle. Subsequent syllabus revisions or new approvals in the subject do **not** mutate or re-scope an existing active study session.
+  - If no approved syllabus existed at session creation, `StudySession.syllabusVersionId: null` indicates topic-only scope and remains that way.
+- Draft and superseded syllabus versions are never used as authoritative context.
 
 ### B. Knowledge Engine & LearningEvent Boundary (Phase 06)
-- **Concept Grounding**: Reads canonical `Concept` entities (`userId`, `topicId`), sorting by priority (e.g., `NEEDS_REVIEW`, `INTRODUCED`, `LEARNING` first; active `misconceptions` prioritized for probing).
-- **LearningEvent Schema Protection**: In Phase 06, `LearningEvent` is an immutable append-only ledger strictly requiring `chatId` and `sourceMessageId` (representing verified conversational evidence).
-- **Clear Phase 08 Decision**:
+- **Server-Authoritative Concept Selection**:
+  - The server queries canonical `Concept` entities (`userId`, `topicId`) before invoking the AI Gateway.
+  - Whitelist of concept IDs, normalized names, and descriptions is passed in prompt context.
+  - AI responses returning `targetConceptNames` are strictly matched against the server's canonical topic concepts. Hallucinated or out-of-scope concepts are stripped by the server before persistence.
+- **LearningEvent Schema Protection**:
+  - In Phase 06, `LearningEvent` is an immutable append-only ledger strictly requiring `chatId` and `sourceMessageId` representing verified conversational evidence.
   - Study Mode turns are **session-local pedagogical records** persisted inside `StudySession.turns`.
   - Concept demonstrations and struggles are tracked as **session-local observations** (`metrics.demonstratedConceptIds`, `metrics.strugglingConceptIds`).
   - Study Mode does **NOT** fabricate fake `chatId`/`sourceMessageId` references or create a parallel unanchored `LearningEvent` pipeline.
@@ -95,6 +101,17 @@ const studyTurnSchema = new mongoose.Schema(
   {
     turnIndex: { type: Number, required: true, min: 0 },
     clientTurnId: { type: String, required: true }, // Idempotency key from client
+    attemptType: {
+      type: String,
+      enum: ['INITIAL', 'FOLLOW_UP'],
+      required: true,
+      default: 'INITIAL',
+    },
+    parentTurnId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'StudyTurn',
+      default: null, // null for INITIAL attempt, references parent turn for FOLLOW_UP
+    },
     question: {
       questionId: { type: String, required: true },
       questionType: {
@@ -154,12 +171,35 @@ const studyTurnSchema = new mongoose.Schema(
   { _id: true }
 );
 
+const evaluationStateSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      enum: ['IDLE', 'RECEIVED', 'EVALUATING', 'COMPLETED', 'FAILED'],
+      default: 'IDLE',
+    },
+    operationId: { type: String, default: null },
+    clientTurnId: { type: String, default: null },
+    questionId: { type: String, default: null },
+    answerFingerprint: { type: String, default: null }, // SHA-256 of trimmed answer
+    startedAt: { type: Date, default: null },
+    leaseExpiresAt: { type: Date, default: null }, // Crash lease timeout (30s)
+    lastError: {
+      code: { type: String, default: null },
+      message: { type: String, default: null },
+      attemptCount: { type: Number, default: 0 },
+    },
+  },
+  { _id: false }
+);
+
 const studySessionSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     subjectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject', required: true, index: true },
     topicId: { type: mongoose.Schema.Types.ObjectId, ref: 'Topic', required: true, index: true },
     syllabusVersionId: { type: mongoose.Schema.Types.ObjectId, ref: 'SyllabusVersion', default: null },
+    syllabusVersionNumber: { type: Number, default: null }, // Pinned at session creation
     title: { type: String, trim: true, maxlength: 200, default: 'Active Recall Study Session' },
     status: {
       type: String,
@@ -178,9 +218,15 @@ const studySessionSchema = new mongoose.Schema(
       default: 'ORIENTING',
       index: true,
     },
+    pausedFromStatus: {
+      type: String,
+      enum: ['QUESTIONING', 'REMEDIATING', 'RECHECKING', null],
+      default: null,
+    },
     sessionVersion: { type: Number, default: 1, min: 1 }, // Optimistic concurrency lock
     sequenceCounter: { type: Number, default: 0, min: 0 }, // Monotonic turn index
     activeQuestion: { type: studyTurnSchema.tree.question, default: null },
+    evaluationState: { type: evaluationStateSchema, default: () => ({ status: 'IDLE' }) },
     turns: [studyTurnSchema],
     metrics: {
       totalQuestionsAsked: { type: Number, default: 0 },
@@ -197,15 +243,16 @@ const studySessionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Compound Indexes for fast querying and uniqueness
+// Compound Indexes
 studySessionSchema.index({ userId: 1, topicId: 1, status: 1 });
 studySessionSchema.index({ userId: 1, status: 1, lastActivityAt: -1 });
 studySessionSchema.index({ userId: 1, subjectId: 1, lastActivityAt: -1 });
+studySessionSchema.index({ 'turns.clientTurnId': 1 });
 ```
 
 ---
 
-## 5. Complete Pedagogical State Machine
+## 5. Complete Pedagogical State Machine & Pause Invariants
 
 ```
                            ┌────────────────┐
@@ -222,27 +269,27 @@ studySessionSchema.index({ userId: 1, subjectId: 1, lastActivityAt: -1 });
           │                │  QUESTIONING   │                   │
           │                └───────┬────────┘                   │
           │                        │ Submit Answer              │ Resume
-          │                        │ (Locks sessionVersion)     │
+          │                        │ (Locks sessionVersion)     │ (returns to pausedFromStatus)
           │                        ▼                            │
           │                ┌────────────────┐             ┌───────────┐
           │                │ ANSWER_PENDING │             │  PAUSED   │
           │                └───────┬────────┘             └─────▲─────┘
-          │                        │                            │ Pause
-          │                        ▼                            │
-          │                ┌────────────────┐                   │
-          │                │   EVALUATING   │───────────────────┤
-          │                └───────┬────────┘                   │
           │                        │                            │
-       [ADVANCE]                   ├────────────────────────────┤
+          │                        ▼                            │ Pause allowed ONLY from:
+          │                ┌────────────────┐                   │ - QUESTIONING
+          │                │   EVALUATING   │                   │ - REMEDIATING
+          │                └───────┬────────┘                   │ - RECHECKING
+          │                        │                            │ (PAUSE during EVALUATING
+       [ADVANCE]                   ├────────────────────────────┤  throws HTTP 409)
           │                        │ [REMEDIATE / PROBE / RETRY]│
           ▼                        ▼                            │
    ┌─────────────┐          ┌─────────────┐                     │
-   │  ADVANCING  │          │ REMEDIATING │─────────────────────┘
-   └──────┬──────┘          └──────┬──────┘
-          │ Next Question          │ Follow-Up Prompt
-          │ Generated              ▼
-          │                 ┌─────────────┐
-          │                 │ RECHECKING  │
+   │  ADVANCING  │          │ REMEDIATING │─────────────────────┤
+   └──────┬──────┘          └──────┬──────┘                     │
+          │ Next Question          │ Follow-Up Prompt           │
+          │ Generated              ▼                            │
+          │                 ┌─────────────┐                     │
+          │                 │ RECHECKING  │─────────────────────┘
           │                 └──────┬──────┘
           │                        │ Submit Follow-Up Answer
           │                        ▼
@@ -256,92 +303,132 @@ studySessionSchema.index({ userId: 1, subjectId: 1, lastActivityAt: -1 });
    (Terminal State)         (Terminal State)
 ```
 
-### State Definitions & Mutation Table
+### State Definitions & Mutation Invariants Table
 
 | State | Valid Incoming | Valid Outgoing | Database Mutation Occurring | Invalid Transition Handling |
 | :--- | :--- | :--- | :--- | :--- |
-| **`ORIENTING`** | *Creation* | `QUESTIONING` | Session initialized; topic concepts and syllabus loaded; initial active question attached; `sessionVersion` = 1. | Rejects answers (`INVALID_STUDY_STATE`). |
-| **`QUESTIONING`** | `ORIENTING`, `ADVANCING` | `ANSWER_PENDING`, `PAUSED`, `EXITED` | Active question exposed to student; `activeQuestion` populated; waiting for student input. | Duplicate question generation blocked. |
-| **`ANSWER_PENDING`** | `QUESTIONING`, `RECHECKING` | `EVALUATING` | Student answer received; `sessionVersion` incremented; state locked to prevent concurrent double-submits. | Duplicate submission throws 409 `STALE_STUDY_STATE`. |
-| **`EVALUATING`** | `ANSWER_PENDING` | `ADVANCING`, `REMEDIATING`, `COMPLETED`, `PAUSED`, `EXITED` | AI evaluation executed; structured evaluation subdocument generated; turn appended to `turns`; metrics updated. | Bypassing evaluation blocked. |
+| **`ORIENTING`** | *Creation* | `QUESTIONING` | Session initialized; topic concepts and pinned syllabus loaded; initial `activeQuestion` attached; `sessionVersion` = 1. | Rejects answers (`INVALID_STUDY_STATE`). |
+| **`QUESTIONING`** | `ORIENTING`, `ADVANCING` | `ANSWER_PENDING`, `PAUSED`, `EXITED` | Active question presented to student; waiting for initial student answer. | Duplicate question generation blocked. |
+| **`ANSWER_PENDING`** | `QUESTIONING`, `RECHECKING` | `EVALUATING` | Student answer received; `sessionVersion` incremented; `evaluationState.status` set to `EVALUATING` with 30s lease. | Duplicate submissions throw 409 `STALE_STUDY_STATE`. |
+| **`EVALUATING`** | `ANSWER_PENDING` | `ADVANCING`, `REMEDIATING`, `COMPLETED`, `EXITED` *(PAUSE NOT ALLOWED)* | AI evaluation executed; structured evaluation subdocument attached; turn appended to `turns`; metrics updated; `evaluationState.status` set to `COMPLETED`. | Pausing during evaluation returns 409 `CANNOT_PAUSE_DURING_EVALUATION`. |
 | **`REMEDIATING`** | `EVALUATING` | `RECHECKING`, `PAUSED`, `EXITED` | Socratic remediation text and follow-up prompt generated; attached to turn remediation subdocument. | Advancing without remediation blocked. |
-| **`RECHECKING`** | `REMEDIATING` | `ANSWER_PENDING`, `PAUSED`, `EXITED` | Follow-up question presented to student; waiting for follow-up answer. | Bypassing follow-up blocked. |
+| **`RECHECKING`** | `REMEDIATING` | `ANSWER_PENDING`, `PAUSED`, `EXITED` | Follow-up question presented to student; waiting for follow-up answer attempt (`attemptType: 'FOLLOW_UP'`). | Bypassing follow-up blocked. |
 | **`ADVANCING`** | `EVALUATING` | `QUESTIONING`, `COMPLETED` | Understanding demonstrated; turn finalized; next concept query staged. | Submitting answer while advancing blocked. |
-| **`PAUSED`** | `QUESTIONING`, `RECHECKING`, `REMEDIATING`, `EVALUATING` | `QUESTIONING`, `RECHECKING`, `EXITED` | Session frozen; `lastActivityAt` updated; resumes to exact prior active state upon `resume`. | Submitting answers while paused throws 400. |
-| **`EXITED`** | Any non-terminal | *None (Terminal)* | Session marked closed; `status: 'EXITED'`; zero further state transitions allowed. | Any post-exit mutation throws 400. |
-| **`COMPLETED`** | `ADVANCING`, `EVALUATING` | *None (Terminal)* | All targeted topic concepts covered with demonstrated competence; `status: 'COMPLETED'`. | Any post-completion mutation throws 400. |
+| **`PAUSED`** | `QUESTIONING`, `RECHECKING`, `REMEDIATING` | `QUESTIONING`, `RECHECKING`, `REMEDIATING`, `EXITED` | Session frozen; `pausedFromStatus` stored; `lastActivityAt` updated; resumes to exact `pausedFromStatus`. | Submitting answers while paused throws 400. |
+| **`EXITED`** | Any non-terminal | *None (Terminal)* | Session marked closed (`status: 'EXITED'`); zero further state transitions allowed. | Post-exit mutations throw 400. |
+| **`COMPLETED`** | `ADVANCING`, `EVALUATING` | *None (Terminal)* | All targeted topic concepts covered with demonstrated competence (`status: 'COMPLETED'`). | Post-completion mutations throw 400. |
 
 ---
 
-## 6. Concurrency, Idempotency & Transaction Contract
+## 6. Follow-Up Answer Persistence & Turn Model
 
-### A. Authoritative Concurrency Control
-1. **`sessionVersion`**: Integer version token incremented atomically on every mutation (`$inc: { sessionVersion: 1 }`).
-2. **`sequenceCounter`**: Monotonically increasing turn sequence index (0, 1, 2, ...).
-3. **`activeQuestion.questionId`**: Unique UUIDv4 identifying the active question.
-4. **`clientTurnId`**: Client-generated UUIDv4 provided with answer submission.
+### A. Turn Separation & Hierarchy
+1. **Initial Question & Answer**:
+   - `attemptType: 'INITIAL'`
+   - `parentTurnId: null`
+   - `turnIndex: 0`
+   - Records student's initial answer and evaluation.
+   - If evaluation is `PARTIALLY_CORRECT` or `INCORRECT`, `remediation` is populated with `remediationText` and `followUpQuestion`.
+2. **Follow-Up Answer & Evaluation**:
+   - `attemptType: 'FOLLOW_UP'`
+   - `parentTurnId: ObjectId(turn[0]._id)`
+   - `turnIndex: 1`
+   - `question`: Embedded copy of the follow-up question.
+   - `userAnswer`: Student's response to the Socratic follow-up probe.
+   - `evaluation`: Multi-criteria evaluation of the follow-up attempt.
+   - Both turns remain **permanently recoverable** in `StudySession.turns`.
 
-### B. Atomic Conditional Update & Double-Submit Protection
-When the user submits an answer:
-```javascript
-const session = await StudySession.findOneAndUpdate(
-  {
-    _id: sessionId,
-    userId: userId,
-    sessionVersion: expectedSessionVersion,
-    status: { $in: ['QUESTIONING', 'RECHECKING'] },
-    'activeQuestion.questionId': questionId,
-  },
-  {
-    $set: {
-      status: 'ANSWER_PENDING',
-      lastActivityAt: new Date(),
-    },
-    $inc: { sessionVersion: 1 },
-  },
-  { new: true, session: dbSession }
-);
-```
-
-### C. Concurrency Invariant Scenarios
-- **Double-Click / Rapid Concurrent POST**:
-  - Request A matches `sessionVersion: N`, transitions state to `ANSWER_PENDING`, and increments `sessionVersion` to `N + 1`.
-  - Request B (with stale `sessionVersion: N`) matches 0 documents and fails closed immediately with `HTTP 409 STALE_STUDY_STATE`.
-- **Concurrent Tabs**:
-  - Tab 1 submits answer at version $N$ $\rightarrow$ succeeds.
-  - Tab 2 (holding stale version $N$) attempts answer $\rightarrow$ fails with `HTTP 409`. Refreshing Tab 2 loads the server-authoritative state.
-- **Network Retries / Idempotency**:
-  - If a network failure occurs during evaluation and the client retries with the identical `clientTurnId`, the server checks if `turns` already contains `clientTurnId` and returns the existing result safely without re-evaluating or creating duplicate turns.
-- **MongoDB Multi-Document ACID Transactions**:
-  - Turn record insertion, metrics update, and session status transition are committed atomically using `readConcern: 'snapshot'` and `writeConcern: 'majority'`.
+### B. Metrics Counting Rules
+- `totalQuestionsAsked`: Incremented when an initial question or follow-up question is presented.
+- `totalAnswersSubmitted`: Incremented on every answer submission (initial and follow-up).
+- `correctCount` / `partiallyCorrectCount` / `incorrectCount`: Evaluated per turn attempt.
+- `remediationsCount`: Incremented when a turn triggers remediation.
+- `demonstratedConceptIds`: Updated when a turn achieves `verdict: 'CORRECT'` or `nextAction: 'ADVANCE'`.
+- `strugglingConceptIds`: Updated when a turn receives `verdict: 'INCORRECT'` or misconception is detected.
 
 ---
 
-## 7. AI Task Contracts & Schema Validation
+## 7. Crash-Safe Evaluation, Idempotency & Concurrency Contract
 
-All tasks execute through `aiGateway.generate({ task, ... })`. Raw model output is schema-validated before modifying state.
+### A. Durable Submission & Lease Protocol
+1. **Answer Fingerprinting**: `answerFingerprint = crypto.createHash('sha256').update(answer.trim()).digest('hex')`.
+2. **Atomic Transition & Lease**:
+   ```javascript
+   const session = await StudySession.findOneAndUpdate(
+     {
+       _id: sessionId,
+       userId: userId,
+       sessionVersion: expectedSessionVersion,
+       status: { $in: ['QUESTIONING', 'RECHECKING'] },
+       'activeQuestion.questionId': questionId,
+     },
+     {
+       $set: {
+         status: 'ANSWER_PENDING',
+         'evaluationState.status': 'EVALUATING',
+         'evaluationState.operationId': uuidv4(),
+         'evaluationState.clientTurnId': clientTurnId,
+         'evaluationState.questionId': questionId,
+         'evaluationState.answerFingerprint': answerFingerprint,
+         'evaluationState.startedAt': new Date(),
+         'evaluationState.leaseExpiresAt': new Date(Date.now() + 30000), // 30s lease
+         lastActivityAt: new Date(),
+       },
+       $inc: { sessionVersion: 1 },
+     },
+     { new: true, session: dbSession }
+   );
+   ```
+
+### B. Strict Retry & Idempotency Rules
+- **Idempotent Match**: If a request arrives with `clientTurnId` matching an existing turn in `turns`:
+  - If `questionId` and `answerFingerprint` match: Return existing evaluated turn with HTTP 200 (safe retry).
+  - If `questionId` or `answerFingerprint` differs: Reject with `HTTP 409 IDEMPOTENCY_KEY_REUSE_CONFLICT`.
+- **Double-Click / Concurrent Race**:
+  - Request A matches `sessionVersion: N`, transitions state, increments `sessionVersion` to `N + 1`.
+  - Request B (with stale version $N$) matches 0 documents and fails closed with `HTTP 409 STALE_STUDY_STATE`.
+- **Crash Recovery**:
+  - If the server crashes during AI execution, `evaluationState.leaseExpiresAt` expires after 30s.
+  - When the student retries or refreshes, the backend detects expired lease and executes a deterministic fallback evaluation or retries cleanly, resetting `evaluationState`.
+
+---
+
+## 8. Authoritative Concept Targeting & Grounded Evaluation Signals
+
+1. **Server Concept Whitelist**:
+   - Backend queries `Concept.find({ userId, topicId })`.
+   - Passes allowed concept names and descriptions in prompt context.
+2. **Strict Server-Side Validation**:
+   - When AI responds with `targetConceptNames`, the server maps each name strictly against the topic's known canonical concepts (exact normalized name and alias resolution).
+   - Any hallucinated or out-of-scope concepts are discarded.
+   - If no valid concepts remain, the backend assigns the prioritized concept selected before generation.
+   - Persists verified `targetConceptIds` (Mongoose ObjectIds).
+3. **Reasoning Signals Grounding**:
+   - `expectedReasoningSignals` must contain valid non-empty criteria grounded in the concept's canonical description and active misconceptions, preventing the AI from creating arbitrary grading standards.
+
+---
+
+## 9. AI Task Contracts & Schema Validation
 
 ### 1. `STUDY_QUESTION_GENERATION`
 - **Capabilities**: `[STRUCTURED_OUTPUT, COMPLEX_REASONING]`
 - **Preference Chain**: `groq` $\rightarrow$ `openai` $\rightarrow$ `gemini`
-- **Input Context**: Topic title, topic description, approved syllabus sections, canonical concepts (with mastery status and active misconceptions), recent session turn history.
+- **Input Context**: Subject, topic, pinned syllabus sections, canonical concepts (with status and active misconceptions), recent turn history.
 - **Output Schema**:
 ```json
 {
   "questionType": "mechanism",
-  "prompt": "Explain the step-by-step process of leader election in Raft when a follower's election timeout expires.",
-  "targetConceptNames": ["Leader Election", "Election Timeout"],
+  "prompt": "Explain how a Raft follower handles an AppendEntries RPC when the term is higher than its current term.",
+  "targetConceptNames": ["AppendEntries RPC", "Term Numbers"],
   "expectedReasoningSignals": [
-    "Increments current term",
-    "Transitions to Candidate state",
-    "Votes for self",
-    "Sends RequestVote RPCs to all peers"
+    "Updates current term to higher term",
+    "Transitions to follower state",
+    "Resets election timer"
   ],
   "difficultyIntent": "intermediate"
 }
 ```
-- **Validation**: Enforces non-empty `prompt`, valid `questionType` enum, non-empty `targetConceptNames`.
-- **Fallback**: Deterministic concept-driven question builder (`_buildDeterministicQuestion`) if AI fails or returns invalid JSON.
+- **Fallback**: Deterministic concept-driven question builder (`_buildDeterministicQuestion`).
 
 ### 2. `STUDY_ANSWER_EVALUATION`
 - **Capabilities**: `[STRUCTURED_OUTPUT, COMPLEX_REASONING]`
@@ -351,20 +438,19 @@ All tasks execute through `aiGateway.generate({ task, ... })`. Raw model output 
 ```json
 {
   "verdict": "PARTIALLY_CORRECT",
-  "correctness": 70,
-  "completeness": 50,
-  "reasoningQuality": 65,
+  "correctness": 75,
+  "completeness": 60,
+  "reasoningQuality": 70,
   "misconceptionDetected": false,
   "misconceptionSummary": "",
-  "missingConcepts": ["RequestVote RPC dispatch", "Self-vote initialization"],
-  "strengths": ["Correctly identified that the term number increments and state changes to Candidate."],
-  "weaknesses": ["Omitted the voting mechanism and communication with peer nodes."],
-  "feedback": "You understood the state transition and term increment, but how does the candidate secure votes from other nodes?",
+  "missingConcepts": ["State transition to follower"],
+  "strengths": ["Correctly identified that the term is updated."],
+  "weaknesses": ["Did not mention resetting the election timer or transitioning state."],
+  "feedback": "You accurately noted the term update, but what role does the follower transition play?",
   "nextAction": "PROBE"
 }
 ```
-- **Validation**: Enforces `verdict` enum (`CORRECT`, `PARTIALLY_CORRECT`, `INCORRECT`, `UNCERTAIN`), numerical scores bounded 0–100, `nextAction` enum (`ADVANCE`, `PROBE`, `REMEDIATE`, `RETRY`, `CLARIFY`).
-- **Fallback**: Deterministic signal-matching evaluation (`_buildDeterministicEvaluation`) ensuring sessions never hang on AI provider outages.
+- **Fallback**: Deterministic signal-matching evaluation (`_buildDeterministicEvaluation`).
 
 ### 3. `STUDY_REMEDIATION`
 - **Capabilities**: `[STRUCTURED_OUTPUT, COMPLEX_REASONING]`
@@ -373,113 +459,50 @@ All tasks execute through `aiGateway.generate({ task, ... })`. Raw model output 
 - **Output Schema**:
 ```json
 {
-  "remediationText": "In Raft, a candidate cannot win an election alone; it must gather votes from a majority of cluster nodes via RequestVote RPCs.",
-  "followUpQuestion": "What RPC does the candidate send to request votes, and what condition must peers check before granting their vote?"
+  "remediationText": "Remember that term numbers act as a logical clock in Raft. When any node discovers a higher term, it must immediately step down.",
+  "followUpQuestion": "If a candidate node receives this RPC, what state does it transition to and why?"
 }
 ```
-- **Validation**: Enforces non-empty `remediationText` and `followUpQuestion`.
 - **Fallback**: Deterministic concept remediation prompt builder (`_buildDeterministicRemediation`).
 
 ---
 
-## 8. REST API Specifications
+## 10. REST API Specifications
 
 Base Path: `/api/v1`
 
-### 1. `POST /topics/:topicId/study/sessions`
-- **Purpose**: Creates a new study session or resumes an existing active session for the topic.
-- **Request Body**: `{ title?: string, mode?: 'standard' }`
-- **Response `201/200`**: `{ data: StudySession }`
-- **Security**: Requires authenticated user ownership of topic (`404` if unauthorized).
-
-### 2. `GET /study-sessions`
-- **Purpose**: Lists all active and recent study sessions for the authenticated user.
-- **Query Params**: `status?: string, page?: number, limit?: number`
-- **Response `200`**: `{ data: StudySession[], total: number, page: number, limit: number }`
-
-### 3. `GET /study-sessions/:id`
-- **Purpose**: Retrieves full study session document including turn history and active question.
-- **Response `200`**: `{ data: StudySession }`
-- **Security**: Tenant-scoped (`404` if session belongs to another user).
-
-### 4. `POST /study-sessions/:id/answer`
-- **Purpose**: Submits student answer for active question; executes evaluation and triggers remediation if needed.
-- **Request Body**:
-  ```json
-  {
-    "questionId": "uuid-v4",
-    "sessionVersion": 1,
-    "clientTurnId": "uuid-v4",
-    "answer": "Candidate increments term, votes for self, and sends RequestVote RPCs."
-  }
-  ```
-- **Response `200`**:
-  ```json
-  {
-    "data": {
-      "session": StudySession,
-      "evaluatedTurn": StudyTurn,
-      "nextStatus": "ADVANCING" | "REMEDIATING"
-    }
-  }
-  ```
-- **Error Responses**: `400` (Validation), `404` (Not Found), `409` (`STALE_STUDY_STATE`).
-
-### 5. `POST /study-sessions/:id/continue`
-- **Purpose**: **Forward transition only**. Advances an already-evaluated session (`ADVANCING` $\rightarrow$ next question `QUESTIONING`; `REMEDIATING` $\rightarrow$ follow-up question `RECHECKING`). Does **zero** re-evaluation.
-- **Request Body**: `{ sessionVersion: number }`
-- **Response `200`**: `{ data: StudySession }`
-- **Error Responses**: `400` (Invalid state to continue), `409` (`STALE_STUDY_STATE`).
-
-### 6. `POST /study-sessions/:id/pause` & `POST /study-sessions/:id/resume`
-- **Purpose**: Pauses or resumes an in-progress study session.
-- **Response `200`**: `{ data: StudySession }`
-
-### 7. `POST /study-sessions/:id/exit`
-- **Purpose**: Terminates and closes study session (`status: 'EXITED'`).
-- **Response `200`**: `{ data: StudySession }`
+| Method | Endpoint | Description | Status Codes |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/topics/:topicId/study/sessions` | Create new session or resume active session (pins syllabus) | 201, 200, 404, 401 |
+| `GET` | `/api/v1/study-sessions` | List user's active and recent study sessions | 200, 401 |
+| `GET` | `/api/v1/study-sessions/:id` | Retrieve full study session document including turn history | 200, 404, 401 |
+| `POST` | `/api/v1/study-sessions/:id/answer` | Submit answer for active question (optimistic lock & lease) | 200, 400, 404, 409 |
+| `POST` | `/api/v1/study-sessions/:id/continue` | Advance already-evaluated session (`ADVANCING` $\rightarrow$ next question; `REMEDIATING` $\rightarrow$ follow-up question) | 200, 400, 404, 409 |
+| `POST` | `/api/v1/study-sessions/:id/pause` | Pause session (allowed only from `QUESTIONING`, `REMEDIATING`, `RECHECKING`) | 200, 400, 404, 409 |
+| `POST` | `/api/v1/study-sessions/:id/resume` | Resume session to exact `pausedFromStatus` | 200, 400, 404 |
+| `POST` | `/api/v1/study-sessions/:id/exit` | Terminate study session (`status: 'EXITED'`) | 200, 400, 404 |
 
 ---
 
-## 9. Frontend Study Mode UX Architecture (`client/src/pages/StudyPage.jsx`)
+## 11. Automated Testing Strategy (`server/tests/studySession.test.js`)
 
-### Visual & Interaction Design
-- **Philosophy**: Restrained, high-density, calm, distraction-free productivity UI.
-- **Strict Anti-Gimmick Rules**: Zero neon accents, zero glowing borders, zero glassmorphism, zero floating blobs, zero decorative animations.
-- **Components**:
-  1. **Topic Study Directory**: Browse subjects/topics, view concept counts, resume active sessions with one click.
-  2. **Study Canvas Header**: Subject & Topic breadcrumbs, session status badge, question counter, Pause & Exit controls.
-  3. **Active Question Card**: Question type badge (`Mechanism`, `Compare`, `Explain in own words`), difficulty tag, targeted concept tags, prominent question text.
-  4. **Answer Composer**: Controlled textarea, character counter, keyboard submit affordance (`Ctrl+Enter` / `Cmd+Enter`), primary "Submit Answer" button with loading state.
-  5. **Structured Evaluation Panel**: Multi-criteria visual score breakdown (Correctness, Completeness, Reasoning Quality), highlighted strengths, missing logical steps, teacher feedback text.
-  6. **Socratic Remediation & Probing Card**: Distinct warning/remediation card surfacing guidance hints and the targeted follow-up question.
-  7. **Action Toolbar**: "Next Question" button (in `ADVANCING`), "Submit Follow-Up" (in `RECHECKING`), "Try Again" / "Exit" controls.
-
----
-
-## 10. Automated Testing Strategy
-
-### A. Backend Unit & Integration Tests (`server/tests/studySession.test.js`)
-- **State Machine Tests**: Verify valid transitions and assertion of invalid transitions across all 10 states.
-- **Question Generation**: Verify schema compliance, concept attribution, and difficulty mapping.
-- **Answer Evaluation**: Verify multi-criteria scoring, missing step detection, and misconception flagging.
-- **Remediation & Socratic Loop**: Verify partial/incorrect answers route to remediation and do not advance blindly.
-- **Advancement Guard**: Verify advancement occurs only upon verified correct understanding.
-- **Concurrency & Idempotency**: Verify duplicate submissions, stale `sessionVersion` collisions (HTTP 409), and `clientTurnId` network retries.
-- **Security & Tenant Isolation**: Verify cross-user access returns 404.
-- **AI Fallback Resilience**: Verify deterministic rule-based fallback when AI providers fail.
-
-### B. Frontend Component Tests (`client/src/pages/Study.test.jsx`)
-- Initial load, topic selection, session resume.
-- Active question rendering, answer input, character counter.
-- Form submission, loading skeleton, keyboard shortcut (`Ctrl+Enter`).
-- Evaluation feedback rendering, strengths/weaknesses display.
-- Socratic remediation view, follow-up submission, session completion flow.
-- Error state handling and tenant access denials.
+Explicit test cases to implement:
+1. **Duplicate Initial Answer Race**: Rapid double-submit produces exactly one evaluated turn; second fails with HTTP 409 `STALE_STUDY_STATE`.
+2. **Duplicate Follow-Up Answer Race**: Double-submit on follow-up question safely handled with single turn insertion.
+3. **Idempotency Key Reuse Conflict**: Submitting same `clientTurnId` with modified answer payload rejects with HTTP 409 `IDEMPOTENCY_KEY_REUSE_CONFLICT`.
+4. **Idempotent Retry**: Submitting same `clientTurnId` with identical payload returns existing evaluated turn (HTTP 200).
+5. **Process Crash & Lease Recovery**: Simulating crash during `EVALUATING` recovers via lease expiration upon subsequent request.
+6. **Pause During Evaluation Blocked**: Attempting to pause while `status: 'EVALUATING'` returns HTTP 409 `CANNOT_PAUSE_DURING_EVALUATION`.
+7. **Pause and Resume from Remediation**: Pausing from `REMEDIATING` stores `pausedFromStatus: 'REMEDIATING'` and resumes cleanly.
+8. **Follow-Up Answer Persistence**: Follow-up turn persisted with `attemptType: 'FOLLOW_UP'`, `parentTurnId` pointing to initial turn, preserving complete history.
+9. **Syllabus Version Pinning**: Approving a new syllabus version does not alter an existing active session's pinned `syllabusVersionId`.
+10. **Hallucinated Concept Stripping**: Out-of-scope/hallucinated concept names in AI output are stripped and normalized strictly to canonical topic concepts.
+11. **Stale Concurrent Tab Submission**: Out-of-order sequence index submission from concurrent tab rejected with HTTP 409.
+12. **Cross-Tenant Security**: Other tenant user cannot access or submit answers to session (HTTP 404).
 
 ---
 
-## 11. Fail-Closed Live Verification Plan (`server/scripts/verify_phase08_live.js`)
+## 12. Fail-Closed Live Verification Plan (`verify_phase08_live.js`)
 
 Execution against live Express API, MongoDB Atlas replica set, and Groq/OpenAI AI Gateway:
 
@@ -487,13 +510,13 @@ Execution against live Express API, MongoDB Atlas replica set, and Groq/OpenAI A
 2. `[2/18]` `[DATABASE]` MongoDB Atlas Replica Set Connection.
 3. `[3/18]` `[DATABASE]` Multi-Document Transaction Support Assertion.
 4. `[4/18]` `[DATABASE]` Isolated Test Tenant & Canonical Knowledge Setup.
-5. `[5/18]` `[HTTP API]` Create Study Session (`POST /api/v1/topics/:topicId/study/sessions`).
-6. `[6/18]` `[DOMAIN-SERVICE]` Verify Session Ownership & Initial State `QUESTIONING`.
-7. `[7/18]` `[AI GATEWAY]` Verify Structured Question Generation with Target Concepts.
+5. `[5/18]` `[HTTP API]` Create Study Session with Pinned Syllabus (`POST /api/v1/topics/:topicId/study/sessions`).
+6. `[6/18]` `[DOMAIN-SERVICE]` Verify Session Ownership, Initial State `QUESTIONING`, and Curriculum Pinning.
+7. `[7/18]` `[AI GATEWAY]` Verify Structured Question Generation with Target Concepts Whitelist.
 8. `[8/18]` `[HTTP API]` Submit Incomplete/Weak Answer (`POST /study-sessions/:id/answer`).
 9. `[9/18]` `[AI GATEWAY]` Verify Structured Answer Evaluation (`PARTIALLY_CORRECT` / `INCORRECT`).
 10. `[10/18]` `[PEDAGOGY]` Verify Remediation Loop Triggered (Does NOT advance blindly).
-11. `[11/18]` `[HTTP API]` Submit Socratic Follow-Up Answer.
+11. `[11/18]` `[HTTP API]` Submit Socratic Follow-Up Answer (`attemptType: 'FOLLOW_UP'`, `parentTurnId` linked).
 12. `[12/18]` `[PEDAGOGY]` Verify Demonstrated Understanding & Advancement (`CORRECT` $\rightarrow$ `ADVANCE`).
 13. `[13/18]` `[HTTP API]` Fetch Next Question (`POST /study-sessions/:id/continue`).
 14. `[14/18]` `[DOMAIN-SERVICE CONCURRENCY]` Proving Real Live Concurrency: Duplicate Answer Submission Race with Synchronization Barrier.
