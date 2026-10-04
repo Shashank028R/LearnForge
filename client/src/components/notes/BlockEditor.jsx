@@ -67,7 +67,7 @@ export function BlockEditor({
     if (type === 'heading') newContent = { level: 2, text: 'New Section' };
     if (type === 'bullet_list') newContent = { items: ['First point'] };
     if (type === 'numbered_list') newContent = { items: ['Step 1'] };
-    if (type === 'code') newContent = { language: 'python', code: '# Enter code here\n', caption: '' };
+    if (type === 'code') newContent = { language: 'python', code: '# Enter code here\n' };
     if (type === 'callout') newContent = { variant: 'info', title: 'Note', text: 'Important concept note' };
     if (type === 'quote') newContent = { text: 'Notable quote', citation: '' };
     if (type === 'divider') newContent = {};
@@ -224,7 +224,6 @@ export function BlockEditor({
                   <option value={1}>H1</option>
                   <option value={2}>H2</option>
                   <option value={3}>H3</option>
-                  <option value={4}>H4</option>
                 </select>
                 <input
                   type="text"
@@ -298,18 +297,6 @@ export function BlockEditor({
                     }
                     placeholder="Language (e.g. rust, python)..."
                     className="w-32 p-1.5 rounded border border-app-border bg-app-surface text-app-text-primary text-xs"
-                  />
-                  <input
-                    type="text"
-                    value={block.content?.caption || ''}
-                    onChange={(e) =>
-                      handleUpdateBlockContent(idx, {
-                        ...block.content,
-                        caption: e.target.value,
-                      })
-                    }
-                    placeholder="Optional caption..."
-                    className="flex-1 p-1.5 rounded border border-app-border bg-app-surface text-app-text-primary text-xs"
                   />
                 </div>
                 <textarea

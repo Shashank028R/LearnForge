@@ -91,12 +91,10 @@ export function BlockRenderer({ block, showProvenance = false, className = '' })
       case 'code': {
         const language = content?.language || 'text';
         const code = content?.code || '';
-        const caption = content?.caption;
         return (
           <div className="my-3 rounded-lg border border-app-border bg-app-surface-muted/50 overflow-hidden font-mono text-xs">
             <div className="flex items-center justify-between px-3 py-1.5 bg-app-surface border-b border-app-border text-app-text-muted">
               <span>{language}</span>
-              {caption && <span className="italic">{caption}</span>}
             </div>
             <pre className="p-3.5 overflow-x-auto text-app-text-primary font-mono text-xs leading-relaxed">
               <code>{code}</code>

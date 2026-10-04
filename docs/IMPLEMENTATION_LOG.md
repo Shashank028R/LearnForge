@@ -32,10 +32,10 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - `client/src/components/notes/VersionHistoryDrawer.jsx`: History inspector for viewing immutable snapshots and restoring versions.
    - `client/src/components/notes/ProposalReviewModal.jsx`: Risk-informed proposal diff review and approval modal.
 7. **Testing & Verification**:
-   - Added 29 automated unit/integration tests in `server/tests/notes.test.js` (total 196 backend tests passing 100%).
-   - Added 5 frontend tests in `client/src/pages/Notes.test.jsx` (total 51 client tests passing 100%).
-   - Total Monorepo Automated Tests: 247 / 247 passing (100%).
-   - Fail-closed live verification script `server/scripts/verify_phase07_live.js` fully passed all 16 verification gates.
+   - Added 37 automated unit/integration tests in `server/tests/notes.test.js` (total 204 backend tests passing 100%).
+   - Added 6 frontend tests in `client/src/pages/Notes.test.jsx` (total 52 client tests passing 100%).
+   - Total Monorepo Automated Tests: 256 / 256 passing (100%).
+   - Fail-closed live verification script `server/scripts/verify_phase07_live.js` fully passed all 16 verification gates including real live deterministic concurrency barriers against MongoDB Atlas replica set transactions and immutability-safe native collection teardown.
 
 ---
 

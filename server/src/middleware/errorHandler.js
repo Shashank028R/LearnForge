@@ -13,7 +13,12 @@ export function notFoundHandler(req, res) {
 }
 
 export function globalErrorHandler(err, req, res, next) {
-  const status = typeof err.statusCode === 'number' ? err.statusCode : 500;
+  const status =
+    typeof err.statusCode === 'number'
+      ? err.statusCode
+      : typeof err.status === 'number'
+      ? err.status
+      : 500;
   const code = err.code || (status === 500 ? 'INTERNAL_SERVER_ERROR' : 'ERROR');
   const message = err.message || 'An unexpected server error occurred.';
 

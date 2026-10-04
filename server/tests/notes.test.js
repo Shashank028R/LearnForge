@@ -257,28 +257,35 @@ describe('Phase 07 — Structured Notes Engine', () => {
       }
 
       const createQueryChain = (doc) => {
+        let isLean = false;
+        let isPopulated = false;
+
+        const execute = () => {
+          if (!doc) return null;
+          let res = doc;
+          if (doc.toObject && isLean) {
+            res = doc.toObject();
+          } else if (isLean) {
+            res = { ...doc };
+          }
+          if (isPopulated && doc.currentVersionId) {
+            const ver = noteVersionsStore.get(doc.currentVersionId.toString()) || doc.currentVersionId;
+            res = { ...res, currentVersionId: ver };
+          }
+          return res;
+        };
+
         const chain = {
-          populate: () => ({
-            lean: async () => {
-              if (!doc) return null;
-              const res = { ...doc };
-              if (doc.currentVersionId) {
-                res.currentVersionId = noteVersionsStore.get(doc.currentVersionId.toString()) || doc.currentVersionId;
-              }
-              return res;
-            },
-            then: (resolve) => {
-              if (!doc) return resolve(null);
-              const res = { ...doc };
-              if (doc.currentVersionId) {
-                res.currentVersionId = noteVersionsStore.get(doc.currentVersionId.toString()) || doc.currentVersionId;
-              }
-              return resolve(res);
-            },
-          }),
+          populate: () => {
+            isPopulated = true;
+            return chain;
+          },
           session: () => chain,
-          lean: async () => doc || null,
-          then: (resolve) => resolve(doc || null),
+          lean: () => {
+            isLean = true;
+            return chain;
+          },
+          then: (resolve) => resolve(execute()),
         };
         return chain;
       };
@@ -435,6 +442,36 @@ describe('Phase 07 — Structured Notes Engine', () => {
       };
     });
 
+    vi.spyOn(NoteProposal, 'findOneAndUpdate').mockImplementation(async (query, update) => {
+      let found = null;
+      for (const p of noteProposalsStore.values()) {
+        if (query._id && p._id.toString() === query._id.toString()) {
+          if (!query.userId || p.userId.toString() === query.userId.toString()) {
+            if (!query.status || p.status === query.status) {
+              found = p;
+              break;
+            }
+          }
+        }
+      }
+      if (!found) return null;
+
+      if (update.$set) {
+        Object.assign(found, update.$set);
+      }
+      if (update.$push) {
+        for (const [k, v] of Object.entries(update.$push)) {
+          if (k.includes('.')) {
+            const [parent, child] = k.split('.');
+            if (found[parent] && Array.isArray(found[parent][child])) {
+              found[parent][child].push(v);
+            }
+          }
+        }
+      }
+      return found;
+    });
+
     vi.spyOn(NoteProposal, 'countDocuments').mockImplementation(async (query) => {
       let count = 0;
       for (const p of noteProposalsStore.values()) {
@@ -443,6 +480,11 @@ describe('Phase 07 — Structured Notes Engine', () => {
         }
       }
       return count;
+    });
+
+    vi.spyOn(NoteProposal.prototype, 'save').mockImplementation(async function () {
+      noteProposalsStore.set(this._id.toString(), this);
+      return this;
     });
 
     // Mock startSession to simulate MongoDB transactions
@@ -492,7 +534,6 @@ describe('Phase 07 — Structured Notes Engine', () => {
       const validCode = validateBlockContent('code', {
         language: 'rust',
         code: 'fn main() { println!("Hello LearnForge"); }',
-        caption: 'Entry point',
       });
       expect(validCode.isValid).toBe(true);
 
@@ -537,6 +578,41 @@ describe('Phase 07 — Structured Notes Engine', () => {
       const unknownType = validateBlockContent('unsupported_type', { text: 'test' });
       expect(unknownType.isValid).toBe(false);
       expect(unknownType.reason).toContain('Unsupported block type');
+    });
+
+    it('rejects heading level 4 and higher (strict levels 1, 2, 3)', () => {
+      const h4 = validateBlockContent('heading', { level: 4, text: 'H4 not allowed' });
+      expect(h4.isValid).toBe(false);
+      expect(h4.reason).toContain('"level" must be 1, 2, or 3');
+    });
+
+    it('rejects code blocks with unsupported keys (e.g. caption)', () => {
+      const codeWithCaption = validateBlockContent('code', {
+        language: 'rust',
+        code: 'let x = 1;',
+        caption: 'Illegal caption key',
+      });
+      expect(codeWithCaption.isValid).toBe(false);
+      expect(codeWithCaption.reason).toContain('unsupported field(s): caption');
+    });
+
+    it('rejects paragraph with unknown fields', () => {
+      const invalidP = validateBlockContent('paragraph', {
+        text: 'Valid text',
+        unknownField: 123,
+      });
+      expect(invalidP.isValid).toBe(false);
+      expect(invalidP.reason).toContain('unsupported field(s): unknownField');
+    });
+
+    it('rejects callout with unknown fields', () => {
+      const invalidCallout = validateBlockContent('callout', {
+        variant: 'info',
+        text: 'Valid text',
+        customGimmick: true,
+      });
+      expect(invalidCallout.isValid).toBe(false);
+      expect(invalidCallout.reason).toContain('unsupported field(s): customGimmick');
     });
   });
 
@@ -1049,6 +1125,180 @@ describe('Phase 07 — Structured Notes Engine', () => {
 
       expect(result.proposal.status).toBe('rejected');
       expect(result.proposal.riskAssessment.reasons.some((r) => r.includes('Too aggressive'))).toBe(true);
+    });
+
+    it('enforces server-authoritative block provenance during manual revision', async () => {
+      const v1Id = new mongoose.Types.ObjectId();
+      const existingNote = {
+        _id: new mongoose.Types.ObjectId(),
+        userId: userA._id,
+        subjectId: subjectA._id,
+        topicId: topicA._id,
+        title: 'LSM Trees',
+        currentVersionNumber: 1,
+        currentVersionId: {
+          _id: v1Id,
+          blocks: [
+            {
+              id: 'b1',
+              type: 'heading',
+              content: { level: 1, text: 'LSM Overview' },
+              order: 0,
+              origin: 'ai', // Existing AI block
+            },
+          ],
+        },
+        save: async function () {
+          return this;
+        },
+        toObject: function () {
+          return { ...this };
+        },
+      };
+      noteDocumentsStore.set(existingNote._id.toString(), existingNote);
+
+      vi.spyOn(NoteVersion.prototype, 'save').mockImplementation(async function () {
+        noteVersionsStore.set(this._id.toString(), this);
+        return this;
+      });
+
+      const result = await notesService.createManualRevision({
+        userId: userA._id,
+        noteId: existingNote._id,
+        baseVersion: 1,
+        blocks: [
+          // 1. Unchanged existing block -> keeps server origin 'ai'
+          {
+            id: 'b1',
+            type: 'heading',
+            content: { level: 1, text: 'LSM Overview' },
+            order: 0,
+            origin: 'ai',
+          },
+          // 2. Client attempts to forge origin: 'ai' on a brand new block -> MUST become 'user'
+          {
+            id: 'b2',
+            type: 'paragraph',
+            content: { text: 'Client authored text claiming to be AI' },
+            order: 1,
+            origin: 'ai',
+          },
+          // 3. Client attempts to forge origin: 'system' on a brand new block -> MUST become 'user'
+          {
+            id: 'b3',
+            type: 'paragraph',
+            content: { text: 'Client authored text claiming to be system' },
+            order: 2,
+            origin: 'system',
+          },
+        ],
+      });
+
+      const versionBlocks = result.version.blocks;
+      expect(versionBlocks[0].origin).toBe('ai'); // Retained from existing
+      expect(versionBlocks[1].origin).toBe('user'); // Forgery blocked -> user
+      expect(versionBlocks[2].origin).toBe('user'); // Forgery blocked -> user
+    });
+
+    it('enforces server-authoritative note provenance on initial creation (rejects client-supplied aiMetadata)', async () => {
+      vi.spyOn(NoteVersion.prototype, 'save').mockImplementation(async function () {
+        noteVersionsStore.set(this._id.toString(), this);
+        return this;
+      });
+      vi.spyOn(NoteDocument.prototype, 'save').mockImplementation(async function () {
+        noteDocumentsStore.set(this._id.toString(), this);
+        return this;
+      });
+
+      const result = await notesService.createInitialTopicNote({
+        userId: userA._id,
+        topicId: topicA._id,
+        title: 'Provenance Guard Note',
+        blocks: [{ type: 'paragraph', content: { text: 'Initial content' } }],
+        provenance: {
+          conceptIds: ['fake_concept_id'],
+          aiMetadata: { provider: 'openai', model: 'gpt-4o' }, // Spoofed AI metadata
+        },
+      });
+
+      // Provenance stored on NoteVersion must be clean server-defined (no client-spoofed AI metadata)
+      expect(result.createdVersion.provenance.aiMetadata.provider).toBeNull();
+      expect(result.createdVersion.provenance.aiMetadata.model).toBeNull();
+      expect(result.createdVersion.provenance.conceptIds).toEqual([]);
+    });
+
+    it('accurately tracks AI vs fallback provenance during synthesis', async () => {
+      // 1. When AI fails or returns invalid JSON, fallback provenance is recorded
+      const mockFailingGateway = {
+        generate: vi.fn().mockRejectedValue(new Error('AI API rate limited')),
+      };
+      const synthServiceFailing = new NotesService(mockFailingGateway);
+
+      const fallbackResult = await synthServiceFailing.synthesizeNoteProposal({
+        userId: userA._id,
+        topicId: topicA._id,
+      });
+
+      expect(fallbackResult.proposal.provenance.aiMetadata.source).toBe('deterministic_fallback');
+      expect(fallbackResult.proposal.provenance.aiMetadata.provider).toBe('deterministic');
+      expect(fallbackResult.proposal.provenance.aiMetadata.model).toBe('rule-based-v1');
+
+      // 2. When AI succeeds with valid JSON, AI provenance is recorded and origin is normalized to 'ai'
+      const mockSuccessGateway = {
+        generate: vi.fn().mockResolvedValue({
+          text: JSON.stringify({
+            changeSummary: 'AI generated notes',
+            blocks: [
+              {
+                id: 'ai_b1',
+                type: 'heading',
+                content: { level: 1, text: 'AI Heading' },
+                origin: 'user', // AI hallucinates origin 'user' -> MUST be normalized to 'ai'
+              },
+            ],
+          }),
+          provider: 'groq',
+          model: 'openai/gpt-oss-20b',
+          latencyMs: 150,
+          requestId: 'req-test-ai',
+        }),
+      };
+      const synthServiceSuccess = new NotesService(mockSuccessGateway);
+
+      const aiResult = await synthServiceSuccess.synthesizeNoteProposal({
+        userId: userA._id,
+        topicId: topicA._id,
+      });
+
+      expect(aiResult.proposal.provenance.aiMetadata.source).toBe('ai');
+      expect(aiResult.proposal.provenance.aiMetadata.provider).toBe('groq');
+      expect(aiResult.proposal.provenance.aiMetadata.model).toBe('openai/gpt-oss-20b');
+      expect(aiResult.proposal.proposedBlocks[0].origin).toBe('ai'); // Normalized to 'ai'
+    });
+
+    it('prevents concurrent proposal approval / rejection race conditions', async () => {
+      const proposal = {
+        _id: new mongoose.Types.ObjectId(),
+        noteDocumentId: new mongoose.Types.ObjectId(),
+        userId: userA._id,
+        status: 'approved', // Already approved
+        riskAssessment: { reasons: [] },
+      };
+      noteProposalsStore.set(proposal._id.toString(), proposal);
+
+      // Attempting to reject an approved proposal must fail atomically
+      let error = null;
+      try {
+        await notesService.rejectProposal({
+          userId: userA._id,
+          proposalId: proposal._id,
+        });
+      } catch (err) {
+        error = err;
+      }
+
+      expect(error).toBeDefined();
+      expect(error.code).toBe('INVALID_PROPOSAL_STATUS');
     });
   });
 

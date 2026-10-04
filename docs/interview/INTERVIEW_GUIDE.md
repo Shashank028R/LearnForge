@@ -597,4 +597,63 @@ On MongoDB replica sets / Atlas clusters, `LearningEvent` creation, `Concept` up
 **Answer**:  
 Phase 06 strictly owns canonical concept extraction, learning event ledgers, and topic mastery state. Structured block notes, note version snapshots, and note diff proposals belong to Phase 07. Keeping these domains decoupled ensures modularity, testability, and architectural discipline.
 
+---
+
+## 10. Phase 07 — Structured Notes Engine & Immutable Versioning
+
+### Q83: Why are notes synthesized strictly from Canonical Concepts and Syllabus Versions rather than raw transcripts?
+**Answer**:  
+Raw conversation transcripts are noisy, conversational, and may contain fleeting confusion or uncorrected misconceptions. Synthesizing notes strictly via:
+$$\text{Raw Conversation} \longrightarrow \text{Learning Evidence (LearningEvent)} \longrightarrow \text{Canonical Knowledge (Concept)} \longrightarrow \text{Structured Notes}$$
+guarantees that notes reflect structured, pedagogical truth. Notes automatically reference verified mastery levels, active misconceptions, and approved syllabus topics.
+
+### Q84: How is NoteVersion immutability enforced across all mutation paths?
+**Answer**:  
+`NoteVersion` models represent permanent historical audit records and reject all forms of mutation or deletion:
+1. `pre('save')` rejects `!this.isNew`.
+2. Middleware hooks reject query updates (`updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace`).
+3. Middleware hooks reject query deletions (`deleteOne`, `deleteMany`, `findOneAndDelete`).
+4. Overridden static `bulkWrite` inspects and rejects batch operations containing updates or deletions.
+All mutation attempts throw domain error `IMMUTABLE_NOTE_VERSION` (HTTP 400). In test teardown, native MongoDB driver collection operations are used to clean test fixtures without bypassing or compromising production Mongoose model hooks.
+
+### Q85: How does LearnForge enforce Server-Authoritative Provenance for blocks and notes?
+**Answer**:  
+Client-supplied origin and AI metadata are never trusted:
+- **Manual Revisions**: Newly added or modified blocks receive server-assigned `origin: 'user'`. Unchanged existing blocks retain their prior server-side origin. Client attempts to submit `origin: 'ai'` or `origin: 'system'` are ignored/normalized to `'user'`.
+- **AI Synthesis**: Generated blocks from structured AI output are strictly assigned `origin: 'ai'`.
+- **Initial Note Creation**: Client-supplied `provenance` or `aiMetadata` is stripped to clean server defaults.
+- **AI Fallbacks**: If AI structured output fails JSON parsing, fallback sets `source: 'deterministic_fallback'`, `provider: 'deterministic'`, `model: 'rule-based-v1'`. Provider/model metadata is stored only upon verified AI output parsing.
+
+### Q86: How does optimistic concurrency control work for note revisions and proposal approvals?
+**Answer**:  
+Every revision, restore, and proposal approval requires the client to supply `baseVersion`. Inside a MongoDB multi-document transaction:
+1. The server loads the NoteDocument and asserts `baseVersion === noteDoc.currentVersionNumber`.
+2. If stale, the transaction aborts with HTTP 409 Conflict (`STALE_BASE_VERSION` / `STALE_PROPOSAL_BASE`).
+3. Secondary unique compound index `{ noteDocumentId: 1, version: 1 }` prevents concurrent transaction collisions, catching write conflicts / E11000 and cleanly returning domain 409 errors without leaking database errors or partial state.
+
+### Q87: How is real live concurrency proven for initial note creation and manual revision collisions?
+**Answer**:  
+The live verification script `server/scripts/verify_phase07_live.js` uses deterministic synchronization barriers (`TestSyncBarrier`):
+- **Initial Note Creation**: Two simultaneous requests pass the initial `findOne()` existence check and wait at the barrier. When released into transaction processing together, exactly one commits v1 (`resolvedVia: 'transaction_commit'`), while the other hits a unique key collision / write conflict, aborts, and recovers safely (`resolvedVia: 'transaction_conflict_recovery'`, `alreadyExisted: true`).
+- **Manual Revision Collision**: Two simultaneous revisions with `baseVersion: 1` pass base-version validation and synchronize at the barrier before version persistence. Exactly one commits v2, while the other aborts and returns HTTP 409 `STALE_BASE_VERSION` with zero raw E11000 and zero partial state.
+
+### Q88: How does the deterministic Risk Classifier protect user-authored content?
+**Answer**:  
+Candidate AI proposals are classified into risk tiers:
+- **`HIGH RISK`**: Any modification to user-authored blocks (`origin === 'user'`), modifications to code blocks, or changes to concepts with active conflicts. Always requires explicit manual user approval (`requiresApproval: true`).
+- **`MEDIUM RISK`**: Modifies or removes existing AI-authored explanation blocks. Requires explicit user approval.
+- **`LOW RISK`**: Pure additions to AI-authored sections.
+This ensures AI never silently overwrites student-crafted notes or code snippets.
+
+### Q89: How is the atomic proposal approval/rejection lifecycle guaranteed?
+**Answer**:  
+To prevent race conditions where an approval and rejection execute simultaneously, `rejectProposal` uses an atomic conditional status transition:
+`findOneAndUpdate({ _id: proposalId, userId, status: 'pending' }, { status: 'rejected', ... })`.
+If `approveProposal` has already claimed and committed the proposal to `approved`, the conditional find returns null and prevents conflicting state mutations.
+
+### Q90: Why does version restore append a new NoteVersion rather than mutating historical records?
+**Answer**:  
+In LearnForge, historical versions are immutable audit points. Restoring version $k$ creates a brand-new sequential `NoteVersion` (e.g., $v_{N+1}$) copying the blocks from $v_k$, setting `sourceType: 'version_restore'`, and pointing `NoteDocument.currentVersionId` to the newly created version. The historical $v_k$ version is preserved unmodified.
+
+
 

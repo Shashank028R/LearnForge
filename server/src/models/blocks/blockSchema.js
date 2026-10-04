@@ -24,12 +24,39 @@ export const BLOCK_ORIGINS = ['user', 'ai', 'system'];
 
 export const CALLOUT_VARIANTS = ['info', 'warning', 'tip', 'key_takeaway'];
 
+const ALLOWED_CONTENT_KEYS = {
+  heading: ['level', 'text'],
+  paragraph: ['text'],
+  bullet_list: ['items'],
+  numbered_list: ['items'],
+  code: ['code', 'language'],
+  quote: ['text', 'citation'],
+  callout: ['variant', 'text', 'title'],
+  table: ['headers', 'rows'],
+  divider: [],
+};
+
 /**
  * Validates the typed content schema for a specific block type
  */
 export function validateBlockContent(type, content) {
-  if (!content || typeof content !== 'object') {
+  if (!content || typeof content !== 'object' || Array.isArray(content)) {
     return { isValid: false, reason: 'Block content must be a non-null object' };
+  }
+
+  const allowedKeys = ALLOWED_CONTENT_KEYS[type];
+  if (!allowedKeys) {
+    return { isValid: false, reason: `Unsupported block type: ${type}` };
+  }
+
+  // Reject unknown keys
+  const contentKeys = Object.keys(content);
+  const unknownKeys = contentKeys.filter((k) => !allowedKeys.includes(k));
+  if (unknownKeys.length > 0) {
+    return {
+      isValid: false,
+      reason: `Block type "${type}" contains unsupported field(s): ${unknownKeys.join(', ')}`,
+    };
   }
 
   switch (type) {

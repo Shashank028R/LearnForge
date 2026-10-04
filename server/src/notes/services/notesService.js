@@ -1,7 +1,5 @@
 import mongoose from 'mongoose';
 import crypto from 'crypto';
-
-const uuidv4 = () => crypto.randomUUID();
 import { NoteDocument } from '../../models/NoteDocument.js';
 import { NoteVersion } from '../../models/NoteVersion.js';
 import { NoteProposal } from '../../models/NoteProposal.js';
@@ -14,6 +12,8 @@ import { validateBlockContent } from '../../models/blocks/blockSchema.js';
 import { classifyProposalRisk } from '../risk/riskClassifier.js';
 import { AI_TASK_TYPES } from '../../ai/schemas/tasks.js';
 
+const uuidv4 = () => crypto.randomUUID();
+
 /**
  * Notes Domain Service (Phase 07)
  * Authoritative service coordinating note persistence, immutable versioning,
@@ -22,27 +22,30 @@ import { AI_TASK_TYPES } from '../../ai/schemas/tasks.js';
 export class NotesService {
   constructor(aiGateway = null) {
     this.aiGateway = aiGateway;
+    this.testConcurrencyBarrier = null; // Test-only barrier for live verification
   }
 
   /**
-   * Helper to normalize raw block inputs into valid typed blocks
+   * Helper to normalize raw block inputs into valid typed blocks with server-authoritative provenance
+   * @param {Array} blocks - Array of block objects
+   * @param {string} mode - 'user_edit' | 'ai_synthesis' | 'system'
+   * @param {Array} existingBlocks - Current version blocks (for preserving existing provenance during manual revision)
    */
-  normalizeBlocks(blocks = [], defaultOrigin = 'user') {
+  normalizeBlocks(blocks = [], mode = 'user_edit', existingBlocks = []) {
     if (!Array.isArray(blocks)) {
       throw new Error('Blocks must be an array');
     }
+
+    const existingMap = new Map();
+    existingBlocks.forEach((eb) => existingMap.set(eb.id, eb));
 
     return blocks.map((b, idx) => {
       const id = b.id || uuidv4();
       const type = b.type;
       const content = b.content;
       const order = typeof b.order === 'number' ? b.order : idx;
-      const origin = ['user', 'ai', 'system'].includes(b.origin) ? b.origin : defaultOrigin;
-      const metadata = b.metadata || {
-        conceptAttributions: b.conceptAttributions || [],
-        lastModifiedAt: new Date(),
-      };
 
+      // 1. Strict Schema Validation
       const validation = validateBlockContent(type, content);
       if (!validation.isValid) {
         const valErr = new Error(`Block ${idx} (${type}) validation failed: ${validation.reason}`);
@@ -51,12 +54,48 @@ export class NotesService {
         throw valErr;
       }
 
+      // 2. Server-Authoritative Origin Resolution
+      let authoritativeOrigin = 'user';
+
+      if (mode === 'ai_synthesis') {
+        // AI proposals are ALWAYS assigned origin 'ai' by the server. Never trust AI or client claims.
+        authoritativeOrigin = 'ai';
+      } else if (mode === 'system') {
+        authoritativeOrigin = 'system';
+      } else {
+        // Manual User Revision:
+        // If block existed previously and content/type/order are completely unchanged, retain prior server origin.
+        // If block is new or was modified, it is server-assigned origin 'user'.
+        // Client-supplied origin is strictly ignored.
+        const prev = existingMap.get(id);
+        if (prev) {
+          const isContentEqual = JSON.stringify(prev.content) === JSON.stringify(content);
+          const isTypeEqual = prev.type === type;
+          const isOrderEqual = prev.order === order;
+
+          if (isContentEqual && isTypeEqual && isOrderEqual) {
+            authoritativeOrigin = prev.origin || 'user';
+          } else {
+            authoritativeOrigin = 'user';
+          }
+        } else {
+          authoritativeOrigin = 'user';
+        }
+      }
+
+      const metadata = {
+        conceptAttributions: Array.isArray(b.metadata?.conceptAttributions)
+          ? b.metadata.conceptAttributions.filter((s) => typeof s === 'string')
+          : [],
+        lastModifiedAt: new Date(),
+      };
+
       return {
         id,
         type,
         content,
         order,
-        origin,
+        origin: authoritativeOrigin,
         metadata,
       };
     });
@@ -182,7 +221,6 @@ export class NotesService {
       title,
       blocks = [],
       changeSummary = 'Initial note creation',
-      provenance = {},
     } = params;
 
     // 1. Verify Topic ownership and retrieve Subject
@@ -202,7 +240,23 @@ export class NotesService {
       throw err;
     }
 
-    const normalizedBlocks = this.normalizeBlocks(blocks, 'user');
+    // Pre-check for existing note before transaction
+    const initialExistenceCheck = await NoteDocument.findOne({ userId, topicId }).populate('currentVersionId');
+    if (initialExistenceCheck) {
+      return {
+        note: initialExistenceCheck.toObject ? initialExistenceCheck.toObject() : initialExistenceCheck,
+        alreadyExisted: true,
+        resolvedVia: 'pre_check',
+      };
+    }
+
+    // Concurrency test hook: synchronization barrier before entering transaction
+    if (this.testConcurrencyBarrier) {
+      await this.testConcurrencyBarrier.wait('createInitialTopicNote');
+    }
+
+    // Server-authoritative normalization: user-authored initial note
+    const normalizedBlocks = this.normalizeBlocks(blocks, 'user_edit', []);
     const noteTitle = title?.trim() || topic.title || 'Untitled Note';
 
     // 2. Atomic Multi-Document Transaction
@@ -228,20 +282,22 @@ export class NotesService {
     }
 
     try {
-      // Check if note already exists for this topic within session
+      // Check if note was committed concurrently within session
       const existingNote = await NoteDocument.findOne({ userId, topicId }).session(session);
       if (existingNote) {
         await session.abortTransaction();
         const existingPopulated = await NoteDocument.findById(existingNote._id).populate('currentVersionId');
         return {
-          note: existingPopulated,
+          note: existingPopulated.toObject(),
           alreadyExisted: true,
+          resolvedVia: 'pre_check',
         };
       }
 
       const noteDocId = new mongoose.Types.ObjectId();
       const versionDocId = new mongoose.Types.ObjectId();
 
+      // Server-authoritative note provenance: manual creation has empty AI metadata
       const noteVersion = new NoteVersion({
         _id: versionDocId,
         noteDocumentId: noteDocId,
@@ -254,11 +310,11 @@ export class NotesService {
         sourceType: 'initial_creation',
         changeSummary,
         provenance: {
-          conceptIds: provenance.conceptIds || [],
-          learningEventIds: provenance.learningEventIds || [],
-          syllabusVersionId: provenance.syllabusVersionId || null,
-          syllabusVersion: provenance.syllabusVersion || null,
-          aiMetadata: provenance.aiMetadata || {},
+          conceptIds: [],
+          learningEventIds: [],
+          syllabusVersionId: null,
+          syllabusVersion: null,
+          aiMetadata: {},
         },
         createdBy: userId,
       });
@@ -277,7 +333,7 @@ export class NotesService {
         metadata: {
           blockCount: normalizedBlocks.length,
           totalWordCount: normalizedBlocks.reduce((acc, b) => acc + JSON.stringify(b.content).length, 0),
-          conceptAttributionCount: (provenance.conceptIds || []).length,
+          conceptAttributionCount: 0,
           lastSynthesizedAt: new Date(),
         },
       });
@@ -293,17 +349,20 @@ export class NotesService {
         note: resultNote,
         createdVersion: noteVersion.toObject(),
         alreadyExisted: false,
+        resolvedVia: 'transaction_commit',
       };
     } catch (err) {
       try {
         await session.abortTransaction();
       } catch (_) {}
 
-      // Handle concurrent creation race on unique { userId: 1, topicId: 1 }
+      // Handle concurrent creation race on unique { userId: 1, topicId: 1 } or write conflicts
       const isDuplicateKey =
         err.code === 11000 ||
+        err.code === 112 ||
         err.codeName === 'DuplicateKey' ||
-        /E11000|duplicate key/i.test(err.message || '');
+        err.codeName === 'WriteConflict' ||
+        /E11000|duplicate key|WriteConflict/i.test(err.message || '');
 
       if (isDuplicateKey) {
         const existingNote = await NoteDocument.findOne({ userId, topicId }).populate('currentVersionId');
@@ -311,6 +370,7 @@ export class NotesService {
           return {
             note: existingNote.toObject(),
             alreadyExisted: true,
+            resolvedVia: 'transaction_conflict_recovery',
           };
         }
       }
@@ -341,8 +401,6 @@ export class NotesService {
       throw err;
     }
 
-    const normalizedBlocks = this.normalizeBlocks(blocks, 'user');
-
     let session = null;
     try {
       session = await mongoose.startSession();
@@ -365,7 +423,10 @@ export class NotesService {
     }
 
     try {
-      const noteDoc = await NoteDocument.findOne({ _id: noteId, userId }).session(session);
+      const noteDoc = await NoteDocument.findOne({ _id: noteId, userId })
+        .populate('currentVersionId')
+        .session(session);
+
       if (!noteDoc) {
         const err = new Error(`Note ${noteId} not found or unauthorized.`);
         err.code = 'NOT_FOUND';
@@ -383,6 +444,14 @@ export class NotesService {
         throw conflictErr;
       }
 
+      // Concurrency barrier hook: synchronization barrier before version persistence
+      if (this.testConcurrencyBarrier) {
+        await this.testConcurrencyBarrier.wait('createManualRevision');
+      }
+
+      const existingBlocks = noteDoc.currentVersionId?.blocks || [];
+      const normalizedBlocks = this.normalizeBlocks(blocks, 'user_edit', existingBlocks);
+
       const newVersionNumber = baseVersion + 1;
       const versionDocId = new mongoose.Types.ObjectId();
 
@@ -393,7 +462,7 @@ export class NotesService {
         subjectId: noteDoc.subjectId,
         topicId: noteDoc.topicId,
         version: newVersionNumber,
-        parentVersionId: noteDoc.currentVersionId,
+        parentVersionId: noteDoc.currentVersionId?._id || noteDoc.currentVersionId,
         blocks: normalizedBlocks,
         sourceType: 'manual_edit',
         changeSummary,
@@ -671,13 +740,7 @@ export class NotesService {
     let aiResult = null;
     let proposedBlocks = [];
     let changeSummary = 'Synthesized from canonical concepts and validated learning events';
-    let aiMetadata = {
-      provider: 'deterministic',
-      model: 'none',
-      task: AI_TASK_TYPES.NOTE_SYNTHESIS,
-      requestId,
-      latencyMs: 0,
-    };
+    let aiMetadata = null;
 
     // 3. Invoke AI Gateway if configured
     if (this.aiGateway) {
@@ -702,14 +765,6 @@ ${customInstructions ? `Special Instructions: ${customInstructions}` : ''}`;
         });
 
         if (aiResult?.text) {
-          aiMetadata = {
-            provider: aiResult.provider,
-            model: aiResult.model,
-            task: aiResult.task || AI_TASK_TYPES.NOTE_SYNTHESIS,
-            requestId: aiResult.requestId || requestId,
-            latencyMs: aiResult.latencyMs || 0,
-          };
-
           const rawText = aiResult.text.trim();
           let jsonStr = rawText;
           const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -720,12 +775,25 @@ ${customInstructions ? `Special Instructions: ${customInstructions}` : ''}`;
           const parsed = JSON.parse(jsonStr);
           if (parsed.changeSummary) changeSummary = parsed.changeSummary;
           if (Array.isArray(parsed.blocks)) {
-            proposedBlocks = this.normalizeBlocks(parsed.blocks, 'ai');
+            // Server enforces origin: 'ai' on all AI proposed blocks
+            proposedBlocks = this.normalizeBlocks(parsed.blocks, 'ai_synthesis', []);
+          }
+
+          // Persist AI provider/model metadata ONLY on successful parse and non-empty blocks
+          if (proposedBlocks.length > 0) {
+            aiMetadata = {
+              provider: aiResult.provider,
+              model: aiResult.model,
+              task: aiResult.task || AI_TASK_TYPES.NOTE_SYNTHESIS,
+              requestId: aiResult.requestId || requestId,
+              latencyMs: aiResult.latencyMs || 0,
+              source: 'ai',
+            };
           }
         }
       } catch (aiErr) {
-        // Fallback to deterministic synthesis if AI is unavailable or produces invalid JSON
         proposedBlocks = [];
+        aiMetadata = null;
       }
     }
 
@@ -737,6 +805,14 @@ ${customInstructions ? `Special Instructions: ${customInstructions}` : ''}`;
         learningEvents,
       });
       changeSummary = 'Deterministic factual note synthesis from canonical topic concepts';
+      aiMetadata = {
+        provider: 'deterministic',
+        model: 'rule-based-v1',
+        task: AI_TASK_TYPES.NOTE_SYNTHESIS,
+        requestId,
+        latencyMs: 0,
+        source: 'deterministic_fallback',
+      };
     }
 
     // 5. Evaluate Risk Classification and Block Diff
@@ -767,13 +843,19 @@ ${customInstructions ? `Special Instructions: ${customInstructions}` : ''}`;
         learningEventIds: learningEvents.map((e) => e._id),
         syllabusVersionId: approvedSyllabus ? approvedSyllabus._id : null,
         syllabusVersion: approvedSyllabus ? approvedSyllabus.version : null,
-        aiMetadata,
+        aiMetadata: aiMetadata || {
+          provider: 'deterministic',
+          model: 'rule-based-v1',
+          task: AI_TASK_TYPES.NOTE_SYNTHESIS,
+          requestId,
+          latencyMs: 0,
+          source: 'deterministic_fallback',
+        },
       },
       status: 'pending',
       changeSummary,
     });
 
-    // If there was no existing NoteDocument, we create it when the proposal is approved
     if (existingNote) {
       proposalDoc.noteDocumentId = existingNote._id;
     }
@@ -1061,36 +1143,47 @@ ${customInstructions ? `Special Instructions: ${customInstructions}` : ''}`;
   }
 
   /**
-   * Rejects a NoteProposal
+   * Rejects a NoteProposal atomically
    */
   async rejectProposal(params) {
     const { userId, proposalId, reason } = params;
 
-    const proposal = await NoteProposal.findOne({ _id: proposalId, userId });
-    if (!proposal) {
-      const err = new Error(`Proposal ${proposalId} not found or unauthorized.`);
-      err.code = 'NOT_FOUND';
-      err.status = 404;
-      throw err;
+    const updateOps = {
+      $set: {
+        status: 'rejected',
+        reviewedAt: new Date(),
+      },
+    };
+
+    if (reason) {
+      updateOps.$push = {
+        'riskAssessment.reasons': `Rejection reason: ${reason}`,
+      };
     }
 
-    if (proposal.status !== 'pending') {
-      const err = new Error(`Cannot reject proposal in '${proposal.status}' state.`);
+    // Atomic conditional status transition to prevent concurrent approval race
+    const proposal = await NoteProposal.findOneAndUpdate(
+      { _id: proposalId, userId, status: 'pending' },
+      updateOps,
+      { new: true }
+    );
+
+    if (!proposal) {
+      const existing = await NoteProposal.findOne({ _id: proposalId, userId });
+      if (!existing) {
+        const err = new Error(`Proposal ${proposalId} not found or unauthorized.`);
+        err.code = 'NOT_FOUND';
+        err.status = 404;
+        throw err;
+      }
+      const err = new Error(`Cannot reject proposal in '${existing.status}' state.`);
       err.code = 'INVALID_PROPOSAL_STATUS';
       err.status = 400;
       throw err;
     }
 
-    proposal.status = 'rejected';
-    proposal.reviewedAt = new Date();
-    if (reason) {
-      proposal.riskAssessment.reasons.push(`Rejection reason: ${reason}`);
-    }
-
-    await proposal.save();
-
     return {
-      proposal: proposal.toObject(),
+      proposal: proposal.toObject ? proposal.toObject() : proposal,
     };
   }
 

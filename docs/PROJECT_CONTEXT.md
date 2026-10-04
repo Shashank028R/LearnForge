@@ -10,8 +10,8 @@
 
 ## 2. Current Phase Status
 
-- **Current Phase**: **Phase 06 — Knowledge Extraction Engine & Pedagogical Analysis (COMPLETED)**
-- **Next Phase**: **Phase 07 — Structured Notes Engine (Awaiting authorization)**
+- **Current Phase**: **Phase 07 — Structured Notes Engine (COMPLETED & SEALED)**
+- **Next Phase**: **Phase 08 — Adaptive Study Sessions & Active Recall (Awaiting authorization)**
 - **Repository Remote**: `https://github.com/Shashank028R/LearnForge.git`
 - **Default Branch**: `main`
 
@@ -86,19 +86,27 @@
 - **Deterministic Learning State Machine**: Governs transitions across `NOT_STARTED`, `INTRODUCED`, `LEARNING`, `UNDERSTOOD`, `STRONG`, and `NEEDS_REVIEW` using bounded diminishing returns confidence calculations and misconception penalties.
 - **Misconception & Conflict Governance**: Tracks active and resolved misconceptions with corrective explanations; flags conceptual conflicts without deleting historical evidence or trusted knowledge.
 - **Idempotency & Transaction Boundaries**: Compound unique index `{ userId: 1, idempotencyKey: 1 }` prevents duplicate event processing; multi-document ACID transactions atomically update `LearningEvent`, `Concept`, and `Topic.knowledgeState`.
-- **Strict Phase Boundary**: Zero `NoteDocument` or `NoteVersion` records created (deferred to Phase 07).
+- **Strict Phase Boundary**: Zero `NoteDocument` or `NoteVersion` records created in Phase 06.
+
+### Phase 07 (Structured Notes Engine & Immutable Versioning)
+- **Strict Invariant Pipeline**: Notes are synthesized exclusively from Canonical Concepts and approved Syllabus Versions (`Raw Conversation` → `LearningEvent` → `Canonical Concept` → `Structured NoteDocument & NoteVersion`).
+- **Domain Persistence & Decoupled Architecture**: `NoteDocument` anchors topic pointer (`currentVersionId`, `currentVersionNumber`); `NoteVersion` is strictly append-only and immutable with zero mutable status flags.
+- **Strict Immutability Guards**: All 10 update/delete mutation paths (`save`, `updateOne`, `updateMany`, `findOneAndUpdate`, `replaceOne`, `findOneAndReplace`, `deleteOne`, `deleteMany`, `findOneAndDelete`, `bulkWrite`) throw `IMMUTABLE_NOTE_VERSION`.
+- **Server-Authoritative Provenance**: User edits are assigned `origin: 'user'`, existing blocks retain server origin, AI proposals strictly assigned `origin: 'ai'`, and initial creation client AI metadata is ignored. Fallbacks accurately record `source: 'deterministic_fallback'`, `provider: 'deterministic'`, `model: 'rule-based-v1'`.
+- **Block Schema Alignment**: Heading levels 1, 2, 3 only; canonical code `{ language, code }`; strict validation rejecting unknown keys.
+- **Optimistic Concurrency & Real Live Concurrency Proof**: Verified via deterministic synchronization barriers against MongoDB Atlas replica set transactions for initial note creation races and manual revision collisions (409 `STALE_BASE_VERSION`, zero raw E11000).
+- **Risk-Managed Merge Staging & Atomic Lifecycle**: Staged `NoteProposal` records with risk tiers (`LOW`, `MEDIUM`, `HIGH`) and atomic conditional transitions preventing concurrent approval/rejection races.
 
 ---
 
 ## 4. Current Work
-- Phase 06 complete. Awaiting explicit project-owner authorization before beginning Phase 07.
+- Phase 07 complete and sealed. Awaiting explicit project-owner authorization before beginning Phase 08.
 
 ---
 
-## 5. Upcoming Work (Phase 07 — Structured Notes Engine)
-- Block-based structured notes schema (`NoteDocument` and `NoteVersion`).
-- Immutable note snapshot versioning and audit trails.
-- Risk-based AI merge proposals and diff previews.
+## 5. Upcoming Work (Phase 08 — Adaptive Study Sessions & Active Recall)
+- Active recall flashcard and quiz generators.
+- Socratic spaced-repetition study engine.
 
 ---
 
@@ -119,6 +127,7 @@
 - **ADR-013**: Syllabus Governance, Immutability and Topic Reconciliation.
 - **ADR-014**: AI Gateway Abstraction, Task-Based Model Routing & Pedagogical Engine.
 - **ADR-015**: Knowledge Extraction, Concept Resolution & Learning State.
+- **ADR-016**: Structured Notes Engine, Typed Blocks & Immutable Versioning.
 
 ---
 

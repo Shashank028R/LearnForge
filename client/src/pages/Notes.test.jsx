@@ -221,4 +221,59 @@ describe('Structured Notes Engine Frontend Workflows (Phase 07)', () => {
       expect(screen.getByText('Approve & Create New Version')).toBeDefined();
     });
   });
+
+  it('aligns BlockEditor schema contracts: restricts heading levels to H1, H2, H3 and code to language + code', async () => {
+    const mockNote = {
+      _id: 'note_schema_test',
+      title: 'Schema Test Note',
+      currentVersionNumber: 1,
+      updatedAt: new Date().toISOString(),
+      metadata: { blockCount: 1 },
+      currentVersionId: {
+        _id: 'ver_1',
+        version: 1,
+        blocks: [
+          {
+            id: 'b_h',
+            type: 'heading',
+            content: { level: 2, text: 'Heading Level 2' },
+            origin: 'user',
+          },
+          {
+            id: 'b_c',
+            type: 'code',
+            content: { language: 'javascript', code: 'const x = 42;' },
+            origin: 'user',
+          },
+        ],
+      },
+    };
+
+    vi.spyOn(notesApi, 'list').mockResolvedValue([mockNote]);
+    vi.spyOn(notesApi, 'getProposals').mockResolvedValue([]);
+
+    renderWithProviders(<NotesPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Note')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByText('Edit Note'));
+
+    await waitFor(() => {
+      // Find heading select element
+      const selects = screen.getAllByRole('combobox');
+      const headingSelect = selects.find((sel) => Array.from(sel.options).some((opt) => opt.text === 'H1'));
+      expect(headingSelect).toBeDefined();
+
+      const optionValues = Array.from(headingSelect.options).map((opt) => opt.value);
+      // Backend canonical heading levels: strictly 1, 2, 3 (no 4)
+      expect(optionValues).toEqual(['1', '2', '3']);
+
+      // Check code block inputs (language and code textarea exist, no caption input)
+      expect(screen.getByDisplayValue('javascript')).toBeDefined();
+      expect(screen.getByDisplayValue('const x = 42;')).toBeDefined();
+      expect(screen.queryByPlaceholderText(/caption/i)).toBeNull();
+    });
+  });
 });

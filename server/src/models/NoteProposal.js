@@ -95,6 +95,7 @@ const noteProposalSchema = new mongoose.Schema(
         default: null,
       },
       aiMetadata: {
+        source: { type: String, default: null },
         provider: { type: String, default: null },
         model: { type: String, default: null },
         task: { type: String, default: null },
