@@ -1308,4 +1308,128 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     expect(exitRes.body.data.status).toBe(STUDY_STATUS.EXITED);
     expect(exitRes.body.data.isActive).toBe(false);
   });
+
+  // --- Test 27: Real AI Gateway Provider Fallback with Verified Provenance ---
+  it('27. proves AI Gateway provider fallback and truthful secondary provider provenance on answer evaluation', async () => {
+    // Restore real aiGateway.generate for this test to exercise full AI Gateway routing & retry loop
+    aiGateway.generate.mockRestore();
+
+    const origOpenaiKey = aiGateway.providers.openai.config.apiKey;
+    const origGroqKey = aiGateway.providers.groq.config.apiKey;
+    const origGeminiKey = aiGateway.providers.gemini.config.apiKey;
+
+    aiGateway.providers.openai.config.apiKey = 'test-openai-key';
+    aiGateway.providers.groq.config.apiKey = 'test-groq-key';
+    aiGateway.providers.gemini.config.apiKey = ''; // Ensure gemini is unconfigured so fallback goes directly to groq
+
+    aiGateway.providers.openai.recordSuccess(); // Reset any degraded failure count
+    aiGateway.providers.groq.recordSuccess();
+
+    const primarySpy = vi.spyOn(aiGateway.providers.openai, 'generate').mockRejectedValueOnce(
+      new Error('Quota exhausted for provider openai: 429 You have no credits remaining.')
+    );
+    const secondarySpy = vi.spyOn(aiGateway.providers.groq, 'generate').mockResolvedValueOnce({
+      text: JSON.stringify({
+        verdict: 'CORRECT',
+        correctness: 90,
+        completeness: 85,
+        reasoningQuality: 88,
+        misconceptionDetected: false,
+        misconceptionSummary: '',
+        missingConcepts: [],
+        strengths: ['Accurate randomized timer explanation.'],
+        weaknesses: [],
+        feedback: 'Excellent explanation of Raft leader election timers.',
+        nextAction: 'ADVANCE',
+      }),
+      provider: 'groq',
+      model: 'openai/gpt-oss-20b',
+      task: 'study_answer_evaluation',
+      usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+      latencyMs: 120,
+      requestId: 'test-req-fallback-001',
+    });
+
+    const question = {
+      questionId: 'q-test-fallback-001',
+      questionType: 'mechanism',
+      prompt: 'Explain randomized election timers in Raft.',
+      targetConceptNames: ['Randomized Election Timers'],
+      expectedReasoningSignals: ['Explain randomized timers'],
+    };
+
+    const evalResult = await studyAiService.evaluateAnswer({
+      question,
+      studentAnswer: 'Randomized election timers prevent split votes by ensuring candidates stagger their election timeouts.',
+      canonicalConcepts: [concept1],
+      requestId: 'test-req-fallback-001',
+    });
+
+    expect(primarySpy).toHaveBeenCalled();
+    expect(secondarySpy).toHaveBeenCalled();
+    expect(evalResult.verdict).toBe('CORRECT');
+    expect(evalResult.provenance.source).toBe('ai');
+    expect(evalResult.provenance.provider).toBe('groq');
+    expect(evalResult.provenance.model).toBe('openai/gpt-oss-20b');
+
+    primarySpy.mockRestore();
+    secondarySpy.mockRestore();
+    aiGateway.providers.openai.config.apiKey = origOpenaiKey;
+    aiGateway.providers.groq.config.apiKey = origGroqKey;
+    aiGateway.providers.gemini.config.apiKey = origGeminiKey;
+  });
+
+  // --- Test 28: Controlled All-Provider Failure + Deterministic Fallback Failure Recovery ---
+  it('28. proves Gateway-level all-provider failure + deterministic fallback failure recovers safely to QUESTIONING/RECHECKING without stranding', async () => {
+    const createRes = await request(app)
+      .post(`/api/v1/topics/${topicA._id}/study/sessions`)
+      .set('Cookie', sessionCookieA)
+      .expect(201);
+
+    const sessionId = createRes.body.data.session._id;
+    const questionId = createRes.body.data.session.activeQuestion.questionId;
+
+    // Simulate catastrophic failure across all AI providers and deterministic fallback
+    const evalSpy = vi.spyOn(studyAiService, 'evaluateAnswer').mockRejectedValueOnce(
+      new Error('AIAllProvidersFailedError: All configured providers and fallbacks failed.')
+    );
+
+    try {
+      await studyService.submitAnswer(userA._id, sessionId, {
+        questionId,
+        sessionVersion: 1,
+        clientTurnId: 'turn-catastrophic-001',
+        answer: 'Student answer during catastrophic outage.',
+      });
+      expect.fail('Should have thrown EVALUATION_FAILED_RETRY_SAFE');
+    } catch (err) {
+      expect(err.code).toBe('EVALUATION_FAILED_RETRY_SAFE');
+    }
+
+    evalSpy.mockRestore();
+
+    // Inspect session state in store
+    const sessionDoc = studySessionsStore.get(sessionId.toString());
+    expect(sessionDoc.status).toBe(STUDY_STATUS.QUESTIONING);
+    expect(sessionDoc.evaluationState.status).toBe('FAILED');
+    expect(sessionDoc.activeQuestion.questionId).toBe(questionId);
+    expect(sessionDoc.turns.length).toBe(0); // Zero turns inserted
+    expect(sessionDoc.metrics.totalAnswersSubmitted).toBe(0); // Metrics not incremented
+
+    // Subsequent normal retry succeeds
+    const retryRes = await request(app)
+      .post(`/api/v1/study-sessions/${sessionId}/answer`)
+      .set('Cookie', sessionCookieA)
+      .send({
+        questionId,
+        sessionVersion: sessionDoc.sessionVersion,
+        clientTurnId: 'turn-catastrophic-retry-001',
+        answer: 'Valid answer on subsequent retry.',
+      })
+      .expect(200);
+
+    expect(retryRes.body.data.session.status).not.toBe(STUDY_STATUS.EVALUATING);
+    expect(retryRes.body.data.turn).toBeDefined();
+  });
 });
+

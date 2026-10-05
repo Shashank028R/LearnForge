@@ -20,6 +20,7 @@ import { Concept } from '../src/models/Concept.js';
 import { StudySession } from '../src/models/StudySession.js';
 import { studyService } from '../src/study/services/studyService.js';
 import { studyAiService } from '../src/study/services/studyAiService.js';
+import { aiGateway } from '../src/ai/index.js';
 import { STUDY_STATUS } from '../src/study/stateMachine.js';
 import { generateSessionToken, hashSessionToken } from '../src/utils/authCrypto.js';
 
@@ -203,7 +204,43 @@ async function runLiveVerification() {
     });
     cleanupIds.concepts.push(concept2._id);
 
-    console.log(`  -> PASS: Seeded tenant A (${userA._id}), tenant B (${userB._id}), subject, topic, pinned syllabus v1, and 2 canonical concepts.\n`);
+    const concept3 = await Concept.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      topicId: topicA._id,
+      name: 'Log Matching Property',
+      normalizedName: 'log matching property',
+      description: 'If two logs contain an entry with the same index and term, then the logs are identical in all entries up through the given index.',
+      aliases: ['Log Invariant'],
+      status: 'LEARNING',
+    });
+    cleanupIds.concepts.push(concept3._id);
+
+    const concept4 = await Concept.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      topicId: topicA._id,
+      name: 'State Machine Safety',
+      normalizedName: 'state machine safety',
+      description: 'If a server has applied a log entry at a given index to its state machine, no other server will ever apply a different log entry for the same index.',
+      aliases: ['Safety Invariant'],
+      status: 'LEARNING',
+    });
+    cleanupIds.concepts.push(concept4._id);
+
+    const concept5 = await Concept.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      topicId: topicA._id,
+      name: 'Leader Completeness',
+      normalizedName: 'leader completeness',
+      description: 'If a log entry is committed in a given term, then that entry will be present in the logs of the leaders for all higher-numbered terms.',
+      aliases: ['Leader Invariant'],
+      status: 'LEARNING',
+    });
+    cleanupIds.concepts.push(concept5._id);
+
+    console.log(`  -> PASS: Seeded tenant A (${userA._id}), tenant B (${userB._id}), subject, topic, pinned syllabus v1, and 5 canonical concepts.\n`);
 
     // --- Gate 5: Real Live Active-Session Creation Race with MongoDB Unique Index Enforcement ---
     console.log('[5/21] [DOMAIN-SERVICE & DATABASE] Real Live Concurrent Active-Session Creation Race...');
@@ -374,6 +411,18 @@ async function runLiveVerification() {
     const followUpQuestion = continueData.data.activeQuestion;
     const followUpClientTurnId = `turn_followup_${Date.now()}`;
 
+    let expertFollowUpAnswer = '';
+    try {
+      const expertRes = await aiGateway.generate({
+        task: 'general_chat',
+        prompt: `Answer this technical question about Raft consensus algorithm with 100% accuracy, thoroughness, and precision: "${followUpQuestion.prompt}". Address all specific numbers, node identifiers, timer values, and mechanics requested.`,
+        systemPrompt: 'You are an authoritative distributed systems professor writing a definitive correct answer for an active recall test.',
+      });
+      expertFollowUpAnswer = expertRes.text.replace(/```[a-z]*\n?|```/g, '').trim();
+    } catch (_) {
+      expertFollowUpAnswer = `In this Raft cluster scenario regarding "${followUpQuestion.prompt.replace(/"/g, '')}", each follower initializes its randomized election timer to a value chosen uniformly at random between 150ms and 300ms. The follower whose timer expires first immediately transitions from follower to candidate state, increments its term, votes for itself, and broadcasts RequestVote RPCs. Followers with longer timers receive the RPC while counting down, grant their votes, and reset their timers, allowing the candidate to secure a majority before other nodes time out, preventing split-vote livelocks.`;
+    }
+
     // Submit thorough follow-up answer
     const followUpAnswerRes = await fetch(`${API_BASE}/study-sessions/${createdSession._id}/answer`, {
       method: 'POST',
@@ -385,7 +434,7 @@ async function runLiveVerification() {
         questionId: followUpQuestion.questionId,
         sessionVersion: continueData.data.sessionVersion,
         clientTurnId: followUpClientTurnId,
-        answer: 'Randomized election timers (typically 150-300ms) ensure that one follower times out before its peers, transitions to candidate state, increments term, votes for itself, and broadcasts RequestVote RPCs before others time out, preventing continuous split vote livelocks.',
+        answer: expertFollowUpAnswer,
       }),
     });
 
@@ -400,9 +449,10 @@ async function runLiveVerification() {
 
     // --- Gate 12: Verify Demonstrated Understanding & Advancement ---
     console.log('[12/21] [PEDAGOGY] Verify Demonstrated Understanding & Advancement (CORRECT -> ADVANCING)...');
+    console.log('  -> Evaluation details:', JSON.stringify(followUpTurn.evaluation));
     const sessionAfterFollowUp = followUpData.data.session;
     if (sessionAfterFollowUp.status !== STUDY_STATUS.ADVANCING) {
-      throw new Error(`Expected status ADVANCING on solid answer, got ${sessionAfterFollowUp.status}`);
+      throw new Error(`Expected status ADVANCING on solid answer, got ${sessionAfterFollowUp.status} (verdict: ${followUpTurn.evaluation?.verdict})`);
     }
     console.log(`  -> Verdict: ${followUpTurn.evaluation.verdict} (Correctness: ${followUpTurn.evaluation.correctness}%)`);
     console.log('  -> PASS: Understanding demonstrated. Session advanced to ADVANCING state.\n');
@@ -783,6 +833,19 @@ async function runLiveVerification() {
     const compSession = compCreateData.data.session;
     cleanupIds.studySessions.push(compSession._id);
 
+    // Generate comprehensive expert answer tailored to active question
+    let compInitialAnswer = '';
+    try {
+      const expRes = await aiGateway.generate({
+        task: 'general_chat',
+        prompt: `Answer this technical exam question about distributed systems consensus with 100% technical accuracy, completeness, and rigor: "${compSession.activeQuestion.prompt}". Address all expected reasoning signals.`,
+        systemPrompt: 'You are an authoritative distributed systems professor writing a definitive correct answer for an active recall test.',
+      });
+      compInitialAnswer = expRes.text.replace(/```[a-z]*\n?|```/g, '').trim();
+    } catch (_) {
+      compInitialAnswer = 'Termination Liveness Property is the critical distributed systems liveness guarantee ensuring that every non-faulty process eventually decides on some value in finite execution steps without deadlock, livelock, or indefinite blocking.';
+    }
+
     // Submit correct answer via HTTP endpoint
     const compAnswerRes = await fetch(`${API_BASE}/study-sessions/${compSession._id}/answer`, {
       method: 'POST',
@@ -791,7 +854,7 @@ async function runLiveVerification() {
         questionId: compSession.activeQuestion.questionId,
         sessionVersion: compSession.sessionVersion,
         clientTurnId: `turn_comp_${Date.now()}`,
-        answer: 'Termination Liveness Property is the critical distributed systems liveness guarantee ensuring that every non-faulty process eventually decides on some value in finite execution steps without deadlock, livelock, or indefinite blocking.',
+        answer: compInitialAnswer,
       }),
     });
     if (!compAnswerRes.ok) throw new Error(`Completion answer submission failed: HTTP ${compAnswerRes.status}`);
@@ -812,6 +875,18 @@ async function runLiveVerification() {
       const recheckData = await recheckRes.json();
       const followUpQ = recheckData.data.activeQuestion;
 
+      let compFollowUpAnswer = '';
+      try {
+        const expFuRes = await aiGateway.generate({
+          task: 'general_chat',
+          prompt: `Answer this technical follow-up exam question about distributed consensus with 100% technical accuracy, completeness, and rigor: "${followUpQ.prompt}". Address all expected reasoning signals.`,
+          systemPrompt: 'You are an authoritative distributed systems professor writing a definitive correct answer for an active recall test.',
+        });
+        compFollowUpAnswer = expFuRes.text.replace(/```[a-z]*\n?|```/g, '').trim();
+      } catch (_) {
+        compFollowUpAnswer = 'Termination Liveness Property is the essential distributed consensus liveness guarantee ensuring that every correct, non-faulty process eventually decides on a value in finite execution steps, preventing perpetual blocking or infinite loops.';
+      }
+
       // Submit thorough follow-up answer
       const followUpAnswerRes = await fetch(`${API_BASE}/study-sessions/${compSession._id}/answer`, {
         method: 'POST',
@@ -820,7 +895,7 @@ async function runLiveVerification() {
           questionId: followUpQ.questionId,
           sessionVersion: recheckData.data.sessionVersion,
           clientTurnId: `turn_comp_fu_${remediationAttempts}_${Date.now()}`,
-          answer: 'Termination Liveness Property is the essential distributed consensus liveness guarantee ensuring that every correct, non-faulty process eventually decides on a value in finite execution steps, preventing perpetual blocking or infinite loops.',
+          answer: compFollowUpAnswer,
         }),
       });
       const followUpAnswerData = await followUpAnswerRes.json();

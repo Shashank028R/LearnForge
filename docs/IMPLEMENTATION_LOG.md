@@ -5,10 +5,10 @@ This log is the permanent chronological engineering journal for the LearnForge p
 ## [Phase 08 — Checkpoint 4] Integration, Concurrency & AI Failure Verification
 
 - **Date**: October 5, 2026
-- **Status**: Completed (Integration Audit, Identical Concurrency Race, FOLLOW_UP Concurrency Race, Lease Fencing, AI Gateway Fallback & 21/21 Live Gates Verified)
+- **Status**: Completed (Integration Audit, Identical Concurrency Race, FOLLOW_UP Concurrency Race, Lease Fencing, Real AI Gateway Provider Fallback with Truthful Provenance, Catastrophic Recovery & 21/21 Live Gates Verified)
 - **Phase**: Phase 08 — Strict Study Mode & Active Recall (Checkpoint 4)
 - **Core Invariant**: *"Normal Chat = user asks → AI explains. Study Mode = AI teaches → asks active recall question → evaluates multi-criteria reasoning → Socratic remediation → advances on demonstrated understanding."*
-- **Objective**: Prove full end-to-end integration, real identical-submission concurrency protection on MongoDB Atlas, real FOLLOW_UP concurrency protection, authoritative lease fencing, idempotency, AI Gateway provider fallback, catastrophic evaluation recovery, curriculum pinning, and cross-tenant security.
+- **Objective**: Prove full end-to-end integration, real identical-submission concurrency protection on MongoDB Atlas, real FOLLOW_UP concurrency protection, authoritative lease fencing, idempotency, real AI Gateway multi-provider fallback with truthful provenance, catastrophic evaluation recovery across all providers and deterministic fallback, curriculum pinning, and cross-tenant security.
 
 ### Work Performed
 1. **API Contract Audit**:
@@ -19,15 +19,18 @@ This log is the permanent chronological engineering journal for the LearnForge p
    - Tested overlapping follow-up submissions in `RECHECKING` state with SAME `clientTurnId` on MongoDB Atlas. Proved exactly 1 `FOLLOW_UP` turn commits with intact `parentTurnId` referencing the initial turn.
 4. **Lease Fencing Verification (Gate 15)**:
    - Verified that when Worker B takes over an expired lease with `operationId_B`, late-returning Worker A with `operationId_A` matches 0 documents and fails safely without overwriting results or double-counting metrics.
-5. **AI Gateway Provider Fallback & Evaluation Recovery (Gates 17 & 18)**:
-   - Verified that when primary provider (OpenAI) experiences quota exhaustion (`429 You have no credits remaining`), AI Gateway automatically retries and falls back to Groq (`openai/gpt-oss-20b`), generating valid structured evaluations and Socratic remediation.
-   - Verified that upon unrecoverable evaluation failures, session transitions `evaluationState.status` to `FAILED` and restores session to `QUESTIONING` or `RECHECKING` without stranding the user, preserving `activeQuestion` and allowing safe subsequent retry.
-6. **Testing & Build Verification**:
+5. **Real AI Gateway Provider Fallback with Truthful Provenance (Gate 17 & Backend Test 27)**:
+   - *"Primary provider failed and secondary provider successfully handled the request."*
+   - Explicitly injected deterministic provider failure at the primary provider (OpenAI rate limit / 429 quota exhaustion) and executed the real AI Gateway path. Verified that ModelRouter retried and seamlessly routed to secondary provider Groq (`openai/gpt-oss-20b`). Asserted structured evaluation response and truthful provenance: `source: 'ai'`, `provider: 'groq'`, `model: 'openai/gpt-oss-20b'`.
+6. **Catastrophic Gateway Failure Recovery (Gate 18 & Backend Test 28)**:
+   - *"All configured AI providers and deterministic fallback failed; StudySession safely exited EVALUATING and became retry-safe."*
+   - Injected failure across all configured AI providers and induced failure in deterministic fallback. Verified that `evaluationState.status` transitions to `'FAILED'`, session safely restores to `QUESTIONING` (for initial attempt) or `RECHECKING` (for follow-up attempt), `activeQuestion` is preserved, no false turns or evaluations are persisted, and subsequent retry succeeds via the normal evaluation path.
+7. **Testing & Build Verification**:
    - 21 / 21 Live Verification Gates passed (100%) on MongoDB Atlas replica set (`server/scripts/verify_phase08_live.js`).
-   - 231 / 231 Backend Tests passing (100%) across 13 test files.
+   - 233 / 233 Backend Tests passing (100%) across 13 test files.
    - 70 / 70 Frontend Tests passing (100%) across 7 test files.
-   - 301 / 301 Total Monorepo Tests passing (100%) across 20 test files.
-   - Clean Vite production build in 13.17s.
+   - 303 / 303 Total Monorepo Tests passing (100%) across 20 test files.
+   - Clean Vite production build in 15.43s.
 
 ---
 

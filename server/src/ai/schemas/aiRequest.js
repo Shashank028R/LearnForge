@@ -14,8 +14,12 @@ export function validateAndNormalizeAIRequest(rawRequest = {}) {
     throw new AIInvalidRequestError(`Invalid AI task type: "${task}".`);
   }
 
-  const rawMessages = Array.isArray(rawRequest.messages) ? rawRequest.messages : [];
-  if (rawMessages.length === 0 && !rawRequest.prompt && !rawRequest.systemPrompt) {
+  let rawMessages = Array.isArray(rawRequest.messages) ? [...rawRequest.messages] : [];
+  if (rawMessages.length === 0 && rawRequest.prompt && typeof rawRequest.prompt === 'string' && rawRequest.prompt.trim()) {
+    rawMessages = [{ role: 'user', content: rawRequest.prompt.trim() }];
+  }
+
+  if (rawMessages.length === 0 && !rawRequest.systemPrompt) {
     throw new AIInvalidRequestError('AI request must contain at least one message or prompt.');
   }
 

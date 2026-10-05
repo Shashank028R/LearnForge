@@ -139,32 +139,34 @@ QUESTIONING ──[Submit Answer]──► ANSWER_PENDING ──► EVALUATING
 
 ## 14. Test Totals
 - Total test files: **13 passed (13/13)**
-- Total tests: **231 passed (231/231)**
-- Test execution duration: **~3.5s**
+- Total backend tests: **233 passed (233/233)**
+- Test execution duration: **~4.0s**
 
 ---
 
 ## 15. Live Verification Results (`verify_phase08_live.js`)
-- All **19/19 live verification gates passed** against live Express dev server, MongoDB Atlas replica set, and AI Gateway:
-  - `[1/19]` `[HTTP API]` Health & Database Connectivity Check
-  - `[2/19]` `[DATABASE]` MongoDB Atlas Replica Set Connection
-  - `[3/19]` `[DATABASE]` Multi-Document Transaction Support & Partial Unique Index (`{ isActive: true }`) Assertion
-  - `[4/19]` `[DATABASE]` Isolated Test Tenant & Canonical Knowledge Setup
-  - `[5/19]` `[DOMAIN-SERVICE & DATABASE]` Real Live Concurrent Active-Session Creation Race (`TestSyncBarrier(2)` on MongoDB Atlas)
-  - `[6/19]` `[DOMAIN-SERVICE]` Verify Session Ownership & Curriculum Pinning
-  - `[7/19]` `[AI GATEWAY & DOMAIN]` Authoritative Adversarial Reasoning-Signal Validation & Whitelist Grounding
-  - `[8/19]` `[HTTP API]` Submit Incomplete/Weak Answer
-  - `[9/19]` `[AI GATEWAY]` Multi-Criteria Answer Evaluation
-  - `[10/19]` `[PEDAGOGY]` Socratic Remediation Loop (No Blind Advance)
-  - `[11/19]` `[HTTP API]` Submit Socratic Follow-Up Answer (`attemptType: FOLLOW_UP`, `parentTurnId` linked)
-  - `[12/19]` `[PEDAGOGY]` Demonstrated Understanding & Advancement
-  - `[13/19]` `[HTTP API]` Fetch Next Question (`POST /continue`)
-  - `[14/19]` `[DOMAIN-SERVICE CONCURRENCY]` Real Live Atlas Concurrency Race (Duplicate Answer Submissions)
-  - `[15/19]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection (matching `EVALUATING` status)
-  - `[16/19]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404)
-  - `[17/19]` `[AI GATEWAY]` Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy on MongoDB Atlas
-  - `[18/19]` `[LIFECYCLE & DATABASE]` Real Application Completion Path (`continueSession` $\rightarrow$ `COMPLETED`, `isActive: false`) and Exited Invariants
-  - `[19/19]` `[TEARDOWN]` Immutability-Safe Native Driver Teardown
+- All **21/21 live verification gates passed** against live Express dev server, MongoDB Atlas replica set, and AI Gateway:
+  - `[1/21]` `[HTTP API]` Health & Database Connectivity Check
+  - `[2/21]` `[DATABASE]` MongoDB Atlas Replica Set Connection
+  - `[3/21]` `[DATABASE]` Multi-Document Transaction Support & Partial Unique Index (`{ isActive: true }`) Assertion
+  - `[4/21]` `[DATABASE]` Isolated Test Tenant & Canonical Knowledge Setup
+  - `[5/21]` `[DOMAIN-SERVICE & DATABASE]` Real Live Concurrent Active-Session Creation Race (`TestSyncBarrier(2)` on MongoDB Atlas)
+  - `[6/21]` `[DOMAIN-SERVICE]` Verify Session Ownership & Curriculum Pinning
+  - `[7/21]` `[AI GATEWAY & DOMAIN]` Authoritative Adversarial Reasoning-Signal Validation & Whitelist Grounding
+  - `[8/21]` `[HTTP API]` Submit Incomplete/Weak Answer
+  - `[9/21]` `[AI GATEWAY]` Multi-Criteria Answer Evaluation
+  - `[10/21]` `[PEDAGOGY]` Socratic Remediation Loop (No Blind Advance)
+  - `[11/21]` `[HTTP API]` Submit Socratic Follow-Up Answer (`attemptType: FOLLOW_UP`, `parentTurnId` linked)
+  - `[12/21]` `[PEDAGOGY]` Demonstrated Understanding & Advancement
+  - `[13/21]` `[HTTP API]` Fetch Next Question (`POST /continue`)
+  - `[14/21]` `[CONCURRENCY & IDEMPOTENCY]` Real Live Atlas Concurrency Race (Identical Logical Answer Submissions)
+  - `[15/21]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection
+  - `[16/21]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404)
+  - `[17/21]` `[AI GATEWAY]` Real AI Gateway Multi-Provider Fallback & Truthful Provenance Verification
+  - `[18/21]` `[AI GATEWAY & DOMAIN]` Real Gateway-Level All-Provider Failure + Deterministic Fallback Failure + Session Recovery on Atlas
+  - `[19/21]` `[CONCURRENCY]` Real Live FOLLOW_UP Duplicate Logical-Submission Race on Atlas (`TestSyncBarrier(2)`)
+  - `[20/21]` `[LIFECYCLE & DATABASE]` Real Application Completion Path (`continueSession` $\rightarrow$ `COMPLETED`, `isActive: false`) and Exited Invariants
+  - `[21/21]` `[TEARDOWN]` Immutability-Safe Native Driver Teardown
 
 ---
 
@@ -394,14 +396,30 @@ The frontend API client ([studyApi.js](file:///c:/Users/shash/OneDrive/Desktop/L
    - Every mutation checks and increments `sessionVersion`. Stale mutations with version $N$ when server is at $N+1$ reject with HTTP 409 `STALE_STUDY_STATE`.
 
 ### D. AI Failure, Fallback & Recovery Results (Steps 9, 10, 11, 12, 17, 18)
-1. **Real AI Provider Fallback (Gate 17)**:
-   - When primary provider OpenAI encountered quota exhaustion (`429 You have no credits remaining`), AI Gateway automatically retried and cleanly fell back to secondary provider Groq (`openai/gpt-oss-20b`).
-   - Structured JSON response was parsed and validated without student interruption.
-2. **Controlled All-Provider/Fallback Catastrophic Recovery (Gate 18)**:
-   - When evaluation encounters unrecoverable AI provider and fallback failures, `evaluationState.status` transitions to `'FAILED'`, records `lastError`, and safely restores session to `QUESTIONING` (for initial attempt) or `RECHECKING` (for follow-up attempt).
-   - The active question and draft context are preserved; the session is never stranded in `EVALUATING`; subsequent student retry succeeds cleanly.
+
+1. **A. Real Provider Fallback (Gate 17 & Automated Test 27)**:
+   - *"Primary provider failed and secondary provider successfully handled the request."*
+   - Specifically tested at the AI Gateway/provider boundary where primary provider OpenAI is injected with a deterministic failure (e.g., rate limit / quota exhaustion), the ModelRouter executes configured retry policy, and seamlessly routes to secondary provider Groq (`openai/gpt-oss-20b`).
+   - The structured evaluation is returned with validated provenance: `provenance.source === 'ai'`, `provenance.provider === 'groq'`, and `provenance.model === 'openai/gpt-oss-20b'`. No deterministic fallback is falsely reported as AI success.
+
+2. **B. Catastrophic Gateway Failure Recovery (Gate 18 & Automated Test 28)**:
+   - *"All configured AI providers and deterministic fallback failed; StudySession safely exited EVALUATING and became retry-safe."*
+   - Exercised by injecting failure across all AI providers (OpenAI, Gemini, Groq) and deliberately inducing a failure in deterministic fallback.
+   - Observed and persisted StudySession state:
+     - `evaluationState.status === 'FAILED'` and `lastError` logged.
+     - `INITIAL` attempt restores safely to `status: 'QUESTIONING'`.
+     - `FOLLOW_UP` attempt restores safely to `status: 'RECHECKING'`.
+     - `activeQuestion` preserved.
+     - No successful evaluation persisted.
+     - No turn inserted for the failed attempt.
+     - `totalAnswersSubmitted` and `sequenceCounter` unchanged.
+     - No false provider/model provenance exists.
+     - Subsequent retry succeeds via the normal evaluation path.
+     - Session is never stranded in `EVALUATING`.
+
 3. **Pause/Evaluation Invariant**:
    - Calling `POST /pause` while `EVALUATING` is strictly rejected with HTTP 409 `CANNOT_PAUSE_DURING_EVALUATION`.
+
 4. **Server-Authoritative Concept Grounding (Gate 7)**:
    - Candidate model reasoning signals are validated against canonical topic concepts via `groundExpectedReasoningSignals`. Hallucinated or adversarial criteria are filtered out and replaced by authoritative signals synthesized from concept definitions.
 
@@ -410,10 +428,10 @@ The frontend API client ([studyApi.js](file:///c:/Users/shash/OneDrive/Desktop/L
 | Verification Suite | Scope | Target | Gates / Tests | Outcome |
 | :--- | :--- | :--- | :---: | :---: |
 | **Live Verifier** (`verify_phase08_live.js`) | Fail-Closed Integration | MongoDB Atlas Replica Set + Live AI Gateway | **21 / 21 Gates** | **100% PASSED** |
-| **Backend Test Suite** (`server/tests/`) | Unit & Domain Service | In-Memory / Mongoose Mock | **231 / 231 Tests** | **100% PASSED** |
+| **Backend Test Suite** (`server/tests/`) | Unit & Domain Service | In-Memory / Mongoose Mock | **233 / 233 Tests** | **100% PASSED** |
 | **Frontend Test Suite** (`client/src/`) | Component & Integration | Vitest / React Testing Library | **70 / 70 Tests** | **100% PASSED** |
-| **Total Monorepo Suite** | Full System | Client + Server | **301 / 301 Tests** | **100% PASSED** |
-| **Production Build** | Client Bundle | Vite v6.4.3 | Clean Bundle | **SUCCESS (13.17s)** |
+| **Total Monorepo Suite** | Full System | Client + Server | **303 / 303 Tests** | **100% PASSED** |
+| **Production Build** | Client Bundle | Vite v6.4.3 | Clean Bundle | **SUCCESS (15.43s)** |
 
 ### F. Phase 08 Live Verification Gate Matrix (21/21 Passed)
 - `[1/21]` `[HTTP API]` Health & Database Connectivity Check $\rightarrow$ **PASS**
