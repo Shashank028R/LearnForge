@@ -10,7 +10,6 @@ Educational platforms often rely on arbitrary "AI mastery percentages" or simpli
 
 1. **Discrete Mastery States**:
    - `NOT_STARTED`: Concept has 0 evaluated study turns.
-   - `INTRODUCED`: 1 evaluated turn recorded.
    - `LEARNING`: Actively practiced with partial understanding or scores $< 85\%$.
    - `NEEDS_REVIEW`: Active misconception detected or $\ge 2$ consecutive failures.
    - `UNDERSTOOD`: Demonstrates solid conceptual understanding (`correctness >= 85%`, `completeness >= 80%`).

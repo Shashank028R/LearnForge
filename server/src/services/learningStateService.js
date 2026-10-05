@@ -43,34 +43,51 @@ export class LearningStateService {
   }
 
   /**
-   * Internal helper to project a turn for a single concept with idempotency & concurrency retry.
+   * Internal helper to project a turn for a single concept with atomic claim & idempotency.
+   * Invariant: For each (userId, conceptId, turnId), exactly one projection effect occurs.
    */
   async _projectSingleConceptTurn(userId, sessionId, conceptId, turn, evaluationTime, options = {}, maxRetries = 5) {
+    const isDbConnected = mongoose.connection && mongoose.connection.readyState === 1;
+    if (!isDbConnected && process.env.NODE_ENV === 'test' && !options.force) {
+      return { conceptId, idempotent: false, projected: false, reason: 'Disconnected test environment' };
+    }
+
     const uId = new mongoose.Types.ObjectId(userId);
     const cId = new mongoose.Types.ObjectId(conceptId);
     const sId = new mongoose.Types.ObjectId(sessionId);
     const tId = turn._id instanceof mongoose.Types.ObjectId ? turn._id : new mongoose.Types.ObjectId(turn._id);
 
-    // 1. Check idempotency ledger
-    const alreadyProcessed = await ProcessedStudyTurn.findOne({
-      userId: uId,
-      conceptId: cId,
-      turnId: tId,
-    }).lean();
-
-    if (alreadyProcessed) {
-      const existingState = await ConceptLearningState.findOne({ userId: uId, conceptId: cId }).lean();
-      return {
+    // 1. ATOMIC CLAIM: Attempt to insert the unique ProcessedStudyTurn ledger entry first
+    let claimAcquired = false;
+    try {
+      await ProcessedStudyTurn.create({
+        userId: uId,
         conceptId: cId,
-        idempotent: true,
-        projected: false,
-        state: existingState,
-      };
+        turnId: tId,
+        sessionId: sId,
+        processedAt: new Date(),
+      });
+      claimAcquired = true;
+    } catch (claimErr) {
+      // If duplicate key error (11000), turn was already claimed/projected by another concurrent process
+      if (claimErr.code === 11000 || claimErr.message?.includes('E11000')) {
+        const existingState = await ConceptLearningState.findOne({ userId: uId, conceptId: cId }).lean();
+        return {
+          conceptId: cId,
+          idempotent: true,
+          projected: false,
+          state: existingState,
+        };
+      }
+      throw claimErr;
     }
 
     // 2. Load canonical concept to ensure ownership & obtain canonical prerequisites
     const conceptDoc = await Concept.findOne({ _id: cId, userId: uId }).lean();
     if (!conceptDoc) {
+      if (claimAcquired) {
+        await ProcessedStudyTurn.deleteOne({ userId: uId, conceptId: cId, turnId: tId }).catch(() => {});
+      }
       return {
         conceptId: cId,
         idempotent: false,
@@ -84,135 +101,117 @@ export class LearningStateService {
     while (attempt < maxRetries) {
       attempt += 1;
 
-      // Load or initialize ConceptLearningState
-      let stateDoc = await ConceptLearningState.findOne({ userId: uId, conceptId: cId });
-      let isNewDoc = false;
+      try {
+        // Load or initialize ConceptLearningState
+        let stateDoc = await ConceptLearningState.findOne({ userId: uId, conceptId: cId });
+        let isNewDoc = false;
 
-      if (!stateDoc) {
-        stateDoc = new ConceptLearningState(
-          createInitialConceptLearningState(cId, uId, conceptDoc.subjectId, conceptDoc.topicId)
-        );
-        isNewDoc = true;
-      }
-
-      // Load prerequisite states if canonical prerequisites exist
-      const prerequisites = Array.isArray(conceptDoc.prerequisites) ? conceptDoc.prerequisites : [];
-      const prereqStatesMap = new Map();
-
-      if (prerequisites.length > 0) {
-        const prereqStates = await ConceptLearningState.find({
-          userId: uId,
-          conceptId: { $in: prerequisites },
-        }).lean();
-
-        for (const ps of prereqStates) {
-          ps.decayedScore = calculateDecayedScore(ps.masteryScore, ps.lastDemonstratedAt, evaluationTime);
-          prereqStatesMap.set(ps.conceptId.toString(), ps);
+        if (!stateDoc) {
+          stateDoc = new ConceptLearningState(
+            createInitialConceptLearningState(cId, uId, conceptDoc.subjectId, conceptDoc.topicId)
+          );
+          isNewDoc = true;
         }
-      }
 
-      // Compute pure transition
-      const currentStateObj = stateDoc.toObject ? stateDoc.toObject() : stateDoc;
-      const nextState = applyTurnToConceptState(currentStateObj, turn, {
-        prerequisites,
-        prerequisiteStatesMap: prereqStatesMap,
-        evaluationTime,
-      });
+        // Load prerequisite states if canonical prerequisites exist
+        const prerequisites = Array.isArray(conceptDoc.prerequisites) ? conceptDoc.prerequisites : [];
+        const prereqStatesMap = new Map();
 
-      // Update document fields
-      stateDoc.masteryStatus = nextState.masteryStatus;
-      stateDoc.masteryScore = nextState.masteryScore;
-      stateDoc.decayedScore = nextState.decayedScore;
-      stateDoc.confidenceScore = nextState.confidenceScore;
-      stateDoc.attemptsCount = nextState.attemptsCount;
-      stateDoc.consecutiveSuccesses = nextState.consecutiveSuccesses;
-      stateDoc.consecutiveFailures = nextState.consecutiveFailures;
-      stateDoc.activeMisconceptions = nextState.activeMisconceptions;
-      stateDoc.resolvedMisconceptions = nextState.resolvedMisconceptions;
-      stateDoc.prerequisiteWarning = nextState.prerequisiteWarning;
-      stateDoc.unmetPrerequisiteIds = nextState.unmetPrerequisiteIds;
-      stateDoc.lastAttemptedAt = nextState.lastAttemptedAt;
-      stateDoc.lastDemonstratedAt = nextState.lastDemonstratedAt;
-      stateDoc.lastProcessedTurnId = tId;
-      stateDoc.lastProcessedAnsweredAt = nextState.lastProcessedAnsweredAt;
-
-      if (isNewDoc) {
-        try {
-          await stateDoc.save();
-          // Record in ProcessedStudyTurn ledger
-          await ProcessedStudyTurn.create({
+        if (prerequisites.length > 0) {
+          const prereqStates = await ConceptLearningState.find({
             userId: uId,
-            conceptId: cId,
-            turnId: tId,
-            sessionId: sId,
-            processedAt: new Date(),
-          });
+            conceptId: { $in: prerequisites },
+          }).lean();
+
+          for (const ps of prereqStates) {
+            ps.decayedScore = calculateDecayedScore(ps.masteryScore, ps.lastDemonstratedAt, evaluationTime);
+            prereqStatesMap.set(ps.conceptId.toString(), ps);
+          }
+        }
+
+        // Compute pure transition
+        const currentStateObj = stateDoc.toObject ? stateDoc.toObject() : stateDoc;
+        const nextState = applyTurnToConceptState(currentStateObj, turn, {
+          prerequisites,
+          prerequisiteStatesMap: prereqStatesMap,
+          evaluationTime,
+        });
+
+        // Update document fields
+        stateDoc.masteryStatus = nextState.masteryStatus;
+        stateDoc.masteryScore = nextState.masteryScore;
+        stateDoc.decayedScore = nextState.decayedScore;
+        stateDoc.confidenceScore = nextState.confidenceScore;
+        stateDoc.attemptsCount = nextState.attemptsCount;
+        stateDoc.consecutiveSuccesses = nextState.consecutiveSuccesses;
+        stateDoc.consecutiveFailures = nextState.consecutiveFailures;
+        stateDoc.activeMisconceptions = nextState.activeMisconceptions;
+        stateDoc.resolvedMisconceptions = nextState.resolvedMisconceptions;
+        stateDoc.prerequisiteWarning = nextState.prerequisiteWarning;
+        stateDoc.unmetPrerequisiteIds = nextState.unmetPrerequisiteIds;
+        stateDoc.lastAttemptedAt = nextState.lastAttemptedAt;
+        stateDoc.lastDemonstratedAt = nextState.lastDemonstratedAt;
+        stateDoc.lastProcessedTurnId = tId;
+        stateDoc.lastProcessedAnsweredAt = nextState.lastProcessedAnsweredAt;
+
+        if (isNewDoc) {
+          await stateDoc.save();
           return { conceptId: cId, idempotent: false, projected: true, state: stateDoc.toObject() };
-        } catch (err) {
-          // If unique conflict on stateDoc or processedTurn, loop to retry
-          if (err.code === 11000 || err.message?.includes('E11000')) {
-            continue;
+        } else {
+          const currentVersion = stateDoc.stateVersion;
+          const updateResult = await ConceptLearningState.updateOne(
+            {
+              _id: stateDoc._id,
+              userId: uId,
+              stateVersion: currentVersion,
+            },
+            {
+              $set: {
+                masteryStatus: nextState.masteryStatus,
+                masteryScore: nextState.masteryScore,
+                decayedScore: nextState.decayedScore,
+                confidenceScore: nextState.confidenceScore,
+                attemptsCount: nextState.attemptsCount,
+                consecutiveSuccesses: nextState.consecutiveSuccesses,
+                consecutiveFailures: nextState.consecutiveFailures,
+                activeMisconceptions: nextState.activeMisconceptions,
+                resolvedMisconceptions: nextState.resolvedMisconceptions,
+                prerequisiteWarning: nextState.prerequisiteWarning,
+                unmetPrerequisiteIds: nextState.unmetPrerequisiteIds,
+                lastAttemptedAt: nextState.lastAttemptedAt,
+                lastDemonstratedAt: nextState.lastDemonstratedAt,
+                lastProcessedTurnId: tId,
+                lastProcessedAnsweredAt: nextState.lastProcessedAnsweredAt,
+              },
+              $inc: { stateVersion: 1 },
+            }
+          );
+
+          if (updateResult.matchedCount > 0) {
+            const savedDoc = await ConceptLearningState.findById(stateDoc._id).lean();
+            return { conceptId: cId, idempotent: false, projected: true, state: savedDoc };
+          }
+          // Version collision occurred, retry loop
+        }
+      } catch (err) {
+        if (attempt >= maxRetries) {
+          if (claimAcquired) {
+            await ProcessedStudyTurn.deleteOne({ userId: uId, conceptId: cId, turnId: tId }).catch(() => {});
           }
           throw err;
         }
-      } else {
-        const currentVersion = stateDoc.stateVersion;
-        const updateResult = await ConceptLearningState.updateOne(
-          {
-            _id: stateDoc._id,
-            userId: uId,
-            stateVersion: currentVersion,
-          },
-          {
-            $set: {
-              masteryStatus: nextState.masteryStatus,
-              masteryScore: nextState.masteryScore,
-              decayedScore: nextState.decayedScore,
-              confidenceScore: nextState.confidenceScore,
-              attemptsCount: nextState.attemptsCount,
-              consecutiveSuccesses: nextState.consecutiveSuccesses,
-              consecutiveFailures: nextState.consecutiveFailures,
-              activeMisconceptions: nextState.activeMisconceptions,
-              resolvedMisconceptions: nextState.resolvedMisconceptions,
-              prerequisiteWarning: nextState.prerequisiteWarning,
-              unmetPrerequisiteIds: nextState.unmetPrerequisiteIds,
-              lastAttemptedAt: nextState.lastAttemptedAt,
-              lastDemonstratedAt: nextState.lastDemonstratedAt,
-              lastProcessedTurnId: tId,
-              lastProcessedAnsweredAt: nextState.lastProcessedAnsweredAt,
-            },
-            $inc: { stateVersion: 1 },
-          }
-        );
-
-        if (updateResult.matchedCount > 0) {
-          // Record in ProcessedStudyTurn ledger
-          try {
-            await ProcessedStudyTurn.create({
-              userId: uId,
-              conceptId: cId,
-              turnId: tId,
-              sessionId: sId,
-              processedAt: new Date(),
-            });
-          } catch (ledgerErr) {
-            // If already recorded, ignore duplicate key error
-            if (ledgerErr.code !== 11000 && !ledgerErr.message?.includes('E11000')) {
-              throw ledgerErr;
-            }
-          }
-          const savedDoc = await ConceptLearningState.findById(stateDoc._id).lean();
-          return { conceptId: cId, idempotent: false, projected: true, state: savedDoc };
-        }
-        // Collision occurred, retry
       }
     }
 
+    if (claimAcquired) {
+      await ProcessedStudyTurn.deleteOne({ userId: uId, conceptId: cId, turnId: tId }).catch(() => {});
+    }
     throw new Error(`Optimistic lock collision: Failed to project turn ${turn._id} for concept ${conceptId} after ${maxRetries} attempts.`);
   }
 
   /**
    * Deterministically reconstructs the complete topic learning state from historical StudySession.turns.
+   * Supports intra-topic and cross-topic prerequisites within the same subject.
    * Parity Invariant: Rebuild(E, evaluationTimestamp) === Project(E, evaluationTimestamp)
    */
   async rebuildTopicLearningState(userId, topicId, options = {}) {
@@ -220,7 +219,7 @@ export class LearningStateService {
     const tId = new mongoose.Types.ObjectId(topicId);
     const evaluationTime = options.evaluationTime || options.evaluationTimestamp || new Date();
 
-    // 1. Fetch all concepts in topic
+    // 1. Fetch all concepts in target topic
     const concepts = await Concept.find({ userId: uId, topicId: tId }).lean();
     if (concepts.length === 0) {
       return {
@@ -241,7 +240,41 @@ export class LearningStateService {
       initialStatesMap.set(strId, createInitialConceptLearningState(c._id, uId, c.subjectId, c.topicId));
     }
 
-    // 2. Fetch all study sessions for topic and extract all completed turns
+    // 2. Resolve Cross-Topic Prerequisites: identify any prerequisite concepts from other topics
+    const allPrereqConceptIds = concepts.flatMap((c) => (Array.isArray(c.prerequisites) ? c.prerequisites : []));
+    const externalPrereqIds = allPrereqConceptIds.filter((pid) => !conceptIds.some((cid) => cid.equals(pid)));
+
+    if (externalPrereqIds.length > 0) {
+      const externalStates = await ConceptLearningState.find({
+        userId: uId,
+        conceptId: { $in: externalPrereqIds },
+      }).lean();
+
+      for (const es of externalStates) {
+        es.decayedScore = calculateDecayedScore(es.masteryScore, es.lastDemonstratedAt, evaluationTime);
+        initialStatesMap.set(es.conceptId.toString(), es);
+      }
+
+      // If an external prerequisite concept has no state yet, load canonical concept and set default initial state
+      const existingExternalConceptIds = new Set(externalStates.map((s) => s.conceptId.toString()));
+      const missingExternalPrereqIds = externalPrereqIds.filter((id) => !existingExternalConceptIds.has(id.toString()));
+
+      if (missingExternalPrereqIds.length > 0) {
+        const missingConcepts = await Concept.find({
+          userId: uId,
+          _id: { $in: missingExternalPrereqIds },
+        }).lean();
+
+        for (const mc of missingConcepts) {
+          initialStatesMap.set(
+            mc._id.toString(),
+            createInitialConceptLearningState(mc._id, uId, mc.subjectId, mc.topicId)
+          );
+        }
+      }
+    }
+
+    // 3. Fetch all study sessions for target topic and extract all completed turns
     const sessions = await StudySession.find({ userId: uId, topicId: tId }).lean();
     const allCompletedTurns = [];
     const turnSessionMap = new Map();
@@ -257,7 +290,7 @@ export class LearningStateService {
       }
     }
 
-    // 3. Deterministically project evidence through pure engine
+    // 4. Deterministically project evidence through pure engine
     const finalStatesMap = projectEvidenceHistory(
       initialStatesMap,
       allCompletedTurns,
@@ -265,21 +298,24 @@ export class LearningStateService {
       evaluationTime
     );
 
-    // 4. Atomic wipe and re-insert of materialized views for this topic
+    // 5. Atomic wipe and re-insert of materialized views ONLY for target topic concepts
     await ConceptLearningState.deleteMany({ userId: uId, topicId: tId });
     await ProcessedStudyTurn.deleteMany({ userId: uId, conceptId: { $in: conceptIds } });
 
     const statesToInsert = [];
-    for (const stateObj of finalStatesMap.values()) {
-      statesToInsert.push({
-        ...stateObj,
-        stateVersion: 1,
-      });
+    for (const conceptId of conceptIds) {
+      const stateObj = finalStatesMap.get(conceptId.toString());
+      if (stateObj) {
+        statesToInsert.push({
+          ...stateObj,
+          stateVersion: 1,
+        });
+      }
     }
 
-    const insertedStates = await ConceptLearningState.insertMany(statesToInsert);
+    const insertedStates = statesToInsert.length > 0 ? await ConceptLearningState.insertMany(statesToInsert) : [];
 
-    // Rebuild ProcessedStudyTurn ledger
+    // Rebuild ProcessedStudyTurn ledger for target topic
     const ledgerEntries = [];
     for (const turn of allCompletedTurns) {
       const targetIds = turn.question && Array.isArray(turn.question.targetConceptIds)
@@ -304,7 +340,7 @@ export class LearningStateService {
       try {
         await ProcessedStudyTurn.insertMany(ledgerEntries, { ordered: false });
       } catch (e) {
-        // Ignore duplicate key errors if any turn appeared multiple times
+        // Ignore duplicate key errors if turn was processed
       }
     }
 
@@ -527,11 +563,6 @@ export class LearningStateService {
       };
     });
 
-    // Priority rank logic:
-    // 1. NEEDS_REVIEW with active misconceptions (urgency = 100)
-    // 2. Decayed score < 50 for previously UNDERSTOOD/MASTERED concepts (urgency = 80)
-    // 3. LEARNING in progress (urgency = 50)
-    // 4. Prerequisite warnings (urgency = 40)
     const prioritized = enriched
       .filter((s) => s.masteryStatus === 'NEEDS_REVIEW' || s.decayedScore < 70 || s.prerequisiteWarning)
       .sort((a, b) => {

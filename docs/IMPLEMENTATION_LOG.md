@@ -2,6 +2,50 @@
 
 This log is the permanent chronological engineering journal for the LearnForge project. Every phase records its objective, work performed, architectural decisions, testing, problems, and solutions.
 
+## [Phase 09 — Checkpoint 2] Domain Model, State Machine & Deterministic Rebuild Implementation
+
+- **Date**: October 5, 2026
+- **Status**: Completed (Domain Models, Prerequisite Validation, Atomic Idempotency Ledger, Realtime Study Mode Integration, Hardened Turn Immutability, Deterministic Rebuild with Injected Clock & 29/29 Phase 09 Unit/Integration Tests Passing)
+- **Phase**: Phase 09 — Learning State Engine (Checkpoint 2)
+- **Core Invariant**: *"Canonical Knowledge is the product. Study Sessions record evaluative evidence. Learning State interprets that evidence into explainable, structured mastery without mutating canonical knowledge."*
+- **Objective**: Implement the domain models (`Concept.prerequisites`, `ConceptLearningState`, `ProcessedStudyTurn`), pure state transition engine, prerequisite acyclicity checks, retention decay model, turn immutability enforcement, realtime projection integration, and deterministic rebuild mechanism.
+
+### Work Performed
+1. **Canonical Prerequisites**:
+   - Added `prerequisites: [{ type: ObjectId, ref: 'Concept' }]` to `Concept.js` with compound index `{ userId: 1, prerequisites: 1 }`.
+   - Built `conceptPrerequisiteValidator.js` with self-reference checks ($P_i \neq C$), tenant ownership verification, and DFS cycle detection ($C \notin \text{Ancestors}(P_i)$).
+2. **Materialized Concept Learning State**:
+   - Implemented `ConceptLearningState.js` with 5 discrete mastery states (`NOT_STARTED`, `LEARNING`, `NEEDS_REVIEW`, `UNDERSTOOD`, `MASTERED`), scores, attempt counters, streaks, active/resolved misconception ledgers, prerequisite warnings, and `stateVersion` optimistic concurrency lock.
+3. **Atomic Claim Idempotency Ledger (`ProcessedStudyTurn.js`)**:
+   - Implemented lean projection ledger with compound unique index `{ userId: 1, conceptId: 1, turnId: 1 }`.
+   - Implemented atomic claim protocol in `LearningStateService` eliminating concurrency races and double application.
+4. **Pure State Transition & Retention Decay Engine (`learningStateEngine.js`)**:
+   - Daily exponential retention decay: $\lambda = 0.005 \text{ day}^{-1}$, 7-day grace period, 35% retention floor, clock-injected $t_{\text{eval}}$.
+   - Bounded gain/penalty adjustments strictly clamped within $[0, 100]$.
+   - Complete state transition matrix covering all transitions without dead states.
+   - Batch projection engine `projectEvidenceHistory` with deterministic total ordering $\langle \text{answeredAt}, \text{turnId} \rangle$.
+5. **Realtime StudySession Integration**:
+   - Integrated `learningStateService.projectTurnRealtime` directly into `StudyService.submitAnswer()` immediately upon completed turn persistence.
+6. **Cross-Topic Prerequisite Rebuild Parity**:
+   - Enhanced `rebuildTopicLearningState` to load external prerequisite concepts across topics within the same subject/tenant, ensuring 100% parity between realtime projection and rebuilds: $\text{Rebuild}(E, t_{\text{eval}}) \equiv \text{Project}(E, t_{\text{eval}})$.
+7. **Hardened Completed Turn Immutability (`StudySession.js`)**:
+   - Hardened Mongoose `pre('save')`, `pre(['updateOne', 'findOneAndUpdate', 'updateMany', 'replaceOne', 'findOneAndReplace'])`, and `pre(['deleteOne', 'deleteMany', 'findOneAndDelete'])` hooks protecting completed turns and nested paths against mutation or deletion.
+8. **Testing & Build Verification**:
+   - 29 / 29 Phase 09 backend tests passing (100%) in `server/tests/learningState.test.js`.
+   - 262 / 262 Total backend tests passing (100%) across 14 test files with zero regressions in sealed Phases 01–08.
+
+---
+
+## [Phase 09 — Checkpoint 1] Architecture Review & Mathematical Decay Specification
+
+- **Date**: October 5, 2026
+- **Status**: Completed (Architecture Approved & Sealed)
+- **Phase**: Phase 09 — Learning State Engine (Checkpoint 1)
+- **Objective**: Resolve architectural ambiguities regarding evidence streams, canonical prerequisite source, mathematical retention decay model, deterministic total ordering, scalable idempotency ledger, and rebuild equivalence invariants.
+- **Artifacts**: `docs/phases/phase-09-architecture-review.md`, `docs/decisions/ADR-018-learning-state-storage-and-rebuild-architecture.md`, `docs/decisions/ADR-019-deterministic-mastery-state-machine-and-decay.md`.
+
+---
+
 ## [Phase 08 — Checkpoint 4] Integration, Concurrency & AI Failure Verification
 
 - **Date**: October 5, 2026

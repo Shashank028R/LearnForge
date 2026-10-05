@@ -72,7 +72,7 @@ const conceptLearningStateSchema = new mongoose.Schema(
     },
     masteryStatus: {
       type: String,
-      enum: ['NOT_STARTED', 'INTRODUCED', 'LEARNING', 'NEEDS_REVIEW', 'UNDERSTOOD', 'MASTERED'],
+      enum: ['NOT_STARTED', 'LEARNING', 'NEEDS_REVIEW', 'UNDERSTOOD', 'MASTERED'],
       default: 'NOT_STARTED',
       index: true,
     },

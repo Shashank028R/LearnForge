@@ -22,6 +22,7 @@ import {
   checkPrerequisitesSatisfied,
 } from '../src/services/conceptPrerequisiteValidator.js';
 import { LearningStateService } from '../src/services/learningStateService.js';
+import { StudyService } from '../src/study/services/studyService.js';
 
 describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementation', () => {
   let userId, subjectId, topicId;
@@ -526,15 +527,59 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
   });
 
   // ==========================================
-  // 6. DETERMINISTIC REBUILD EQUIVALENCE
+  // 6. CROSS-TOPIC PREREQUISITES & REBUILD PARITY
   // ==========================================
-  describe('6. Deterministic Rebuild Parity: Rebuild(E, t) === Project(E, t)', () => {
+  describe('6. Cross-Topic Prerequisite Rebuild Parity', () => {
     const t0 = new Date('2026-10-01T10:00:00.000Z');
     const t1 = new Date('2026-10-02T10:00:00.000Z');
     const t2 = new Date('2026-10-03T10:00:00.000Z');
-    const evaluationClock = new Date('2026-10-15T12:00:00.000Z'); // Injected fixed clock
+    const evaluationClock = new Date('2026-10-15T12:00:00.000Z');
 
-    it('produces identical state regardless of turn arrival order in batch projection', () => {
+    it('resolves cross-topic prerequisite correctly during batch rebuild', () => {
+      // Concept A is in Topic 1, Concept B is in Topic 2 and depends on Concept A
+      const topic1Id = new mongoose.Types.ObjectId();
+      const topic2Id = new mongoose.Types.ObjectId();
+
+      const initialMap = new Map();
+      // External prerequisite Concept A from Topic 1 (already UNDERSTOOD)
+      initialMap.set(conceptAId.toString(), {
+        ...createInitialConceptLearningState(conceptAId, userId, subjectId, topic1Id),
+        masteryStatus: 'UNDERSTOOD',
+        masteryScore: 85,
+        decayedScore: 85,
+        lastDemonstratedAt: t0,
+      });
+
+      // Target Concept B in Topic 2
+      initialMap.set(conceptBId.toString(), createInitialConceptLearningState(conceptBId, userId, subjectId, topic2Id));
+
+      const prereqMap = new Map();
+      prereqMap.set(conceptBId.toString(), [conceptAId]);
+
+      const turn1 = {
+        _id: new mongoose.Types.ObjectId('507f1f77bcf86cd799439011'),
+        answeredAt: t1,
+        question: { targetConceptIds: [conceptBId] },
+        evaluation: { verdict: 'CORRECT', correctness: 90 },
+      };
+
+      const turn2 = {
+        _id: new mongoose.Types.ObjectId('507f1f77bcf86cd799439012'),
+        answeredAt: t2,
+        question: { targetConceptIds: [conceptBId] },
+        evaluation: { verdict: 'CORRECT', correctness: 95 },
+      };
+
+      const rebuiltMap = projectEvidenceHistory(initialMap, [turn1, turn2], prereqMap, evaluationClock);
+
+      const stateB = rebuiltMap.get(conceptBId.toString());
+      expect(stateB).toBeDefined();
+      expect(stateB.masteryStatus).toBe('UNDERSTOOD');
+      expect(stateB.prerequisiteWarning).toBe(false); // Successfully resolved Concept A across topics
+      expect(stateB.unmetPrerequisiteIds).toHaveLength(0);
+    });
+
+    it('produces identical state regardless of turn arrival order (Deterministic Total Ordering)', () => {
       const initialMap = new Map();
       initialMap.set(conceptAId.toString(), createInitialConceptLearningState(conceptAId, userId, subjectId, topicId));
 
@@ -559,10 +604,7 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
         evaluation: { verdict: 'CORRECT', correctness: 92 },
       };
 
-      // Project forward
       const forwardResult = projectEvidenceHistory(initialMap, [turn1, turn2, turn3], new Map(), evaluationClock);
-
-      // Project shuffled order (must sort deterministically by answeredAt, _id)
       const shuffledResult = projectEvidenceHistory(initialMap, [turn3, turn1, turn2], new Map(), evaluationClock);
 
       const stateForward = forwardResult.get(conceptAId.toString());
@@ -681,9 +723,9 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
   });
 
   // ==========================================
-  // 8. IDEMPOTENCY & SERVICE-LEVEL REBUILD
+  // 8. ATOMIC CLAIM & REALTIME PROJECTION WIRING
   // ==========================================
-  describe('8. LearningStateService Mocked Integration Tests', () => {
+  describe('8. ProcessedStudyTurn Atomic Claim & LearningStateService Integration', () => {
     let service;
 
     beforeEach(() => {
@@ -717,7 +759,7 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
       expect(summary.learningCount).toBe(1);
       expect(summary.needsReviewCount).toBe(1);
       expect(summary.activeMisconceptionsCount).toBe(1);
-      expect(summary.averageMasteryScore).toBe(56); // (90+75+40+20)/4 = 56.25 => 56
+      expect(summary.averageMasteryScore).toBe(56);
     });
   });
 });

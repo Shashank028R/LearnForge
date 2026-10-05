@@ -6,6 +6,7 @@ import { Subject } from '../../models/Subject.js';
 import { SyllabusVersion } from '../../models/SyllabusVersion.js';
 import { Concept } from '../../models/Concept.js';
 import { studyAiService } from './studyAiService.js';
+import { learningStateService } from '../../services/learningStateService.js';
 import {
   STUDY_STATUS,
   ALLOWED_PAUSE_STATUSES,
@@ -550,6 +551,13 @@ export class StudyService {
 
     const updatedSession = await StudySession.findById(sessionId);
     const addedTurn = updatedSession.turns[updatedSession.turns.length - 1];
+
+    // Project completed turn into Learning State in realtime
+    try {
+      await learningStateService.projectTurnRealtime(userId, sessionId, addedTurn);
+    } catch (projErr) {
+      console.warn(`[StudyService] Learning state projection notice for session ${sessionId}:`, projErr.message);
+    }
 
     return {
       idempotent: false,

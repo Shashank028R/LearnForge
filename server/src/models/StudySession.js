@@ -269,38 +269,111 @@ studySessionSchema.pre('save', async function (next) {
   next();
 });
 
-studySessionSchema.pre(['updateOne', 'findOneAndUpdate', 'updateMany'], async function (next) {
+studySessionSchema.pre(['updateOne', 'findOneAndUpdate', 'updateMany', 'replaceOne', 'findOneAndReplace'], async function (next) {
   const update = this.getUpdate();
   if (!update) return next();
 
-  const hasPullTurns = update.$pull && update.$pull.turns;
-  const hasPopTurns = update.$pop && update.$pop.turns;
-  const hasSetTurns = update.$set && (update.$set.turns || Object.keys(update.$set).some((k) => k.startsWith('turns.')));
+  try {
+    const query = this.getQuery ? this.getQuery() : {};
+    const existingDocs = await this.model.find(query).select('turns').lean();
 
-  if (hasPullTurns || hasPopTurns || hasSetTurns) {
-    try {
-      const query = this.getQuery();
-      const existingDocs = await this.model.find(query).select('turns').lean();
-      for (const existing of existingDocs) {
-        if (!existing || !Array.isArray(existing.turns)) continue;
-        const completedTurns = existing.turns.filter(
-          (t) => t.evaluation && t.evaluation.evaluatedAt !== null && t.evaluation.verdict !== null
-        );
-        if (completedTurns.length > 0) {
-          if (hasPullTurns || hasPopTurns) {
-            const err = new Error('Immutability violation: Bulk/Query operations cannot delete completed study turns.');
-            err.code = 'TURN_IMMUTABILITY_VIOLATION';
-            err.statusCode = 400;
-            return next(err);
-          }
-          if (hasSetTurns && update.$set.turns) {
-            assertTurnImmutability(existing.turns, update.$set.turns);
+    for (const existing of existingDocs) {
+      if (!existing || !Array.isArray(existing.turns)) continue;
+      const completedTurns = existing.turns.filter(
+        (t) => t.evaluation && t.evaluation.evaluatedAt !== null && t.evaluation.verdict !== null
+      );
+      if (completedTurns.length === 0) continue;
+
+      // 1. Check direct document replacement without $ operators
+      const isDirectReplacement = Object.keys(update).length > 0 && !Object.keys(update).some((k) => k.startsWith('$'));
+      if (isDirectReplacement) {
+        if (!Array.isArray(update.turns)) {
+          const err = new Error('Immutability violation: Document replacement cannot omit completed study turns.');
+          err.code = 'TURN_IMMUTABILITY_VIOLATION';
+          err.statusCode = 400;
+          return next(err);
+        }
+        assertTurnImmutability(existing.turns, update.turns);
+      }
+
+      // 2. Check $pull / $pop / $unset operations
+      if (update.$pull?.turns || update.$pop?.turns || update.$unset?.turns) {
+        const err = new Error('Immutability violation: Query operations cannot delete or unset completed study turns.');
+        err.code = 'TURN_IMMUTABILITY_VIOLATION';
+        err.statusCode = 400;
+        return next(err);
+      }
+
+      // 3. Check $set operations (array overwrite or nested property update)
+      if (update.$set) {
+        if (update.$set.turns) {
+          assertTurnImmutability(existing.turns, update.$set.turns);
+        }
+
+        // Check nested path updates: e.g. "turns.0.userAnswer" or "turns.0.evaluation.correctness"
+        for (const [key, val] of Object.entries(update.$set)) {
+          const match = key.match(/^turns\.(\d+)(\..+)?$/);
+          if (match) {
+            const index = parseInt(match[1], 10);
+            const targetTurn = existing.turns[index];
+            if (targetTurn && targetTurn.evaluation?.evaluatedAt !== null && targetTurn.evaluation?.verdict !== null) {
+              const subPath = match[2] || '';
+              // If modifying any sealed field of a completed turn
+              const err = new Error(`Immutability violation: Nested field "${key}" of completed study turn ${targetTurn._id} cannot be modified.`);
+              err.code = 'TURN_IMMUTABILITY_VIOLATION';
+              err.statusCode = 400;
+              return next(err);
+            }
           }
         }
       }
-    } catch (err) {
-      return next(err);
+
+      // 4. Check nested $unset on turn paths
+      if (update.$unset) {
+        for (const key of Object.keys(update.$unset)) {
+          if (key.startsWith('turns.')) {
+            const match = key.match(/^turns\.(\d+)/);
+            if (match) {
+              const index = parseInt(match[1], 10);
+              const targetTurn = existing.turns[index];
+              if (targetTurn && targetTurn.evaluation?.evaluatedAt !== null && targetTurn.evaluation?.verdict !== null) {
+                const err = new Error(`Immutability violation: Nested field "${key}" of completed study turn cannot be unset.`);
+                err.code = 'TURN_IMMUTABILITY_VIOLATION';
+                err.statusCode = 400;
+                return next(err);
+              }
+            }
+          }
+        }
+      }
     }
+  } catch (err) {
+    return next(err);
+  }
+
+  next();
+});
+
+studySessionSchema.pre(['deleteOne', 'deleteMany', 'findOneAndDelete'], async function (next) {
+  try {
+    const query = this.getQuery ? this.getQuery() : {};
+    const existingDocs = await this.model.find(query).select('turns').lean();
+
+    for (const existing of existingDocs) {
+      if (existing && Array.isArray(existing.turns)) {
+        const hasCompletedTurn = existing.turns.some(
+          (t) => t.evaluation && t.evaluation.evaluatedAt !== null && t.evaluation.verdict !== null
+        );
+        if (hasCompletedTurn) {
+          const err = new Error(`Immutability violation: Cannot delete StudySession ${existing._id} containing completed authoritative study turns.`);
+          err.code = 'TURN_IMMUTABILITY_VIOLATION';
+          err.statusCode = 400;
+          return next(err);
+        }
+      }
+    }
+  } catch (err) {
+    return next(err);
   }
   next();
 });

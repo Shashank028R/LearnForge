@@ -87,7 +87,6 @@ When calculating concept readiness and mastery:
 
 ### Discrete States
 - `NOT_STARTED`: Concept has 0 evaluated study turns.
-- `INTRODUCED`: 1 evaluated turn recorded, or initial exploration.
 - `LEARNING`: Actively practiced with partial understanding or initial scores ($< 85\%$).
 - `NEEDS_REVIEW`: Active misconception detected or $\ge 2$ consecutive failures.
 - `UNDERSTOOD`: Demonstrates solid conceptual understanding (`correctness >= 85%`, `completeness >= 80%`).
