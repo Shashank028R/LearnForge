@@ -16,19 +16,22 @@ We evaluated three storage strategies:
 ## Decision
 We choose **Option C: Event-Projected Materialized View with Deterministic Rebuild**.
 
-1. **Authoritative Evidence Stream Semantics**:
+1. **Authoritative Evidence Stream Semantics & Immutability**:
    - **`StudySession.turns` is the EXCLUSIVE AUTHORITATIVE EVIDENCE STREAM for `ConceptLearningState`**.
    - Active recall study evaluations provide structured, multi-criteria pedagogical grades (`verdict`, `correctness`, `completeness`, `reasoningQuality`, `misconceptionDetected`, `misconceptionSummary`, `strengths`, `weaknesses`, `nextAction`, and Socratic follow-up loops).
+   - **Immutability of Completed Turns**: In `StudySession`, turns are only updated during their active, fenced evaluation lifecycle (`submitAnswer` / `submitFollowUpAnswer`) protected by `evaluationState.operationId` and `sessionVersion` optimistic concurrency. Once evaluated (`evaluation.evaluatedAt !== null`), turns are sealed and immutable. No service allows editing or deleting historical turns.
    - **`LearningEvent` records** (from Phase 06 chat extractions) represent an immutable audit ledger of conversational interactions and are **NOT** consumed by `ConceptLearningState`. This eliminates double-counting, semantic precedence conflicts, and multi-stream divergence.
    - Canonical Knowledge (`Concept`, `Topic`, `Subject`, `NoteDocument`, `NoteVersion`, `SyllabusVersion`) is **strictly read-only** and never mutated by Learning State.
 
-2. **Deterministic Total Ordering & Rebuild Guarantee**:
-   - Evidence set $E$ is the set of all completed `StudyTurn` subdocuments within `StudySession.turns` belonging to `userId` and `topicId`.
-   - Deterministic sort key eliminates tie ambiguity:
+2. **Deterministic Rebuild Guarantee with Injected Evaluation Clock**:
+   - State is categorized into two distinct types:
+     - **Category A (Deterministic Evidence-Derived State)**: `masteryStatus`, `masteryScore`, `confidenceScore`, `attemptsCount`, `consecutiveSuccesses`, `consecutiveFailures`, `activeMisconceptions`, `resolvedMisconceptions`, `lastAttemptedAt`, `lastDemonstratedAt`, `lastProcessedTurnId`, `lastProcessedAnsweredAt`. (100% time-invariant given evidence set $E$).
+     - **Category B (Time-Dependent Derived State)**: `decayedScore = calculateDecayedScore(masteryScore, lastDemonstratedAt, evaluationTimestamp)`.
+   - Rebuild contract:
+     $$\text{Rebuild}(E, t_{\text{eval}}) \equiv \text{Project}(E, t_{\text{eval}})$$
+     For any fixed evaluation timestamp $t_{\text{eval}}$, all fields—including `decayedScore`—match with zero drift. Automated tests inject a fixed clock parameter ($t_{\text{eval}}$) rather than calling uncontrolled `Date.now()`.
+   - Evidence set $E$ is sorted deterministically:
      $$\text{SortKey}(T) = \langle T.\text{answeredAt} \text{ (ascending)}, T.\_id.\text{toString()} \text{ (ascending)} \rangle$$
-   - A pure domain engine `calculateConceptLearningState(evidenceHistory)` processes turns chronologically.
-   - Calling `rebuildTopicLearningState(userId, topicId)` drops materialized state for that topic, reads authoritative turns, replays them through the pure engine, and re-inserts the exact state.
-   - **Rebuild Invariant**: $\text{Rebuild}(E) \equiv \text{Project}_{\text{realtime}}(E)$ ($100\%$ zero-drift parity).
 
 3. **Scalable Idempotency Architecture (`ProcessedStudyTurn`)**:
    - Rather than embedding an unbounded `processedTurnIds: [ObjectId]` array inside `ConceptLearningState` (which risks hitting MongoDB 16MB document limits over thousands of turns), projection tracking uses a dedicated projection ledger:
@@ -47,7 +50,7 @@ We choose **Option C: Event-Projected Materialized View with Deterministic Rebui
    - In `ConceptLearningState`, only bounded metadata is stored: `lastProcessedTurnId`, `lastProcessedAnsweredAt`, and `stateVersion`.
    - Before applying a turn, the service checks the unique index in `ProcessedStudyTurn`. If the turn was already projected, it returns the existing state without mutating metrics or scores.
 
-4. **Optimistic Version Locking (`stateVersion`)**:
+4. **Optimistic Concurrency Locking (`stateVersion`)**:
    - Atomic updates increment `stateVersion`. Concurrent projection collisions fail safely and retry with a fresh document snapshot.
 
 5. **Topic & Subject Aggregates (Dynamic Aggregation on Read)**:

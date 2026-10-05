@@ -47,27 +47,30 @@ Educational platforms often rely on arbitrary "AI mastery percentages" or simpli
    - `activeMisconceptions.length === 0`
    - All canonical prerequisites (`Concept.prerequisites`) have `masteryStatus` in `['UNDERSTOOD', 'MASTERED']` and `decayedScore >= 50`.
 
-4. **Authoritative Prerequisite Model**:
-   - Canonical prerequisites are sourced strictly from `Concept.prerequisites: [ObjectId]`.
+4. **Authoritative Prerequisite Model & Implementation Plan**:
+   - `Concept.prerequisites: [{ type: ObjectId, ref: 'Concept' }]` will be introduced into `Concept.js` during **Checkpoint 2 implementation** as the canonical prerequisite graph.
+   - Tenant isolation: Every referenced concept must belong to the same `userId`.
+   - Scope: Supports intra-topic and cross-topic prerequisites within the same subject.
+   - Validation rules: No self-references ($P_i \neq C$), acyclicity checks on update, and unresolved status if a prerequisite is missing or deleted.
    - AI-generated question metadata (`question.prerequisiteConceptIds`) in `StudyTurn` is transient and **never** mutates canonical prerequisites.
-   - If canonical prerequisites are unmet or decaying below threshold, concept progression is capped at `UNDERSTOOD` with `prerequisiteWarning: true`. When prerequisites are subsequently brought to $\ge 50$, the dependent concept can advance to `MASTERED` on its next demonstration.
+   - If canonical prerequisites are unmet or decaying below threshold, concept progression is capped at `UNDERSTOOD` with `prerequisiteWarning: true`.
 
 5. **Bounded Score Adjustment Formulas**:
    $$\Delta_{\text{gain}} = \text{round}\left( \text{baseGain} \times \max\left(0.10, 1 - \frac{S_{\text{current}}}{120}\right) \right)$$
    $$\Delta_{\text{penalty}} = \text{round}\left( \text{basePenalty} \times \max\left(0.40, \frac{S_{\text{current}}}{100}\right) \right)$$
    - Scores are strictly clamped within $[0, 100]$.
 
-6. **Retention & Recency Decay Model (Option A: Daily Exponential Decay)**:
+6. **Retention & Recency Decay Model (Daily Exponential Decay)**:
    - **Time Unit**: Days ($d$).
    - **Grace Period ($T_{\text{grace}}$)**: 7 days after `lastDemonstratedAt`. No decay occurs during days $0 \le d \le 7$.
-   - **Elapsed Days beyond Grace Period ($\Delta d$)**:
-     $$\Delta d = \max\left(0, \frac{\text{now} - \text{lastDemonstratedAt}}{86,400,000} - 7\right)$$
+   - **Elapsed Days beyond Grace Period ($\Delta d(t)$)**:
+     $$\Delta d(t) = \max\left(0, \frac{t - \text{lastDemonstratedAt}}{86,400,000} - 7\right)$$
    - **Daily Decay Constant ($\lambda$)**:
      $$\lambda = 0.005 \text{ day}^{-1}$$
      - Weekly decay rate: $1 - e^{-0.005 \times 7} \approx 3.44\%$ per week beyond grace.
      - Half-life beyond grace: $T_{1/2} = \frac{\ln(2)}{0.005} \approx 138.6 \text{ days}$ (~$4.5$ months).
    - **Formula**:
-     $$S_{\text{decayed}} = \text{round}\left( S_{\text{mastery}} \times \max\left(0.35, e^{-0.005 \times \Delta d}\right) \right)$$
+     $$S_{\text{decayed}}(t) = \text{round}\left( S_{\text{mastery}} \times \max\left(0.35, e^{-0.005 \times \Delta d(t)}\right) \right)$$
    - **Decay Floor**: $35\%$ of $S_{\text{mastery}}$ ($0.35 \times S_{\text{mastery}}$).
    - **Never Demonstrated**: If `lastDemonstratedAt === null`, $S_{\text{decayed}} = 0$.
 
@@ -80,9 +83,10 @@ Educational platforms often rely on arbitrary "AI mastery percentages" or simpli
    - **Very large elapsed time (e.g. 365 days)**: $\Delta d = 358 \implies e^{-1.79} = 0.1669 < 0.35 \implies S_{\text{decayed}} = \text{round}(90 \times 0.35) = 32$ (Floor)
    - **Never demonstrated**: $S_{\text{decayed}} = 0$.
 
-7. **Decayed Score Generation Lifecycle**:
-   - `decayedScore` is computed dynamically on read in API endpoints based on the current timestamp.
+7. **Decayed Score Generation Lifecycle & Clock Contract**:
+   - `decayedScore` is computed dynamically on read in API endpoints based on the evaluation timestamp parameter ($t_{\text{eval}}$).
    - A snapshot `decayedScore` is persisted during turn projection for fast indexed sorting in database queries.
+   - Rebuild assertions and unit tests evaluate $\text{Rebuild}(E, t_{\text{eval}}) \equiv \text{Project}(E, t_{\text{eval}})$ using an explicit injected clock timestamp.
 
 ## Consequences
 - Transparent, mathematically sound, audit-proof grading.
