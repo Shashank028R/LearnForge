@@ -9,8 +9,10 @@ import {
   calculateDecayedScore,
   createInitialConceptLearningState,
   projectEvidenceHistory,
+  sortTargetConceptsByDependency,
 } from './learningStateEngine.js';
 import { checkPrerequisitesSatisfied } from './conceptPrerequisiteValidator.js';
+import { runInTransaction } from '../study/services/studyService.js';
 
 export class LearningStateService {
   /**
@@ -18,6 +20,7 @@ export class LearningStateService {
    * Scalable & Idempotent via ProcessedStudyTurn ledger.
    * Supports MongoDB atomic session transaction forwarding.
    * Multi-concept atomic: all target concepts must project successfully or the transaction aborts.
+   * Deterministically orders target concepts by dependency.
    */
   async projectTurnRealtime(userId, sessionId, turn, options = {}) {
     if (!turn || !turn.evaluation || turn.evaluation.verdict === null) {
@@ -25,13 +28,26 @@ export class LearningStateService {
     }
 
     const evaluationTime = options.evaluationTime || turn.answeredAt || new Date();
-    const targetConceptIds = turn.question && Array.isArray(turn.question.targetConceptIds)
+    const rawTargetConceptIds = turn.question && Array.isArray(turn.question.targetConceptIds)
       ? turn.question.targetConceptIds
       : [];
 
-    if (targetConceptIds.length === 0) {
+    if (rawTargetConceptIds.length === 0) {
       return { projected: false, reason: 'No target concepts associated with turn' };
     }
+
+    // Load concepts to resolve any dependency relations among same-turn concepts
+    const dbSession = options.session || null;
+    const conceptQuery = Concept.find({ _id: { $in: rawTargetConceptIds }, userId });
+    if (dbSession) conceptQuery.session(dbSession);
+    const concepts = await conceptQuery.lean();
+
+    const conceptPrerequisitesMap = new Map();
+    for (const c of concepts) {
+      conceptPrerequisitesMap.set(c._id.toString(), Array.isArray(c.prerequisites) ? c.prerequisites : []);
+    }
+
+    const targetConceptIds = sortTargetConceptsByDependency(rawTargetConceptIds, conceptPrerequisitesMap);
 
     const results = [];
 
@@ -242,7 +258,9 @@ export class LearningStateService {
 
   /**
    * Deterministically reconstructs the complete topic learning state from historical StudySession.turns.
-   * Supports intra-topic and cross-topic prerequisites within the same subject.
+   * Replays the entire transitive prerequisite closure from raw historical evidence.
+   * Does not depend on existing materialized state.
+   * Transactional and atomic.
    * Parity Invariant: Rebuild(E, evaluationTimestamp) === Project(E, evaluationTimestamp)
    */
   async rebuildTopicLearningState(userId, topicId, options = {}) {
@@ -251,8 +269,8 @@ export class LearningStateService {
     const evaluationTime = options.evaluationTime || options.evaluationTimestamp || new Date();
 
     // 1. Fetch all concepts in target topic
-    const concepts = await Concept.find({ userId: uId, topicId: tId }).lean();
-    if (concepts.length === 0) {
+    const targetConcepts = await Concept.find({ userId: uId, topicId: tId }).lean();
+    if (targetConcepts.length === 0) {
       return {
         topicId: tId,
         rebuiltCount: 0,
@@ -261,52 +279,53 @@ export class LearningStateService {
       };
     }
 
-    const conceptIds = concepts.map((c) => c._id);
-    const conceptPrerequisitesMap = new Map();
-    const initialStatesMap = new Map();
+    const targetConceptIds = targetConcepts.map((c) => c._id);
+    const targetConceptIdStrings = new Set(targetConceptIds.map((id) => id.toString()));
 
-    for (const c of concepts) {
-      const strId = c._id.toString();
-      conceptPrerequisitesMap.set(strId, Array.isArray(c.prerequisites) ? c.prerequisites : []);
-      initialStatesMap.set(strId, createInitialConceptLearningState(c._id, uId, c.subjectId, c.topicId));
+    // 2. Discover full transitive prerequisite closure across the subject from canonical Concept graph
+    const allConceptsMap = new Map();
+    for (const c of targetConcepts) {
+      allConceptsMap.set(c._id.toString(), c);
     }
 
-    // 2. Resolve Cross-Topic Prerequisites: identify any prerequisite concepts from other topics
-    const allPrereqConceptIds = concepts.flatMap((c) => (Array.isArray(c.prerequisites) ? c.prerequisites : []));
-    const externalPrereqIds = allPrereqConceptIds.filter((pid) => !conceptIds.some((cid) => cid.equals(pid)));
+    const queue = [...targetConcepts];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const prereqs = Array.isArray(current.prerequisites) ? current.prerequisites : [];
+      const unvisitedPrereqIds = prereqs.filter((pid) => !allConceptsMap.has(pid.toString()));
 
-    if (externalPrereqIds.length > 0) {
-      const externalStates = await ConceptLearningState.find({
-        userId: uId,
-        conceptId: { $in: externalPrereqIds },
-      }).lean();
-
-      for (const es of externalStates) {
-        es.decayedScore = calculateDecayedScore(es.masteryScore, es.lastDemonstratedAt, evaluationTime);
-        initialStatesMap.set(es.conceptId.toString(), es);
-      }
-
-      // If an external prerequisite concept has no state yet, load canonical concept and set default initial state
-      const existingExternalConceptIds = new Set(externalStates.map((s) => s.conceptId.toString()));
-      const missingExternalPrereqIds = externalPrereqIds.filter((id) => !existingExternalConceptIds.has(id.toString()));
-
-      if (missingExternalPrereqIds.length > 0) {
-        const missingConcepts = await Concept.find({
+      if (unvisitedPrereqIds.length > 0) {
+        const fetchedPrereqs = await Concept.find({
           userId: uId,
-          _id: { $in: missingExternalPrereqIds },
+          _id: { $in: unvisitedPrereqIds },
         }).lean();
 
-        for (const mc of missingConcepts) {
-          initialStatesMap.set(
-            mc._id.toString(),
-            createInitialConceptLearningState(mc._id, uId, mc.subjectId, mc.topicId)
-          );
+        for (const pDoc of fetchedPrereqs) {
+          allConceptsMap.set(pDoc._id.toString(), pDoc);
+          queue.push(pDoc);
         }
       }
     }
 
-    // 3. Fetch all study sessions for target topic and extract all completed turns
-    const sessions = await StudySession.find({ userId: uId, topicId: tId }).lean();
+    // Build initial states and prerequisite adjacency map for ALL concepts in the closure
+    const conceptPrerequisitesMap = new Map();
+    const initialStatesMap = new Map();
+
+    for (const [strId, cDoc] of allConceptsMap.entries()) {
+      conceptPrerequisitesMap.set(strId, Array.isArray(cDoc.prerequisites) ? cDoc.prerequisites : []);
+      initialStatesMap.set(strId, createInitialConceptLearningState(cDoc._id, uId, cDoc.subjectId, cDoc.topicId));
+    }
+
+    // 3. Fetch historical evidence (StudySession.turns) for ALL topics in the prerequisite closure
+    const closureTopicIds = Array.from(
+      new Set(Array.from(allConceptsMap.values()).map((c) => c.topicId.toString()))
+    ).map((tid) => new mongoose.Types.ObjectId(tid));
+
+    const sessions = await StudySession.find({
+      userId: uId,
+      topicId: { $in: closureTopicIds },
+    }).lean();
+
     const allCompletedTurns = [];
     const turnSessionMap = new Map();
 
@@ -321,7 +340,7 @@ export class LearningStateService {
       }
     }
 
-    // 4. Deterministically project evidence through pure engine
+    // 4. Deterministically replay all historical evidence through pure engine
     const finalStatesMap = projectEvidenceHistory(
       initialStatesMap,
       allCompletedTurns,
@@ -329,60 +348,68 @@ export class LearningStateService {
       evaluationTime
     );
 
-    // 5. Atomic wipe and re-insert of materialized views ONLY for target topic concepts
-    await ConceptLearningState.deleteMany({ userId: uId, topicId: tId });
-    await ProcessedStudyTurn.deleteMany({ userId: uId, conceptId: { $in: conceptIds } });
+    // 5. Transactional commit: atomically wipe & insert materialized views for target topic concepts only
+    const result = await runInTransaction(async (dbSession) => {
+      const sessionOpts = dbSession ? { session: dbSession } : {};
 
-    const statesToInsert = [];
-    for (const conceptId of conceptIds) {
-      const stateObj = finalStatesMap.get(conceptId.toString());
-      if (stateObj) {
-        statesToInsert.push({
-          ...stateObj,
-          stateVersion: 1,
-        });
-      }
-    }
+      await ConceptLearningState.deleteMany({ userId: uId, topicId: tId }, sessionOpts);
+      await ProcessedStudyTurn.deleteMany({ userId: uId, conceptId: { $in: targetConceptIds } }, sessionOpts);
 
-    const insertedStates = statesToInsert.length > 0 ? await ConceptLearningState.insertMany(statesToInsert) : [];
-
-    // Rebuild ProcessedStudyTurn ledger for target topic
-    const ledgerEntries = [];
-    for (const turn of allCompletedTurns) {
-      const targetIds = turn.question && Array.isArray(turn.question.targetConceptIds)
-        ? turn.question.targetConceptIds
-        : [];
-      const sId = turnSessionMap.get(turn._id.toString());
-
-      for (const targetId of targetIds) {
-        if (conceptIds.some((cid) => cid.toString() === targetId.toString())) {
-          ledgerEntries.push({
-            userId: uId,
-            conceptId: targetId,
-            turnId: turn._id,
-            sessionId: sId,
-            processedAt: turn.answeredAt || new Date(),
+      const statesToInsert = [];
+      for (const conceptId of targetConceptIds) {
+        const stateObj = finalStatesMap.get(conceptId.toString());
+        if (stateObj) {
+          statesToInsert.push({
+            ...stateObj,
+            stateVersion: 1,
           });
         }
       }
-    }
 
-    if (ledgerEntries.length > 0) {
-      try {
-        await ProcessedStudyTurn.insertMany(ledgerEntries, { ordered: false });
-      } catch (e) {
-        // Ignore duplicate key errors if turn was processed
+      const insertedStates = statesToInsert.length > 0
+        ? await ConceptLearningState.insertMany(statesToInsert, sessionOpts)
+        : [];
+
+      // Rebuild ProcessedStudyTurn ledger for target topic concepts from target topic sessions
+      const ledgerEntries = [];
+      for (const turn of allCompletedTurns) {
+        const targetIds = turn.question && Array.isArray(turn.question.targetConceptIds)
+          ? turn.question.targetConceptIds
+          : [];
+        const sId = turnSessionMap.get(turn._id.toString());
+
+        for (const targetId of targetIds) {
+          if (targetConceptIdStrings.has(targetId.toString())) {
+            ledgerEntries.push({
+              userId: uId,
+              conceptId: targetId,
+              turnId: turn._id,
+              sessionId: sId,
+              processedAt: turn.answeredAt || new Date(),
+            });
+          }
+        }
       }
-    }
 
-    const summary = this._computeTopicSummary(insertedStates);
+      if (ledgerEntries.length > 0) {
+        try {
+          await ProcessedStudyTurn.insertMany(ledgerEntries, { ...sessionOpts, ordered: false });
+        } catch (e) {
+          // Ignore duplicate key errors if already present
+        }
+      }
 
-    return {
-      topicId: tId,
-      rebuiltCount: insertedStates.length,
-      conceptStates: insertedStates,
-      summary,
-    };
+      const summary = this._computeTopicSummary(insertedStates);
+
+      return {
+        topicId: tId,
+        rebuiltCount: insertedStates.length,
+        conceptStates: insertedStates,
+        summary,
+      };
+    });
+
+    return result;
   }
 
   /**

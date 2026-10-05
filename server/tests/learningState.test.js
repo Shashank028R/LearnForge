@@ -16,6 +16,7 @@ import {
   createInitialConceptLearningState,
   applyTurnToConceptState,
   projectEvidenceHistory,
+  sortTargetConceptsByDependency,
 } from '../src/services/learningStateEngine.js';
 import {
   validatePrerequisitesGraph,
@@ -659,7 +660,7 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
   });
 
   // ==========================================
-  // 7. COMPLETED TURN IMMUTABILITY GUARANTEES
+  // 7. COMPLETED TURN IMMUTABILITY GUARANTEES (Mongoose Query-Path & Model Invariants)
   // ==========================================
   describe('7. Completed StudyTurn Immutability Guarantees', () => {
     it('assertTurnImmutability passes for unmodified completed turns', () => {
@@ -758,16 +759,231 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
 
       expect(() => assertTurnImmutability(existing, deleted)).toThrow('cannot be deleted');
     });
+
+    it('query middleware blocks updateOne with $set tampering on completed turns', async () => {
+      const turnId = new mongoose.Types.ObjectId();
+      const existingDoc = {
+        _id: new mongoose.Types.ObjectId(),
+        turns: [
+          {
+            _id: turnId,
+            turnIndex: 0,
+            userAnswer: 'Original',
+            evaluation: { verdict: 'CORRECT', evaluatedAt: new Date() },
+          },
+        ],
+      };
+
+      const mockQueryContext = {
+        model: {
+          base: { now: () => new Date() },
+          schema: { options: {} },
+          find: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              lean: vi.fn().mockResolvedValue([existingDoc]),
+            }),
+          }),
+        },
+        getQuery: () => ({ _id: existingDoc._id }),
+        getUpdate: () => ({
+          $set: { 'turns.0.userAnswer': 'Hacked Answer' },
+        }),
+      };
+
+      const hooks = StudySession.schema.s.hooks._pres.get('updateOne') || [];
+      let capturedError = null;
+
+      for (const hook of hooks) {
+        if (hook.fn.toString().includes('assertTurnImmutability') || hook.fn.toString().includes('TURN_IMMUTABILITY_VIOLATION')) {
+          await new Promise((resolve) => {
+            hook.fn.call(mockQueryContext, (err) => {
+              if (err) capturedError = err;
+              resolve();
+            });
+          });
+        }
+      }
+
+      expect(capturedError).toBeDefined();
+      expect(capturedError.code).toBe('TURN_IMMUTABILITY_VIOLATION');
+    });
+
+    it('query middleware blocks updateOne with $pull / $pop / $unset on completed turns', async () => {
+      const turnId = new mongoose.Types.ObjectId();
+      const existingDoc = {
+        _id: new mongoose.Types.ObjectId(),
+        turns: [
+          {
+            _id: turnId,
+            turnIndex: 0,
+            userAnswer: 'Original',
+            evaluation: { verdict: 'CORRECT', evaluatedAt: new Date() },
+          },
+        ],
+      };
+
+      const mockQueryContext = {
+        model: {
+          base: { now: () => new Date() },
+          schema: { options: {} },
+          find: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              lean: vi.fn().mockResolvedValue([existingDoc]),
+            }),
+          }),
+        },
+        getQuery: () => ({ _id: existingDoc._id }),
+        getUpdate: () => ({
+          $pull: { turns: { _id: turnId } },
+        }),
+      };
+
+      const hooks = StudySession.schema.s.hooks._pres.get('updateOne') || [];
+      let capturedError = null;
+
+      for (const hook of hooks) {
+        if (hook.fn.toString().includes('assertTurnImmutability') || hook.fn.toString().includes('TURN_IMMUTABILITY_VIOLATION')) {
+          await new Promise((resolve) => {
+            hook.fn.call(mockQueryContext, (err) => {
+              if (err) capturedError = err;
+              resolve();
+            });
+          });
+        }
+      }
+
+      expect(capturedError).toBeDefined();
+      expect(capturedError.code).toBe('TURN_IMMUTABILITY_VIOLATION');
+    });
+
+    it('query middleware blocks deleteOne / findOneAndDelete on session with completed turns', async () => {
+      const turnId = new mongoose.Types.ObjectId();
+      const existingDoc = {
+        _id: new mongoose.Types.ObjectId(),
+        turns: [
+          {
+            _id: turnId,
+            turnIndex: 0,
+            evaluation: { verdict: 'CORRECT', evaluatedAt: new Date() },
+          },
+        ],
+      };
+
+      const mockQueryContext = {
+        model: {
+          find: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              lean: vi.fn().mockResolvedValue([existingDoc]),
+            }),
+          }),
+        },
+        getQuery: () => ({ _id: existingDoc._id }),
+      };
+
+      const hooks = StudySession.schema.s.hooks._pres.get('deleteOne') || [];
+      let capturedError = null;
+
+      for (const hook of hooks) {
+        if (hook.fn.toString().includes('Cannot delete StudySession') || hook.fn.toString().includes('TURN_IMMUTABILITY_VIOLATION')) {
+          await new Promise((resolve) => {
+            hook.fn.call(mockQueryContext, (err) => {
+              if (err) capturedError = err;
+              resolve();
+            });
+          });
+        }
+      }
+
+      expect(capturedError).toBeDefined();
+      expect(capturedError.code).toBe('TURN_IMMUTABILITY_VIOLATION');
+    });
   });
 
   // ==========================================
-  // 8. ATOMIC CLAIM, CONCURRENCY & MULTI-CONCEPT
+  // 8. SAME-TURN TOPOLOGICAL DEPENDENCY ORDERING & INTEGRATION
   // ==========================================
-  describe('8. ProcessedStudyTurn Atomic Claim, Concurrency & Integration', () => {
+  describe('8. Same-Turn Topological Dependency Ordering & Realtime Projection', () => {
     let service;
 
     beforeEach(() => {
       service = new LearningStateService();
+    });
+
+    it('sortTargetConceptsByDependency orders prerequisites before dependent concepts', () => {
+      const idA = new mongoose.Types.ObjectId('507f1f77bcf86cd799439001');
+      const idB = new mongoose.Types.ObjectId('507f1f77bcf86cd799439002');
+      const idC = new mongoose.Types.ObjectId('507f1f77bcf86cd799439003');
+
+      // Dependency graph: C depends on B, B depends on A
+      const prereqMap = new Map();
+      prereqMap.set(idB.toString(), [idA]);
+      prereqMap.set(idC.toString(), [idB]);
+      prereqMap.set(idA.toString(), []);
+
+      // Shuffled input
+      const input = [idC, idA, idB];
+      const sorted = sortTargetConceptsByDependency(input, prereqMap);
+
+      expect(sorted.map((id) => id.toString())).toEqual([idA.toString(), idB.toString(), idC.toString()]);
+    });
+
+    it('sortTargetConceptsByDependency applies lexicographical tie-breaker for independent concepts', () => {
+      const idX = new mongoose.Types.ObjectId('507f1f77bcf86cd799439009');
+      const idY = new mongoose.Types.ObjectId('507f1f77bcf86cd799439001');
+
+      const prereqMap = new Map();
+      const sorted = sortTargetConceptsByDependency([idX, idY], prereqMap);
+
+      expect(sorted[0].toString()).toBe(idY.toString());
+      expect(sorted[1].toString()).toBe(idX.toString());
+    });
+
+    it('processes same-turn concepts in topological order so dependent concept benefits from updated prerequisite', () => {
+      const idA = new mongoose.Types.ObjectId('507f1f77bcf86cd799439001');
+      const idB = new mongoose.Types.ObjectId('507f1f77bcf86cd799439002');
+
+      const initialMap = new Map();
+      initialMap.set(idA.toString(), {
+        ...createInitialConceptLearningState(idA, userId, subjectId, topicId),
+        masteryStatus: 'LEARNING',
+        masteryScore: 80,
+        attemptsCount: 2,
+        consecutiveSuccesses: 1,
+      });
+      initialMap.set(idB.toString(), {
+        ...createInitialConceptLearningState(idB, userId, subjectId, topicId),
+        masteryStatus: 'UNDERSTOOD',
+        masteryScore: 85,
+        confidenceScore: 80,
+        attemptsCount: 2,
+        consecutiveSuccesses: 1,
+      });
+
+      // B depends on A
+      const prereqMap = new Map();
+      prereqMap.set(idB.toString(), [idA]);
+      prereqMap.set(idA.toString(), []);
+
+      // Turn targets [B, A] in reversed order
+      const turn = {
+        _id: new mongoose.Types.ObjectId('507f1f77bcf86cd799439099'),
+        answeredAt: new Date('2026-10-05T10:00:00.000Z'),
+        question: { targetConceptIds: [idB, idA] },
+        evaluation: { verdict: 'CORRECT', correctness: 90 },
+      };
+
+      const result = projectEvidenceHistory(initialMap, [turn], prereqMap, new Date('2026-10-05T10:00:00.000Z'));
+
+      const finalA = result.get(idA.toString());
+      const finalB = result.get(idB.toString());
+
+      // A was processed first and reached MASTERED
+      expect(finalA.consecutiveSuccesses).toBe(2);
+      expect(finalA.masteryScore).toBeGreaterThanOrEqual(85);
+
+      // B was processed after A, seeing A satisfied, allowing B to become MASTERED
+      expect(finalB.masteryStatus).toBe('MASTERED');
+      expect(finalB.prerequisiteWarning).toBe(false);
     });
 
     it('rejects turn projection if turn is un-evaluated', async () => {
@@ -799,27 +1015,173 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
       expect(summary.activeMisconceptionsCount).toBe(1);
       expect(summary.averageMasteryScore).toBe(56);
     });
+  });
 
-    it('multi-concept turn projects across all targetConceptIds', async () => {
-      const turn = {
+  // ==========================================
+  // 9. HISTORICAL TRANSITIVE CLOSURE REBUILD & TRANSACTIONAL GUARANTEES
+  // ==========================================
+  describe('9. Historical Transitive Closure Rebuild & Transactional Guarantees', () => {
+    let service;
+
+    beforeEach(() => {
+      service = new LearningStateService();
+    });
+
+    it('rebuildTopicLearningState discovers and replays prerequisite closure across multiple topics from raw turns', async () => {
+      const topic1Id = new mongoose.Types.ObjectId();
+      const topic2Id = new mongoose.Types.ObjectId();
+      const cA = { _id: conceptAId, userId, subjectId, topicId: topic1Id, prerequisites: [] };
+      const cB = { _id: conceptBId, userId, subjectId, topicId: topic2Id, prerequisites: [conceptAId] };
+
+      // Mock Concept queries
+      vi.spyOn(Concept, 'find').mockImplementation((query) => {
+        if (query.topicId?.equals(topic2Id)) {
+          return { lean: vi.fn().mockResolvedValue([cB]) };
+        }
+        if (query._id?.$in) {
+          return { lean: vi.fn().mockResolvedValue([cA]) };
+        }
+        return { lean: vi.fn().mockResolvedValue([]) };
+      });
+
+      // Mock StudySession queries returning turns for Topic 1 and Topic 2
+      const turnA = {
         _id: new mongoose.Types.ObjectId(),
+        answeredAt: new Date('2026-10-01T10:00:00.000Z'),
+        question: { targetConceptIds: [conceptAId] },
+        evaluation: { verdict: 'CORRECT', correctness: 90 },
+      };
+      const turnB = {
+        _id: new mongoose.Types.ObjectId(),
+        answeredAt: new Date('2026-10-02T10:00:00.000Z'),
+        question: { targetConceptIds: [conceptBId] },
+        evaluation: { verdict: 'CORRECT', correctness: 90 },
+      };
+
+      vi.spyOn(StudySession, 'find').mockReturnValue({
+        lean: vi.fn().mockResolvedValue([
+          { _id: new mongoose.Types.ObjectId(), topicId: topic1Id, turns: [turnA] },
+          { _id: new mongoose.Types.ObjectId(), topicId: topic2Id, turns: [turnB] },
+        ]),
+      });
+
+      vi.spyOn(ConceptLearningState, 'deleteMany').mockResolvedValue({ deletedCount: 1 });
+      vi.spyOn(ProcessedStudyTurn, 'deleteMany').mockResolvedValue({ deletedCount: 1 });
+      vi.spyOn(ConceptLearningState, 'insertMany').mockImplementation((docs) => Promise.resolve(docs));
+      vi.spyOn(ProcessedStudyTurn, 'insertMany').mockResolvedValue([]);
+
+      const rebuildRes = await service.rebuildTopicLearningState(userId, topic2Id);
+
+      expect(rebuildRes.rebuiltCount).toBe(1);
+      expect(rebuildRes.conceptStates[0].conceptId.toString()).toBe(conceptBId.toString());
+      expect(rebuildRes.conceptStates[0].prerequisiteWarning).toBe(false);
+    });
+  });
+
+  // ==========================================
+  // 10. GENUINE BARRIER-BASED TWO-WORKER CONCURRENCY TEST
+  // ==========================================
+  describe('10. Genuine Barrier-Based Two-Worker Concurrency Test', () => {
+    let service;
+
+    beforeEach(() => {
+      service = new LearningStateService();
+    });
+
+    function createBarrier(count) {
+      let waiting = 0;
+      let release;
+      const barrierPromise = new Promise((resolve) => {
+        release = resolve;
+      });
+      return async function arriveAndWait() {
+        waiting += 1;
+        if (waiting === count) {
+          release();
+        } else {
+          await barrierPromise;
+        }
+      };
+    }
+
+    it('two concurrent workers projecting the same turn synchronize on barrier and preserve idempotency', async () => {
+      const turnId = new mongoose.Types.ObjectId();
+      const sessionId = new mongoose.Types.ObjectId();
+      const turn = {
+        _id: turnId,
         attemptType: 'INITIAL',
-        question: { targetConceptIds: [conceptAId, conceptBId] },
+        question: { targetConceptIds: [conceptAId] },
         evaluation: { verdict: 'CORRECT', correctness: 90 },
         answeredAt: new Date(),
       };
 
-      // Mock _projectSingleConceptTurn to verify loop
-      const projectSpy = vi.spyOn(service, '_projectSingleConceptTurn').mockResolvedValue({
-        idempotent: false,
-        projected: true,
+      const barrier = createBarrier(2);
+      let claimCallCount = 0;
+
+      // Mock ProcessedStudyTurn.create so worker 1 succeeds and worker 2 gets duplicate key error (11000)
+      vi.spyOn(ProcessedStudyTurn, 'create').mockImplementation(async () => {
+        claimCallCount += 1;
+        if (claimCallCount === 1) {
+          return { _id: new mongoose.Types.ObjectId() };
+        }
+        const err = new Error('E11000 duplicate key error');
+        err.code = 11000;
+        throw err;
       });
 
-      const res = await service.projectTurnRealtime(userId, new mongoose.Types.ObjectId(), turn);
-      expect(res.projected).toBe(true);
-      expect(projectSpy).toHaveBeenCalledTimes(2);
-      expect(projectSpy).toHaveBeenCalledWith(userId, expect.anything(), conceptAId, turn, expect.anything(), expect.anything());
-      expect(projectSpy).toHaveBeenCalledWith(userId, expect.anything(), conceptBId, turn, expect.anything(), expect.anything());
+      vi.spyOn(Concept, 'findOne').mockReturnValue({
+        lean: vi.fn().mockResolvedValue({ _id: conceptAId, userId, subjectId, topicId, prerequisites: [] }),
+      });
+
+      vi.spyOn(ConceptLearningState, 'findOne').mockImplementation(() => {
+        const fakeDoc = {
+          _id: new mongoose.Types.ObjectId(),
+          userId,
+          conceptId: conceptAId,
+          stateVersion: 1,
+          toObject: () => ({ ...createInitialConceptLearningState(conceptAId, userId, subjectId, topicId) }),
+          save: vi.fn().mockResolvedValue(true),
+        };
+        return {
+          session: vi.fn().mockReturnThis(),
+          lean: vi.fn().mockResolvedValue(fakeDoc.toObject()),
+          then: (resolve) => resolve(fakeDoc),
+        };
+      });
+
+      vi.spyOn(ConceptLearningState, 'updateOne').mockResolvedValue({ matchedCount: 1 });
+      vi.spyOn(ConceptLearningState, 'findById').mockReturnValue({
+        session: vi.fn().mockReturnThis(),
+        lean: vi.fn().mockResolvedValue({ _id: new mongoose.Types.ObjectId(), stateVersion: 2 }),
+      });
+
+      // Launch both workers concurrently with shared barrier
+      const worker1Promise = service._projectSingleConceptTurn(
+        userId,
+        sessionId,
+        conceptAId,
+        turn,
+        turn.answeredAt,
+        { barrier, force: true }
+      );
+
+      const worker2Promise = service._projectSingleConceptTurn(
+        userId,
+        sessionId,
+        conceptAId,
+        turn,
+        turn.answeredAt,
+        { barrier, force: true }
+      );
+
+      const [res1, res2] = await Promise.all([worker1Promise, worker2Promise]);
+
+      const projectedResults = [res1, res2].filter((r) => r.projected === true);
+      const idempotentResults = [res1, res2].filter((r) => r.idempotent === true);
+
+      // Exactly one worker projects, exactly one worker receives idempotent bypass
+      expect(projectedResults).toHaveLength(1);
+      expect(idempotentResults).toHaveLength(1);
     });
   });
 });

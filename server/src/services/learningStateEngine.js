@@ -344,6 +344,65 @@ export function applyTurnToConceptState(currentState, turn, options = {}) {
 }
 
 /**
+ * Deterministically sorts target concepts within a single turn:
+ * 1. Prerequisites precede dependent concepts (topological order).
+ * 2. Lexicographical tie-breaker on conceptId.toString().
+ */
+export function sortTargetConceptsByDependency(targetConceptIds = [], conceptPrerequisitesMap = new Map()) {
+  if (!targetConceptIds || targetConceptIds.length <= 1) {
+    return targetConceptIds;
+  }
+
+  const targetIdStrings = targetConceptIds.map((id) => id.toString());
+  const targetIdSet = new Set(targetIdStrings);
+
+  const inDegree = new Map();
+  const adj = new Map();
+
+  for (const id of targetIdStrings) {
+    inDegree.set(id, 0);
+    adj.set(id, []);
+  }
+
+  for (const id of targetIdStrings) {
+    const prereqs = conceptPrerequisitesMap.get(id) || [];
+    for (const prereq of prereqs) {
+      const pStr = prereq.toString();
+      if (targetIdSet.has(pStr) && pStr !== id) {
+        adj.get(pStr).push(id);
+        inDegree.set(id, (inDegree.get(id) || 0) + 1);
+      }
+    }
+  }
+
+  const queue = targetIdStrings.filter((id) => inDegree.get(id) === 0).sort();
+  const sorted = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    sorted.push(current);
+
+    const neighbors = adj.get(current) || [];
+    for (const neighbor of neighbors) {
+      inDegree.set(neighbor, inDegree.get(neighbor) - 1);
+      if (inDegree.get(neighbor) === 0) {
+        queue.push(neighbor);
+        queue.sort();
+      }
+    }
+  }
+
+  for (const id of targetIdStrings) {
+    if (!sorted.includes(id)) {
+      sorted.push(id);
+    }
+  }
+
+  const idMap = new Map(targetConceptIds.map((id) => [id.toString(), id]));
+  return sorted.map((strId) => idMap.get(strId));
+}
+
+/**
  * Pure deterministic projection over an evidence sequence E.
  *
  * @param {Map<string, Object>} initialStatesMap - Map of conceptId -> ConceptLearningState
@@ -371,9 +430,12 @@ export function projectEvidenceHistory(initialStatesMap, turns = [], conceptPrer
   for (const turn of sortedTurns) {
     if (!turn.evaluation || turn.evaluation.verdict === null) continue;
 
-    const targetIds = turn.question && Array.isArray(turn.question.targetConceptIds)
+    const rawTargetIds = turn.question && Array.isArray(turn.question.targetConceptIds)
       ? turn.question.targetConceptIds
       : [];
+
+    // Deterministically order target concepts by dependency closure and tie-breaker
+    const targetIds = sortTargetConceptsByDependency(rawTargetIds, conceptPrerequisitesMap);
 
     for (const targetId of targetIds) {
       const strTargetId = targetId.toString();
