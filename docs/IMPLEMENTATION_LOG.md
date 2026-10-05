@@ -5,34 +5,52 @@ This log is the permanent chronological engineering journal for the LearnForge p
 ## [Phase 09 — Checkpoint 2] Domain Model, State Machine & Deterministic Rebuild Implementation
 
 - **Date**: October 5, 2026
-- **Status**: Completed (Domain Models, Prerequisite Validation, Atomic Idempotency Ledger, Realtime Study Mode Integration, Hardened Turn Immutability, Deterministic Rebuild with Injected Clock & 29/29 Phase 09 Unit/Integration Tests Passing)
+- **Status**: Completed & Verified (Real MongoDB Replica Set Concurrency, Real Mongoose Query-Path Immutability, Rebuild Transaction Rollback, Transitive Same-Turn Dependency Ordering, Neutral Transaction Utility & 52/52 Phase 09 Unit/Integration Tests Passing)
 - **Phase**: Phase 09 — Learning State Engine (Checkpoint 2)
 - **Core Invariant**: *"Canonical Knowledge is the product. Study Sessions record evaluative evidence. Learning State interprets that evidence into explainable, structured mastery without mutating canonical knowledge."*
-- **Objective**: Implement the domain models (`Concept.prerequisites`, `ConceptLearningState`, `ProcessedStudyTurn`), pure state transition engine, prerequisite acyclicity checks, retention decay model, turn immutability enforcement, realtime projection integration, and deterministic rebuild mechanism.
+- **Objective**: Implement the domain models (`Concept.prerequisites`, `ConceptLearningState`, `ProcessedStudyTurn`), pure state transition engine, prerequisite acyclicity and subject-isolation checks, retention decay model, real query-path turn immutability enforcement, realtime projection integration, neutral transaction infrastructure, transitive same-turn dependency ordering, and transactional deterministic rebuild mechanism.
 
 ### Work Performed
-1. **Canonical Prerequisites**:
+1. **Canonical Prerequisites & Subject Isolation**:
    - Added `prerequisites: [{ type: ObjectId, ref: 'Concept' }]` to `Concept.js` with compound index `{ userId: 1, prerequisites: 1 }`.
-   - Built `conceptPrerequisiteValidator.js` with self-reference checks ($P_i \neq C$), tenant ownership verification, and DFS cycle detection ($C \notin \text{Ancestors}(P_i)$).
-2. **Materialized Concept Learning State**:
-   - Implemented `ConceptLearningState.js` with 5 discrete mastery states (`NOT_STARTED`, `LEARNING`, `NEEDS_REVIEW`, `UNDERSTOOD`, `MASTERED`), scores, attempt counters, streaks, active/resolved misconception ledgers, prerequisite warnings, and `stateVersion` optimistic concurrency lock.
-3. **Atomic Claim Idempotency Ledger (`ProcessedStudyTurn.js`)**:
-   - Implemented lean projection ledger with compound unique index `{ userId: 1, conceptId: 1, turnId: 1 }`.
-   - Implemented atomic claim protocol in `LearningStateService` eliminating concurrency races and double application.
-4. **Pure State Transition & Retention Decay Engine (`learningStateEngine.js`)**:
-   - Daily exponential retention decay: $\lambda = 0.005 \text{ day}^{-1}$, 7-day grace period, 35% retention floor, clock-injected $t_{\text{eval}}$.
-   - Bounded gain/penalty adjustments strictly clamped within $[0, 100]$.
-   - Complete state transition matrix covering all transitions without dead states.
-   - Batch projection engine `projectEvidenceHistory` with deterministic total ordering $\langle \text{answeredAt}, \text{turnId} \rangle$.
-5. **Realtime StudySession Integration**:
-   - Integrated `learningStateService.projectTurnRealtime` directly into `StudyService.submitAnswer()` immediately upon completed turn persistence.
-6. **Cross-Topic Prerequisite Rebuild Parity**:
-   - Enhanced `rebuildTopicLearningState` to load external prerequisite concepts across topics within the same subject/tenant, ensuring 100% parity between realtime projection and rebuilds: $\text{Rebuild}(E, t_{\text{eval}}) \equiv \text{Project}(E, t_{\text{eval}})$.
-7. **Hardened Completed Turn Immutability (`StudySession.js`)**:
-   - Hardened Mongoose `pre('save')`, `pre(['updateOne', 'findOneAndUpdate', 'updateMany', 'replaceOne', 'findOneAndReplace'])`, and `pre(['deleteOne', 'deleteMany', 'findOneAndDelete'])` hooks protecting completed turns and nested paths against mutation or deletion.
+   - Built `conceptPrerequisiteValidator.js` enforcing:
+     - Self-reference rejection ($P_i \neq C$).
+     - Tenant ownership verification (`userId`).
+     - Same-subject boundary isolation ($\text{prereq}.\text{subjectId} \equiv \text{concept}.\text{subjectId}$).
+     - Strict DFS acyclicity detection ($C \notin \text{Ancestors}(P_i)$).
+2. **Materialized Concept Learning State (`ConceptLearningState.js`)**:
+   - Implemented 5 discrete mastery states (`NOT_STARTED`, `LEARNING`, `NEEDS_REVIEW`, `UNDERSTOOD`, `MASTERED`).
+   - Pure mathematical retention decay: $\lambda = 0.005 \text{ day}^{-1}$, 7-day grace period, 35% retention floor, clock-injected $t_{\text{eval}}$.
+   - Bounded gain/penalty formulas clamped in $[0, 100]$.
+   - Active and resolved misconception ledgers, attempt counters, and `stateVersion` optimistic concurrency control.
+3. **Atomic Claim Ledger & Real MongoDB Concurrency Verification (`ProcessedStudyTurn.js`)**:
+   - Lean projection ledger with compound unique index `{ userId: 1, conceptId: 1, turnId: 1 }`.
+   - Implemented real integration test in `server/tests/learningState.integration.test.js` using a genuine MongoDB Replica Set with a deterministic rendezvous barrier (`createBarrier(2)`).
+   - Proved that MongoDB's real unique index resolves concurrent worker races: exactly 1 worker claims and projects, exactly 1 worker receives idempotent duplicate bypass (`E11000`), exactly 1 `ProcessedStudyTurn` document exists in the DB, and exactly 1 learning state projection effect occurs without double counting.
+4. **Real Mongoose Query-Path Immutability Verification (`StudySession.js`)**:
+   - Enforced immutable completed turns across all real Mongoose mutation APIs:
+     - `updateOne`, `findOneAndUpdate`, `updateMany`: blocked nested `$set` and `$unset` tampering, blocked `$pull` and `$pop` turn deletion.
+     - `replaceOne`, `findOneAndReplace`: blocked document replacement omitting or altering completed turns.
+     - `deleteOne`, `findOneAndDelete`, `deleteMany`: blocked deletion of study sessions containing completed turns.
+     - Verified that legitimate updates (modifying non-turn fields or appending a new turn) succeed while keeping completed turns byte-for-byte identical.
+5. **Transitive Same-Turn Dependency Ordering (`learningStateEngine.js`)**:
+   - Implemented `sortTargetConceptsByDependency` with topological sort and lexicographical tie-breakers.
+   - Tested complex transitive chains ($A \to B \to C$ + independent $D$) across multiple shuffled input permutations ($[C, D, B, A]$ and $[D, B, A, C]$).
+   - Proved that dependent concepts immediately observe their prerequisite's updated state within the same turn (cascading $A \to B \to C$ mastery), completely independent of array arrival order.
+6. **Cross-Topic Historical Closure Replay & Transactional Rollback**:
+   - In `rebuildTopicLearningState`, traversed the canonical Concept graph to discover the full transitive prerequisite closure across the subject.
+   - Replayed all raw historical `StudySession.turns` for all closure topics directly through `projectEvidenceHistory` without relying on preexisting materialized state.
+   - Wrapped destructive deletes and inserts in `runInTransaction`.
+   - Verified real transaction rollback: injected failure during rebuild aborts the transaction and fully preserves the previous `ConceptLearningState` and `ProcessedStudyTurn` documents in the real MongoDB replica set.
+7. **Neutral Transaction Utility Refactor**:
+   - Extracted `runInTransaction` into `server/src/utils/transaction.js`, breaking the circular dependency between `studyService` and `learningStateService`.
 8. **Testing & Build Verification**:
-   - 29 / 29 Phase 09 backend tests passing (100%) in `server/tests/learningState.test.js`.
-   - 262 / 262 Total backend tests passing (100%) across 14 test files with zero regressions in sealed Phases 01–08.
+   - **Backend Unit Tests**: 37 / 37 passing (100%) in `server/tests/learningState.test.js`.
+   - **Backend Real MongoDB Integration Tests**: 15 / 15 passing (100%) in `server/tests/learningState.integration.test.js` on real MongoDB Replica Set.
+   - **Full Backend Suite**: 285 / 285 passing (100%) across 15 test files with zero regressions.
+   - **Full Frontend Suite**: 70 / 70 passing (100%) across 7 test files in `client/src/`.
+   - **Total Monorepo Tests**: 355 / 355 passing (100%) across 22 test files.
+   - **Client Production Build**: Built cleanly with Vite in 7.67s.
 
 ---
 

@@ -11,8 +11,7 @@ import {
   projectEvidenceHistory,
   sortTargetConceptsByDependency,
 } from './learningStateEngine.js';
-import { checkPrerequisitesSatisfied } from './conceptPrerequisiteValidator.js';
-import { runInTransaction } from '../study/services/studyService.js';
+import { runInTransaction } from '../utils/transaction.js';
 
 export class LearningStateService {
   /**
