@@ -1,0 +1,723 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import mongoose from 'mongoose';
+import { Concept } from '../src/models/Concept.js';
+import { Topic } from '../src/models/Topic.js';
+import { Subject } from '../src/models/Subject.js';
+import { StudySession, assertTurnImmutability } from '../src/models/StudySession.js';
+import { ConceptLearningState } from '../src/models/ConceptLearningState.js';
+import { ProcessedStudyTurn } from '../src/models/ProcessedStudyTurn.js';
+import {
+  calculateDecayedScore,
+  calculateScoreGain,
+  calculateScorePenalty,
+  calculateConfidenceGain,
+  calculateConfidencePenalty,
+  isConceptMastered,
+  createInitialConceptLearningState,
+  applyTurnToConceptState,
+  projectEvidenceHistory,
+} from '../src/services/learningStateEngine.js';
+import {
+  validatePrerequisitesGraph,
+  checkPrerequisitesSatisfied,
+} from '../src/services/conceptPrerequisiteValidator.js';
+import { LearningStateService } from '../src/services/learningStateService.js';
+
+describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementation', () => {
+  let userId, subjectId, topicId;
+  let conceptAId, conceptBId, conceptCId;
+
+  beforeEach(() => {
+    userId = new mongoose.Types.ObjectId();
+    subjectId = new mongoose.Types.ObjectId();
+    topicId = new mongoose.Types.ObjectId();
+
+    conceptAId = new mongoose.Types.ObjectId();
+    conceptBId = new mongoose.Types.ObjectId();
+    conceptCId = new mongoose.Types.ObjectId();
+  });
+
+  // ==========================================
+  // 1. PURE MATHEMATICAL RETENTION DECAY TESTS
+  // ==========================================
+  describe('1. Retention Decay Calculation (ADR-019 Option A: Daily Exponential Decay)', () => {
+    const baseScore = 90;
+    const baseDate = new Date('2026-10-01T00:00:00.000Z');
+
+    it('returns 0 if never demonstrated', () => {
+      expect(calculateDecayedScore(90, null, baseDate)).toBe(0);
+      expect(calculateDecayedScore(0, baseDate, baseDate)).toBe(0);
+    });
+
+    it('returns 100% of score within 7-day grace period (0 to 7 days)', () => {
+      // 0 days elapsed
+      expect(calculateDecayedScore(baseScore, baseDate, baseDate)).toBe(90);
+
+      // 5 days elapsed
+      const day5 = new Date('2026-10-06T00:00:00.000Z');
+      expect(calculateDecayedScore(baseScore, baseDate, day5)).toBe(90);
+
+      // 7 days elapsed (grace boundary)
+      const day7 = new Date('2026-10-08T00:00:00.000Z');
+      expect(calculateDecayedScore(baseScore, baseDate, day7)).toBe(90);
+    });
+
+    it('calculates mathematically correct daily decay beyond grace period', () => {
+      // 8 days elapsed (1 day beyond grace: e^(-0.005 * 1) = 0.9950 => 89.55 => 90)
+      const day8 = new Date('2026-10-09T00:00:00.000Z');
+      expect(calculateDecayedScore(baseScore, baseDate, day8)).toBe(90);
+
+      // 14 days elapsed (7 days beyond grace: e^(-0.005 * 7) = 0.9656 => 86.9 => 87)
+      const day14 = new Date('2026-10-15T00:00:00.000Z');
+      expect(calculateDecayedScore(baseScore, baseDate, day14)).toBe(87);
+
+      // 37 days elapsed (30 days beyond grace: e^(-0.005 * 30) = 0.8607 => 77.46 => 77)
+      const day37 = new Date('2026-11-07T00:00:00.000Z');
+      expect(calculateDecayedScore(baseScore, baseDate, day37)).toBe(77);
+
+      // 145 days elapsed (138 days beyond grace - Half-Life: e^(-0.005 * 138) = 0.5016 => 45.14 => 45)
+      const day145 = new Date('2027-02-23T00:00:00.000Z');
+      expect(calculateDecayedScore(baseScore, baseDate, day145)).toBe(45);
+    });
+
+    it('strictly enforces 35% retention floor for very large elapsed times', () => {
+      // 365 days elapsed (358 days beyond grace => floor 35% of 90 = 31.5 => 32)
+      const day365 = new Date('2027-10-01T00:00:00.000Z');
+      expect(calculateDecayedScore(baseScore, baseDate, day365)).toBe(32);
+
+      // 1000 days elapsed => floor 35% of 90 = 32
+      const day1000 = new Date('2029-06-27T00:00:00.000Z');
+      expect(calculateDecayedScore(baseScore, baseDate, day1000)).toBe(32);
+    });
+  });
+
+  // ==========================================
+  // 2. BOUNDED SCORE & CONFIDENCE ADJUSTMENTS
+  // ==========================================
+  describe('2. Bounded Score & Confidence Adjustments', () => {
+    it('applies gain damping as score approaches 100', () => {
+      const gainLow = calculateScoreGain(20, 25); // ~ 25 * (1 - 20/120) = 25 * 0.833 = 21
+      expect(gainLow).toBe(41);
+
+      const gainHigh = calculateScoreGain(90, 25); // ~ 25 * (1 - 90/120) = 25 * 0.25 = 6
+      expect(gainHigh).toBe(96);
+
+      const gainMax = calculateScoreGain(100, 25);
+      expect(gainMax).toBe(100);
+    });
+
+    it('applies penalty scaling as score increases', () => {
+      const penLow = calculateScorePenalty(30, 25); // ~ 25 * max(0.4, 30/100) = 25 * 0.4 = 10
+      expect(penLow).toBe(20);
+
+      const penHigh = calculateScorePenalty(90, 25); // ~ 25 * (90/100) = 25 * 0.9 = 23
+      expect(penHigh).toBe(67);
+
+      const penFloor = calculateScorePenalty(5, 25);
+      expect(penFloor).toBe(0);
+    });
+  });
+
+  // ==========================================
+  // 3. CANONICAL PREREQUISITES VALIDATION
+  // ==========================================
+  describe('3. Canonical Prerequisites Graph Validation', () => {
+    it('rejects self-referential prerequisite', async () => {
+      const fakeConceptModel = {
+        find: vi.fn(),
+        findOne: vi.fn(),
+      };
+
+      await expect(
+        validatePrerequisitesGraph(userId, conceptAId, [conceptAId], fakeConceptModel)
+      ).rejects.toThrow('Self-reference violation');
+    });
+
+    it('rejects missing or cross-tenant prerequisites', async () => {
+      const fakeConceptModel = {
+        find: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([]), // Only 0 found instead of 1
+        }),
+        findOne: vi.fn(),
+      };
+
+      await expect(
+        validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel)
+      ).rejects.toThrow('Tenant isolation / missing prerequisite violation');
+    });
+
+    it('detects and rejects cyclical prerequisite chains (A -> B -> A)', async () => {
+      const fakeConceptModel = {
+        find: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([{ _id: conceptBId, prerequisites: [conceptAId] }]),
+        }),
+        findOne: vi.fn().mockImplementation((query) => {
+          if (query._id.toString() === conceptBId.toString()) {
+            return {
+              lean: vi.fn().mockResolvedValue({ _id: conceptBId, prerequisites: [conceptAId] }),
+            };
+          }
+          return { lean: vi.fn().mockResolvedValue(null) };
+        }),
+      };
+
+      await expect(
+        validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel)
+      ).rejects.toThrow('Cycle violation');
+    });
+
+    it('correctly evaluates prerequisite satisfaction states', () => {
+      const prereqMap = new Map();
+      prereqMap.set(conceptBId.toString(), {
+        masteryStatus: 'UNDERSTOOD',
+        decayedScore: 75,
+        activeMisconceptions: [],
+      });
+
+      // Fully satisfied
+      const check1 = checkPrerequisitesSatisfied([conceptBId], prereqMap);
+      expect(check1.satisfied).toBe(true);
+      expect(check1.unmetPrerequisiteIds).toHaveLength(0);
+
+      // Decayed below threshold (< 50)
+      prereqMap.set(conceptBId.toString(), {
+        masteryStatus: 'UNDERSTOOD',
+        decayedScore: 45,
+        activeMisconceptions: [],
+      });
+      const check2 = checkPrerequisitesSatisfied([conceptBId], prereqMap);
+      expect(check2.satisfied).toBe(false);
+      expect(check2.unmetPrerequisiteIds).toContainEqual(conceptBId);
+
+      // Active misconception present
+      prereqMap.set(conceptBId.toString(), {
+        masteryStatus: 'UNDERSTOOD',
+        decayedScore: 80,
+        activeMisconceptions: [{ misconceptionText: 'Error' }],
+      });
+      const check3 = checkPrerequisitesSatisfied([conceptBId], prereqMap);
+      expect(check3.satisfied).toBe(false);
+
+      // Missing prerequisite state
+      const check4 = checkPrerequisitesSatisfied([conceptCId], prereqMap);
+      expect(check4.satisfied).toBe(false);
+      expect(check4.unmetPrerequisiteIds).toContainEqual(conceptCId);
+    });
+  });
+
+  // ==========================================
+  // 4. FULL STATE TRANSITION MATRIX TESTS
+  // ==========================================
+  describe('4. Complete State Transition Matrix (ADR-019)', () => {
+    const fixedNow = new Date('2026-10-05T12:00:00.000Z');
+
+    it('NOT_STARTED + CORRECT (>= 85%) => UNDERSTOOD', () => {
+      const initial = createInitialConceptLearningState(conceptAId, userId, subjectId, topicId);
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'CORRECT',
+          correctness: 90,
+          completeness: 85,
+          misconceptionDetected: false,
+        },
+      };
+
+      const result = applyTurnToConceptState(initial, turn, { evaluationTime: fixedNow });
+      expect(result.masteryStatus).toBe('UNDERSTOOD');
+      expect(result.masteryScore).toBe(70);
+      expect(result.confidenceScore).toBe(40);
+      expect(result.consecutiveSuccesses).toBe(1);
+      expect(result.attemptsCount).toBe(1);
+      expect(result.lastDemonstratedAt).toEqual(fixedNow);
+    });
+
+    it('NOT_STARTED + CORRECT (< 85%) => LEARNING', () => {
+      const initial = createInitialConceptLearningState(conceptAId, userId, subjectId, topicId);
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'CORRECT',
+          correctness: 80,
+          completeness: 75,
+          misconceptionDetected: false,
+        },
+      };
+
+      const result = applyTurnToConceptState(initial, turn, { evaluationTime: fixedNow });
+      expect(result.masteryStatus).toBe('LEARNING');
+      expect(result.masteryScore).toBe(50);
+      expect(result.confidenceScore).toBe(30);
+    });
+
+    it('NOT_STARTED + PARTIALLY_CORRECT => LEARNING', () => {
+      const initial = createInitialConceptLearningState(conceptAId, userId, subjectId, topicId);
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'PARTIALLY_CORRECT',
+          correctness: 60,
+          completeness: 50,
+        },
+      };
+
+      const result = applyTurnToConceptState(initial, turn, { evaluationTime: fixedNow });
+      expect(result.masteryStatus).toBe('LEARNING');
+      expect(result.masteryScore).toBe(35);
+      expect(result.confidenceScore).toBe(20);
+      expect(result.consecutiveSuccesses).toBe(0);
+    });
+
+    it('NOT_STARTED + INCORRECT => NEEDS_REVIEW', () => {
+      const initial = createInitialConceptLearningState(conceptAId, userId, subjectId, topicId);
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'INCORRECT',
+          correctness: 20,
+          misconceptionDetected: true,
+          misconceptionSummary: 'Confused stack with queue',
+        },
+      };
+
+      const result = applyTurnToConceptState(initial, turn, { evaluationTime: fixedNow });
+      expect(result.masteryStatus).toBe('NEEDS_REVIEW');
+      expect(result.masteryScore).toBe(10);
+      expect(result.consecutiveFailures).toBe(1);
+      expect(result.activeMisconceptions).toHaveLength(1);
+      expect(result.activeMisconceptions[0].misconceptionText).toBe('Confused stack with queue');
+    });
+
+    it('LEARNING + 2 consecutive failures => NEEDS_REVIEW', () => {
+      const state = {
+        ...createInitialConceptLearningState(conceptAId, userId, subjectId, topicId),
+        masteryStatus: 'LEARNING',
+        masteryScore: 50,
+        confidenceScore: 30,
+        attemptsCount: 1,
+        consecutiveFailures: 1,
+      };
+
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'INCORRECT',
+          misconceptionDetected: false,
+        },
+      };
+
+      const result = applyTurnToConceptState(state, turn, { evaluationTime: fixedNow });
+      expect(result.masteryStatus).toBe('NEEDS_REVIEW');
+      expect(result.consecutiveFailures).toBe(2);
+      expect(result.masteryScore).toBeLessThan(50);
+    });
+
+    it('UNDERSTOOD + INCORRECT => NEEDS_REVIEW', () => {
+      const state = {
+        ...createInitialConceptLearningState(conceptAId, userId, subjectId, topicId),
+        masteryStatus: 'UNDERSTOOD',
+        masteryScore: 75,
+        confidenceScore: 60,
+        attemptsCount: 2,
+        consecutiveSuccesses: 2,
+      };
+
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'INCORRECT',
+          misconceptionDetected: true,
+          misconceptionSummary: 'Syntax error assumption',
+        },
+      };
+
+      const result = applyTurnToConceptState(state, turn, { evaluationTime: fixedNow });
+      expect(result.masteryStatus).toBe('NEEDS_REVIEW');
+      expect(result.consecutiveSuccesses).toBe(0);
+      expect(result.consecutiveFailures).toBe(1);
+      expect(result.activeMisconceptions).toHaveLength(1);
+    });
+
+    it('MASTERED + INCORRECT => NEEDS_REVIEW (Demotion)', () => {
+      const state = {
+        ...createInitialConceptLearningState(conceptAId, userId, subjectId, topicId),
+        masteryStatus: 'MASTERED',
+        masteryScore: 92,
+        confidenceScore: 85,
+        attemptsCount: 4,
+        consecutiveSuccesses: 3,
+      };
+
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'INCORRECT',
+          misconceptionDetected: true,
+          misconceptionSummary: 'Forgotten edge case',
+        },
+      };
+
+      const result = applyTurnToConceptState(state, turn, { evaluationTime: fixedNow });
+      expect(result.masteryStatus).toBe('NEEDS_REVIEW');
+      expect(result.consecutiveSuccesses).toBe(0);
+      expect(result.masteryScore).toBeLessThan(70);
+    });
+
+    it('NEEDS_REVIEW + Socratic FOLLOW_UP CORRECT => Resolves active misconceptions & returns to LEARNING/UNDERSTOOD', () => {
+      const state = {
+        ...createInitialConceptLearningState(conceptAId, userId, subjectId, topicId),
+        masteryStatus: 'NEEDS_REVIEW',
+        masteryScore: 35,
+        confidenceScore: 20,
+        attemptsCount: 2,
+        activeMisconceptions: [
+          {
+            misconceptionText: 'Confused stack with queue',
+            detectedAt: new Date('2026-10-04T00:00:00Z'),
+            turnId: new mongoose.Types.ObjectId(),
+          },
+        ],
+      };
+
+      const followUpTurn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'FOLLOW_UP',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'CORRECT',
+          correctness: 90,
+          completeness: 85,
+        },
+      };
+
+      const result = applyTurnToConceptState(state, followUpTurn, { evaluationTime: fixedNow });
+      expect(result.activeMisconceptions).toHaveLength(0);
+      expect(result.resolvedMisconceptions).toHaveLength(1);
+      expect(result.resolvedMisconceptions[0].misconceptionText).toBe('Confused stack with queue');
+      expect(result.masteryStatus).toBe('LEARNING');
+      expect(result.consecutiveSuccesses).toBe(1);
+      expect(result.consecutiveFailures).toBe(0);
+    });
+  });
+
+  // ==========================================
+  // 5. MASTERED PROOF & PREREQUISITE GATING
+  // ==========================================
+  describe('5. Multi-Attempt MASTERED Proof & Prerequisite Gating', () => {
+    const fixedNow = new Date('2026-10-05T12:00:00.000Z');
+
+    it('CORRECT != AUTOMATIC MASTERED (Single correct attempt cannot achieve MASTERED)', () => {
+      expect(
+        isConceptMastered({
+          consecutiveSuccesses: 1,
+          attemptsCount: 1,
+          masteryScore: 70,
+          confidenceScore: 40,
+          activeMisconceptions: [],
+          prerequisitesSatisfied: true,
+        })
+      ).toBe(false);
+    });
+
+    it('proves MASTERED when all 6 criteria are strictly satisfied', () => {
+      expect(
+        isConceptMastered({
+          consecutiveSuccesses: 2,
+          attemptsCount: 3,
+          masteryScore: 88,
+          confidenceScore: 80,
+          activeMisconceptions: [],
+          prerequisitesSatisfied: true,
+        })
+      ).toBe(true);
+    });
+
+    it('blocks MASTERED and stays UNDERSTOOD if canonical prerequisites are unsatisfied', () => {
+      const state = {
+        ...createInitialConceptLearningState(conceptAId, userId, subjectId, topicId),
+        masteryStatus: 'UNDERSTOOD',
+        masteryScore: 82,
+        confidenceScore: 70,
+        attemptsCount: 2,
+        consecutiveSuccesses: 1,
+      };
+
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'CORRECT',
+          correctness: 95,
+        },
+      };
+
+      // Prerequisite B is unmet
+      const prereqMap = new Map();
+      prereqMap.set(conceptBId.toString(), {
+        masteryStatus: 'LEARNING',
+        decayedScore: 30,
+        activeMisconceptions: [],
+      });
+
+      const result = applyTurnToConceptState(state, turn, {
+        prerequisites: [conceptBId],
+        prerequisiteStatesMap: prereqMap,
+        evaluationTime: fixedNow,
+      });
+
+      expect(result.masteryStatus).toBe('UNDERSTOOD'); // Gated from MASTERED
+      expect(result.prerequisiteWarning).toBe(true);
+      expect(result.unmetPrerequisiteIds).toContainEqual(conceptBId);
+    });
+
+    it('advances to MASTERED once canonical prerequisites become satisfied', () => {
+      const state = {
+        ...createInitialConceptLearningState(conceptAId, userId, subjectId, topicId),
+        masteryStatus: 'UNDERSTOOD',
+        masteryScore: 82,
+        confidenceScore: 70,
+        attemptsCount: 2,
+        consecutiveSuccesses: 1,
+      };
+
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        answeredAt: fixedNow,
+        evaluation: {
+          verdict: 'CORRECT',
+          correctness: 95,
+        },
+      };
+
+      // Prerequisite B is now satisfied
+      const prereqMap = new Map();
+      prereqMap.set(conceptBId.toString(), {
+        masteryStatus: 'UNDERSTOOD',
+        decayedScore: 80,
+        activeMisconceptions: [],
+      });
+
+      const result = applyTurnToConceptState(state, turn, {
+        prerequisites: [conceptBId],
+        prerequisiteStatesMap: prereqMap,
+        evaluationTime: fixedNow,
+      });
+
+      expect(result.masteryStatus).toBe('MASTERED');
+      expect(result.prerequisiteWarning).toBe(false);
+      expect(result.unmetPrerequisiteIds).toHaveLength(0);
+    });
+  });
+
+  // ==========================================
+  // 6. DETERMINISTIC REBUILD EQUIVALENCE
+  // ==========================================
+  describe('6. Deterministic Rebuild Parity: Rebuild(E, t) === Project(E, t)', () => {
+    const t0 = new Date('2026-10-01T10:00:00.000Z');
+    const t1 = new Date('2026-10-02T10:00:00.000Z');
+    const t2 = new Date('2026-10-03T10:00:00.000Z');
+    const evaluationClock = new Date('2026-10-15T12:00:00.000Z'); // Injected fixed clock
+
+    it('produces identical state regardless of turn arrival order in batch projection', () => {
+      const initialMap = new Map();
+      initialMap.set(conceptAId.toString(), createInitialConceptLearningState(conceptAId, userId, subjectId, topicId));
+
+      const turn1 = {
+        _id: new mongoose.Types.ObjectId('507f1f77bcf86cd799439011'),
+        answeredAt: t0,
+        question: { targetConceptIds: [conceptAId] },
+        evaluation: { verdict: 'CORRECT', correctness: 90 },
+      };
+
+      const turn2 = {
+        _id: new mongoose.Types.ObjectId('507f1f77bcf86cd799439012'),
+        answeredAt: t1,
+        question: { targetConceptIds: [conceptAId] },
+        evaluation: { verdict: 'CORRECT', correctness: 95 },
+      };
+
+      const turn3 = {
+        _id: new mongoose.Types.ObjectId('507f1f77bcf86cd799439013'),
+        answeredAt: t2,
+        question: { targetConceptIds: [conceptAId] },
+        evaluation: { verdict: 'CORRECT', correctness: 92 },
+      };
+
+      // Project forward
+      const forwardResult = projectEvidenceHistory(initialMap, [turn1, turn2, turn3], new Map(), evaluationClock);
+
+      // Project shuffled order (must sort deterministically by answeredAt, _id)
+      const shuffledResult = projectEvidenceHistory(initialMap, [turn3, turn1, turn2], new Map(), evaluationClock);
+
+      const stateForward = forwardResult.get(conceptAId.toString());
+      const stateShuffled = shuffledResult.get(conceptAId.toString());
+
+      expect(stateForward.masteryStatus).toBe(stateShuffled.masteryStatus);
+      expect(stateForward.masteryScore).toBe(stateShuffled.masteryScore);
+      expect(stateForward.decayedScore).toBe(stateShuffled.decayedScore);
+      expect(stateForward.confidenceScore).toBe(stateShuffled.confidenceScore);
+      expect(stateForward.attemptsCount).toBe(stateShuffled.attemptsCount);
+      expect(stateForward.consecutiveSuccesses).toBe(stateShuffled.consecutiveSuccesses);
+      expect(stateForward.lastDemonstratedAt).toEqual(stateShuffled.lastDemonstratedAt);
+    });
+  });
+
+  // ==========================================
+  // 7. COMPLETED TURN IMMUTABILITY GUARANTEES
+  // ==========================================
+  describe('7. Completed StudyTurn Immutability Guarantees', () => {
+    it('assertTurnImmutability passes for unmodified completed turns', () => {
+      const turnId = new mongoose.Types.ObjectId();
+      const existing = [
+        {
+          _id: turnId,
+          turnIndex: 0,
+          clientTurnId: 'client-1',
+          attemptType: 'INITIAL',
+          question: { questionId: 'q-1' },
+          userAnswer: 'My Answer',
+          evaluation: {
+            verdict: 'CORRECT',
+            correctness: 90,
+            evaluatedAt: new Date(),
+          },
+        },
+      ];
+
+      const updated = [
+        {
+          _id: turnId,
+          turnIndex: 0,
+          clientTurnId: 'client-1',
+          attemptType: 'INITIAL',
+          question: { questionId: 'q-1' },
+          userAnswer: 'My Answer',
+          evaluation: {
+            verdict: 'CORRECT',
+            correctness: 90,
+            evaluatedAt: existing[0].evaluation.evaluatedAt,
+          },
+        },
+      ];
+
+      expect(() => assertTurnImmutability(existing, updated)).not.toThrow();
+    });
+
+    it('assertTurnImmutability throws if completed turn answer or evaluation is altered', () => {
+      const turnId = new mongoose.Types.ObjectId();
+      const existing = [
+        {
+          _id: turnId,
+          turnIndex: 0,
+          clientTurnId: 'client-1',
+          attemptType: 'INITIAL',
+          question: { questionId: 'q-1' },
+          userAnswer: 'Original Answer',
+          evaluation: {
+            verdict: 'CORRECT',
+            correctness: 90,
+            evaluatedAt: new Date(),
+          },
+        },
+      ];
+
+      const tampered = [
+        {
+          _id: turnId,
+          turnIndex: 0,
+          clientTurnId: 'client-1',
+          attemptType: 'INITIAL',
+          question: { questionId: 'q-1' },
+          userAnswer: 'Tampered Answer',
+          evaluation: {
+            verdict: 'CORRECT',
+            correctness: 90,
+            evaluatedAt: existing[0].evaluation.evaluatedAt,
+          },
+        },
+      ];
+
+      expect(() => assertTurnImmutability(existing, tampered)).toThrow('Immutability violation');
+    });
+
+    it('assertTurnImmutability throws if completed turn is deleted from array', () => {
+      const turnId = new mongoose.Types.ObjectId();
+      const existing = [
+        {
+          _id: turnId,
+          turnIndex: 0,
+          clientTurnId: 'client-1',
+          attemptType: 'INITIAL',
+          question: { questionId: 'q-1' },
+          userAnswer: 'Original Answer',
+          evaluation: {
+            verdict: 'CORRECT',
+            correctness: 90,
+            evaluatedAt: new Date(),
+          },
+        },
+      ];
+
+      const deleted = [];
+
+      expect(() => assertTurnImmutability(existing, deleted)).toThrow('cannot be deleted');
+    });
+  });
+
+  // ==========================================
+  // 8. IDEMPOTENCY & SERVICE-LEVEL REBUILD
+  // ==========================================
+  describe('8. LearningStateService Mocked Integration Tests', () => {
+    let service;
+
+    beforeEach(() => {
+      service = new LearningStateService();
+    });
+
+    it('rejects turn projection if turn is un-evaluated', async () => {
+      const result = await service.projectTurnRealtime(userId, new mongoose.Types.ObjectId(), {
+        evaluation: { verdict: null },
+      });
+      expect(result.projected).toBe(false);
+    });
+
+    it('computes dynamic topic summary on read from concept states', () => {
+      const conceptStates = [
+        { masteryStatus: 'MASTERED', masteryScore: 90, decayedScore: 90, activeMisconceptions: [] },
+        { masteryStatus: 'UNDERSTOOD', masteryScore: 75, decayedScore: 70, activeMisconceptions: [] },
+        { masteryStatus: 'LEARNING', masteryScore: 40, decayedScore: 40, activeMisconceptions: [] },
+        {
+          masteryStatus: 'NEEDS_REVIEW',
+          masteryScore: 20,
+          decayedScore: 20,
+          activeMisconceptions: [{ misconceptionText: 'Error' }],
+        },
+      ];
+
+      const summary = service._computeTopicSummary(conceptStates);
+      expect(summary.totalConcepts).toBe(4);
+      expect(summary.masteredCount).toBe(1);
+      expect(summary.understoodCount).toBe(1);
+      expect(summary.learningCount).toBe(1);
+      expect(summary.needsReviewCount).toBe(1);
+      expect(summary.activeMisconceptionsCount).toBe(1);
+      expect(summary.averageMasteryScore).toBe(56); // (90+75+40+20)/4 = 56.25 => 56
+    });
+  });
+});

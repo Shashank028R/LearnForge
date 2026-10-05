@@ -198,5 +198,112 @@ studySessionSchema.index(
 // Uniqueness is session-scoped and enforced by application-level transactional query logic.
 studySessionSchema.index({ 'turns.clientTurnId': 1 });
 
-export const StudySession = mongoose.model('StudySession', studySessionSchema);
+/**
+ * Asserts that completed turns are strictly immutable.
+ * Throws an error if any completed turn was removed or modified.
+ */
+export function assertTurnImmutability(existingTurns = [], updatedTurns = []) {
+  const existingCompletedTurns = existingTurns.filter(
+    (t) => t.evaluation && t.evaluation.evaluatedAt !== null && t.evaluation.verdict !== null
+  );
+
+  for (const completedTurn of existingCompletedTurns) {
+    const matchingUpdated = updatedTurns.find(
+      (ut) => ut._id && completedTurn._id && ut._id.toString() === completedTurn._id.toString()
+    );
+
+    if (!matchingUpdated) {
+      const err = new Error(`Immutability violation: Completed study turn ${completedTurn._id} cannot be deleted.`);
+      err.code = 'TURN_IMMUTABILITY_VIOLATION';
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const completedTurnEval = completedTurn.evaluation || {};
+    const updatedTurnEval = matchingUpdated.evaluation || {};
+
+    const isAnswerEqual = String(completedTurn.userAnswer || '') === String(matchingUpdated.userAnswer || '');
+    const isVerdictEqual = completedTurnEval.verdict === updatedTurnEval.verdict;
+    const isCorrectnessEqual = completedTurnEval.correctness === updatedTurnEval.correctness;
+    const isCompletenessEqual = completedTurnEval.completeness === updatedTurnEval.completeness;
+    const isReasoningEqual = completedTurnEval.reasoningQuality === updatedTurnEval.reasoningQuality;
+    const isMisconceptionDetectedEqual = Boolean(completedTurnEval.misconceptionDetected) === Boolean(updatedTurnEval.misconceptionDetected);
+    const isMisconceptionSummaryEqual = String(completedTurnEval.misconceptionSummary || '') === String(updatedTurnEval.misconceptionSummary || '');
+    const isQuestionIdEqual = completedTurn.question?.questionId === matchingUpdated.question?.questionId;
+    const isAttemptTypeEqual = completedTurn.attemptType === matchingUpdated.attemptType;
+    const isTurnIndexEqual = completedTurn.turnIndex === matchingUpdated.turnIndex;
+    const isClientTurnIdEqual = completedTurn.clientTurnId === matchingUpdated.clientTurnId;
+
+    if (
+      !isAnswerEqual ||
+      !isVerdictEqual ||
+      !isCorrectnessEqual ||
+      !isCompletenessEqual ||
+      !isReasoningEqual ||
+      !isMisconceptionDetectedEqual ||
+      !isMisconceptionSummaryEqual ||
+      !isQuestionIdEqual ||
+      !isAttemptTypeEqual ||
+      !isTurnIndexEqual ||
+      !isClientTurnIdEqual
+    ) {
+      const err = new Error(`Immutability violation: Completed study turn ${completedTurn._id} cannot be modified after evaluation.`);
+      err.code = 'TURN_IMMUTABILITY_VIOLATION';
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+}
+
+studySessionSchema.pre('save', async function (next) {
+  if (!this.isNew && this.isModified('turns')) {
+    try {
+      const existing = await this.constructor.findById(this._id).select('turns').lean();
+      if (existing && Array.isArray(existing.turns)) {
+        assertTurnImmutability(existing.turns, this.turns);
+      }
+    } catch (err) {
+      return next(err);
+    }
+  }
+  next();
+});
+
+studySessionSchema.pre(['updateOne', 'findOneAndUpdate', 'updateMany'], async function (next) {
+  const update = this.getUpdate();
+  if (!update) return next();
+
+  const hasPullTurns = update.$pull && update.$pull.turns;
+  const hasPopTurns = update.$pop && update.$pop.turns;
+  const hasSetTurns = update.$set && (update.$set.turns || Object.keys(update.$set).some((k) => k.startsWith('turns.')));
+
+  if (hasPullTurns || hasPopTurns || hasSetTurns) {
+    try {
+      const query = this.getQuery();
+      const existingDocs = await this.model.find(query).select('turns').lean();
+      for (const existing of existingDocs) {
+        if (!existing || !Array.isArray(existing.turns)) continue;
+        const completedTurns = existing.turns.filter(
+          (t) => t.evaluation && t.evaluation.evaluatedAt !== null && t.evaluation.verdict !== null
+        );
+        if (completedTurns.length > 0) {
+          if (hasPullTurns || hasPopTurns) {
+            const err = new Error('Immutability violation: Bulk/Query operations cannot delete completed study turns.');
+            err.code = 'TURN_IMMUTABILITY_VIOLATION';
+            err.statusCode = 400;
+            return next(err);
+          }
+          if (hasSetTurns && update.$set.turns) {
+            assertTurnImmutability(existing.turns, update.$set.turns);
+          }
+        }
+      }
+    } catch (err) {
+      return next(err);
+    }
+  }
+  next();
+});
+
+export const StudySession = mongoose.models.StudySession || mongoose.model('StudySession', studySessionSchema);
 export default StudySession;

@@ -122,6 +122,10 @@ const conceptSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    prerequisites: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Concept' }],
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -134,6 +138,7 @@ conceptSchema.index({ userId: 1, topicId: 1, normalizedName: 1 }, { unique: true
 // Compound Topic Concepts Index: Fast querying of topic concepts by status and confidence
 conceptSchema.index({ userId: 1, topicId: 1, status: 1 });
 conceptSchema.index({ userId: 1, topicId: 1, confidenceScore: -1 });
+conceptSchema.index({ userId: 1, prerequisites: 1 });
 
 // Helper to normalize concept names and aliases
 export function normalizeConceptName(name) {
