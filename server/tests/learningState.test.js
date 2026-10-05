@@ -120,9 +120,47 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
   });
 
   // ==========================================
-  // 3. CANONICAL PREREQUISITES VALIDATION
+  // 3. CANONICAL PREREQUISITES VALIDATION & SUBJECT ISOLATION
   // ==========================================
-  describe('3. Canonical Prerequisites Graph Validation', () => {
+  describe('3. Canonical Prerequisites Graph Validation & Subject Isolation', () => {
+    it('accepts same-topic prerequisite within same subject', async () => {
+      const fakeConceptModel = {
+        findOne: vi.fn().mockResolvedValue({ subjectId }),
+        find: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([{ _id: conceptBId, subjectId, prerequisites: [] }]),
+        }),
+      };
+
+      const result = await validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel, subjectId);
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts cross-topic prerequisite within SAME subject', async () => {
+      const fakeConceptModel = {
+        findOne: vi.fn().mockResolvedValue({ subjectId }),
+        find: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([{ _id: conceptBId, subjectId, prerequisites: [] }]),
+        }),
+      };
+
+      const result = await validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel, subjectId);
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects cross-subject prerequisite with Subject isolation violation', async () => {
+      const otherSubjectId = new mongoose.Types.ObjectId();
+      const fakeConceptModel = {
+        findOne: vi.fn().mockResolvedValue({ subjectId }),
+        find: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([{ _id: conceptBId, subjectId: otherSubjectId, prerequisites: [] }]),
+        }),
+      };
+
+      await expect(
+        validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel, subjectId)
+      ).rejects.toThrow('Subject isolation violation');
+    });
+
     it('rejects self-referential prerequisite', async () => {
       const fakeConceptModel = {
         find: vi.fn(),
@@ -130,40 +168,40 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
       };
 
       await expect(
-        validatePrerequisitesGraph(userId, conceptAId, [conceptAId], fakeConceptModel)
+        validatePrerequisitesGraph(userId, conceptAId, [conceptAId], fakeConceptModel, subjectId)
       ).rejects.toThrow('Self-reference violation');
     });
 
     it('rejects missing or cross-tenant prerequisites', async () => {
       const fakeConceptModel = {
+        findOne: vi.fn().mockResolvedValue({ subjectId }),
         find: vi.fn().mockReturnValue({
           lean: vi.fn().mockResolvedValue([]), // Only 0 found instead of 1
         }),
-        findOne: vi.fn(),
       };
 
       await expect(
-        validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel)
+        validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel, subjectId)
       ).rejects.toThrow('Tenant isolation / missing prerequisite violation');
     });
 
     it('detects and rejects cyclical prerequisite chains (A -> B -> A)', async () => {
       const fakeConceptModel = {
-        find: vi.fn().mockReturnValue({
-          lean: vi.fn().mockResolvedValue([{ _id: conceptBId, prerequisites: [conceptAId] }]),
-        }),
         findOne: vi.fn().mockImplementation((query) => {
           if (query._id.toString() === conceptBId.toString()) {
             return {
-              lean: vi.fn().mockResolvedValue({ _id: conceptBId, prerequisites: [conceptAId] }),
+              lean: vi.fn().mockResolvedValue({ _id: conceptBId, subjectId, prerequisites: [conceptAId] }),
             };
           }
-          return { lean: vi.fn().mockResolvedValue(null) };
+          return { lean: vi.fn().mockResolvedValue({ subjectId }) };
+        }),
+        find: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([{ _id: conceptBId, subjectId, prerequisites: [conceptAId] }]),
         }),
       };
 
       await expect(
-        validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel)
+        validatePrerequisitesGraph(userId, conceptAId, [conceptBId], fakeConceptModel, subjectId)
       ).rejects.toThrow('Cycle violation');
     });
 
@@ -723,9 +761,9 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
   });
 
   // ==========================================
-  // 8. ATOMIC CLAIM & REALTIME PROJECTION WIRING
+  // 8. ATOMIC CLAIM, CONCURRENCY & MULTI-CONCEPT
   // ==========================================
-  describe('8. ProcessedStudyTurn Atomic Claim & LearningStateService Integration', () => {
+  describe('8. ProcessedStudyTurn Atomic Claim, Concurrency & Integration', () => {
     let service;
 
     beforeEach(() => {
@@ -760,6 +798,28 @@ describe('Phase 09 — Checkpoint 2: Learning State Engine & Rebuild Implementat
       expect(summary.needsReviewCount).toBe(1);
       expect(summary.activeMisconceptionsCount).toBe(1);
       expect(summary.averageMasteryScore).toBe(56);
+    });
+
+    it('multi-concept turn projects across all targetConceptIds', async () => {
+      const turn = {
+        _id: new mongoose.Types.ObjectId(),
+        attemptType: 'INITIAL',
+        question: { targetConceptIds: [conceptAId, conceptBId] },
+        evaluation: { verdict: 'CORRECT', correctness: 90 },
+        answeredAt: new Date(),
+      };
+
+      // Mock _projectSingleConceptTurn to verify loop
+      const projectSpy = vi.spyOn(service, '_projectSingleConceptTurn').mockResolvedValue({
+        idempotent: false,
+        projected: true,
+      });
+
+      const res = await service.projectTurnRealtime(userId, new mongoose.Types.ObjectId(), turn);
+      expect(res.projected).toBe(true);
+      expect(projectSpy).toHaveBeenCalledTimes(2);
+      expect(projectSpy).toHaveBeenCalledWith(userId, expect.anything(), conceptAId, turn, expect.anything(), expect.anything());
+      expect(projectSpy).toHaveBeenCalledWith(userId, expect.anything(), conceptBId, turn, expect.anything(), expect.anything());
     });
   });
 });

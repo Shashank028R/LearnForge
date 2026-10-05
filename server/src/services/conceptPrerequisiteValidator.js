@@ -4,14 +4,16 @@ import mongoose from 'mongoose';
  * Validates canonical concept prerequisites graph:
  * 1. Self-reference check (P_i !== conceptId)
  * 2. Tenant isolation (all P_i belong to the same userId)
- * 3. Acyclicity check (no transitive cycles where conceptId is reachable from any P_i)
+ * 3. Subject isolation (all P_i belong to the same subjectId as the target concept)
+ * 4. Acyclicity check (no transitive cycles where conceptId is reachable from any P_i)
  */
-export async function validatePrerequisitesGraph(userId, conceptId, prerequisiteIds = [], ConceptModel) {
+export async function validatePrerequisitesGraph(userId, conceptId, prerequisiteIds = [], ConceptModel, targetSubjectId = null) {
   if (!prerequisiteIds || prerequisiteIds.length === 0) {
     return { valid: true, sanitizedIds: [] };
   }
 
   const strConceptId = conceptId ? conceptId.toString() : null;
+  const uId = new mongoose.Types.ObjectId(userId);
   const sanitizedIds = prerequisiteIds.map((id) => (id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(id)));
   const strPrereqIds = sanitizedIds.map((id) => id.toString());
 
@@ -20,20 +22,41 @@ export async function validatePrerequisitesGraph(userId, conceptId, prerequisite
     throw new Error('Self-reference violation: A concept cannot be its own prerequisite.');
   }
 
-  // 2. Tenant isolation & existence check
-  const existingPrereqs = await ConceptModel.find(
+  // 2. Resolve target subjectId if not provided directly
+  let resolvedSubjectId = targetSubjectId ? targetSubjectId.toString() : null;
+  if (!resolvedSubjectId && strConceptId) {
+    const targetQuery = ConceptModel.findOne({ _id: conceptId, userId: uId }, { subjectId: 1 });
+    const targetDoc = targetQuery && typeof targetQuery.lean === 'function' ? await targetQuery.lean() : await targetQuery;
+    if (targetDoc && targetDoc.subjectId) {
+      resolvedSubjectId = targetDoc.subjectId.toString();
+    }
+  }
+
+  // 3. Tenant isolation & existence check
+  const findQuery = ConceptModel.find(
     {
       _id: { $in: sanitizedIds },
-      userId: new mongoose.Types.ObjectId(userId),
+      userId: uId,
     },
-    { _id: 1, prerequisites: 1 }
-  ).lean();
+    { _id: 1, subjectId: 1, prerequisites: 1 }
+  );
+  const existingPrereqs = findQuery && typeof findQuery.lean === 'function' ? await findQuery.lean() : await findQuery;
 
-  if (existingPrereqs.length !== sanitizedIds.length) {
+  if (!existingPrereqs || existingPrereqs.length !== sanitizedIds.length) {
     throw new Error('Tenant isolation / missing prerequisite violation: One or more prerequisite concepts do not exist or belong to another user.');
   }
 
-  // 3. Acyclicity check (DFS transitive dependency graph traversal)
+  // 4. Subject isolation check
+  if (resolvedSubjectId) {
+    const hasCrossSubjectPrereq = existingPrereqs.some(
+      (p) => !p.subjectId || p.subjectId.toString() !== resolvedSubjectId
+    );
+    if (hasCrossSubjectPrereq) {
+      throw new Error('Subject isolation violation: Prerequisite concepts must belong to the same subject.');
+    }
+  }
+
+  // 5. Acyclicity check (DFS transitive dependency graph traversal)
   if (strConceptId) {
     const visited = new Set();
     const queue = [...sanitizedIds];
@@ -46,10 +69,11 @@ export async function validatePrerequisitesGraph(userId, conceptId, prerequisite
 
       if (!visited.has(currentId)) {
         visited.add(currentId);
-        const node = await ConceptModel.findOne(
-          { _id: currentId, userId: new mongoose.Types.ObjectId(userId) },
+        const nodeQuery = ConceptModel.findOne(
+          { _id: currentId, userId: uId },
           { prerequisites: 1 }
-        ).lean();
+        );
+        const node = nodeQuery && typeof nodeQuery.lean === 'function' ? await nodeQuery.lean() : await nodeQuery;
 
         if (node && Array.isArray(node.prerequisites)) {
           for (const nextId of node.prerequisites) {

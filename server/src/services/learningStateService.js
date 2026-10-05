@@ -16,7 +16,8 @@ export class LearningStateService {
   /**
    * Projects a single completed StudyTurn into ConceptLearningState for all target concepts.
    * Scalable & Idempotent via ProcessedStudyTurn ledger.
-   * Concurrency-safe via optimistic stateVersion lock with automatic retry.
+   * Supports MongoDB atomic session transaction forwarding.
+   * Multi-concept atomic: all target concepts must project successfully or the transaction aborts.
    */
   async projectTurnRealtime(userId, sessionId, turn, options = {}) {
     if (!turn || !turn.evaluation || turn.evaluation.verdict === null) {
@@ -52,26 +53,51 @@ export class LearningStateService {
       return { conceptId, idempotent: false, projected: false, reason: 'Disconnected test environment' };
     }
 
+    const dbSession = options.session || null;
+    const sessionOpts = dbSession ? { session: dbSession } : {};
+
     const uId = new mongoose.Types.ObjectId(userId);
     const cId = new mongoose.Types.ObjectId(conceptId);
     const sId = new mongoose.Types.ObjectId(sessionId);
     const tId = turn._id instanceof mongoose.Types.ObjectId ? turn._id : new mongoose.Types.ObjectId(turn._id);
 
-    // 1. ATOMIC CLAIM: Attempt to insert the unique ProcessedStudyTurn ledger entry first
+    // Concurrency test barrier hook
+    if (typeof options.barrier === 'function') {
+      await options.barrier();
+    }
+
+    // 1. ATOMIC CLAIM: Attempt to insert the unique ProcessedStudyTurn ledger entry
     let claimAcquired = false;
     try {
-      await ProcessedStudyTurn.create({
-        userId: uId,
-        conceptId: cId,
-        turnId: tId,
-        sessionId: sId,
-        processedAt: new Date(),
-      });
+      if (dbSession) {
+        await ProcessedStudyTurn.create(
+          [
+            {
+              userId: uId,
+              conceptId: cId,
+              turnId: tId,
+              sessionId: sId,
+              processedAt: new Date(),
+            },
+          ],
+          sessionOpts
+        );
+      } else {
+        await ProcessedStudyTurn.create({
+          userId: uId,
+          conceptId: cId,
+          turnId: tId,
+          sessionId: sId,
+          processedAt: new Date(),
+        });
+      }
       claimAcquired = true;
     } catch (claimErr) {
-      // If duplicate key error (11000), turn was already claimed/projected by another concurrent process
+      // If duplicate key error (11000), turn was already claimed/projected
       if (claimErr.code === 11000 || claimErr.message?.includes('E11000')) {
-        const existingState = await ConceptLearningState.findOne({ userId: uId, conceptId: cId }).lean();
+        const query = ConceptLearningState.findOne({ userId: uId, conceptId: cId });
+        if (dbSession) query.session(dbSession);
+        const existingState = await query.lean();
         return {
           conceptId: cId,
           idempotent: true,
@@ -83,17 +109,15 @@ export class LearningStateService {
     }
 
     // 2. Load canonical concept to ensure ownership & obtain canonical prerequisites
-    const conceptDoc = await Concept.findOne({ _id: cId, userId: uId }).lean();
+    const conceptQuery = Concept.findOne({ _id: cId, userId: uId });
+    if (dbSession) conceptQuery.session(dbSession);
+    const conceptDoc = await conceptQuery.lean();
+
     if (!conceptDoc) {
-      if (claimAcquired) {
+      if (claimAcquired && !dbSession) {
         await ProcessedStudyTurn.deleteOne({ userId: uId, conceptId: cId, turnId: tId }).catch(() => {});
       }
-      return {
-        conceptId: cId,
-        idempotent: false,
-        projected: false,
-        error: 'Canonical concept not found or tenant access denied',
-      };
+      throw new Error(`Canonical concept ${cId} not found or tenant access denied`);
     }
 
     // 3. Retry loop for optimistic stateVersion concurrency
@@ -103,7 +127,9 @@ export class LearningStateService {
 
       try {
         // Load or initialize ConceptLearningState
-        let stateDoc = await ConceptLearningState.findOne({ userId: uId, conceptId: cId });
+        const stateQuery = ConceptLearningState.findOne({ userId: uId, conceptId: cId });
+        if (dbSession) stateQuery.session(dbSession);
+        let stateDoc = await stateQuery;
         let isNewDoc = false;
 
         if (!stateDoc) {
@@ -118,10 +144,12 @@ export class LearningStateService {
         const prereqStatesMap = new Map();
 
         if (prerequisites.length > 0) {
-          const prereqStates = await ConceptLearningState.find({
+          const prereqQuery = ConceptLearningState.find({
             userId: uId,
             conceptId: { $in: prerequisites },
-          }).lean();
+          });
+          if (dbSession) prereqQuery.session(dbSession);
+          const prereqStates = await prereqQuery.lean();
 
           for (const ps of prereqStates) {
             ps.decayedScore = calculateDecayedScore(ps.masteryScore, ps.lastDemonstratedAt, evaluationTime);
@@ -155,7 +183,7 @@ export class LearningStateService {
         stateDoc.lastProcessedAnsweredAt = nextState.lastProcessedAnsweredAt;
 
         if (isNewDoc) {
-          await stateDoc.save();
+          await stateDoc.save(sessionOpts);
           return { conceptId: cId, idempotent: false, projected: true, state: stateDoc.toObject() };
         } else {
           const currentVersion = stateDoc.stateVersion;
@@ -184,18 +212,21 @@ export class LearningStateService {
                 lastProcessedAnsweredAt: nextState.lastProcessedAnsweredAt,
               },
               $inc: { stateVersion: 1 },
-            }
+            },
+            sessionOpts
           );
 
           if (updateResult.matchedCount > 0) {
-            const savedDoc = await ConceptLearningState.findById(stateDoc._id).lean();
+            const findSaved = ConceptLearningState.findById(stateDoc._id);
+            if (dbSession) findSaved.session(dbSession);
+            const savedDoc = await findSaved.lean();
             return { conceptId: cId, idempotent: false, projected: true, state: savedDoc };
           }
-          // Version collision occurred, retry loop
+          // Optimistic version collision, retry loop
         }
       } catch (err) {
         if (attempt >= maxRetries) {
-          if (claimAcquired) {
+          if (claimAcquired && !dbSession) {
             await ProcessedStudyTurn.deleteOne({ userId: uId, conceptId: cId, turnId: tId }).catch(() => {});
           }
           throw err;
@@ -203,7 +234,7 @@ export class LearningStateService {
       }
     }
 
-    if (claimAcquired) {
+    if (claimAcquired && !dbSession) {
       await ProcessedStudyTurn.deleteOne({ userId: uId, conceptId: cId, turnId: tId }).catch(() => {});
     }
     throw new Error(`Optimistic lock collision: Failed to project turn ${turn._id} for concept ${conceptId} after ${maxRetries} attempts.`);

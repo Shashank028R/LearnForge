@@ -535,7 +535,14 @@ export class StudyService {
       };
 
       const opts = dbSession ? { session: dbSession } : {};
-      return StudySession.updateOne(query, update, opts);
+      const res = await StudySession.updateOne(query, update, opts);
+
+      if (res.matchedCount > 0) {
+        // Project turn into Learning State within the exact same atomic transaction
+        await learningStateService.projectTurnRealtime(userId, sessionId, newTurn, { session: dbSession });
+      }
+
+      return res;
     });
 
     // 11. Handle Stale Worker Late Return (Lease Takeover Outcome)
@@ -551,13 +558,6 @@ export class StudyService {
 
     const updatedSession = await StudySession.findById(sessionId);
     const addedTurn = updatedSession.turns[updatedSession.turns.length - 1];
-
-    // Project completed turn into Learning State in realtime
-    try {
-      await learningStateService.projectTurnRealtime(userId, sessionId, addedTurn);
-    } catch (projErr) {
-      console.warn(`[StudyService] Learning state projection notice for session ${sessionId}:`, projErr.message);
-    }
 
     return {
       idempotent: false,
