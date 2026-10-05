@@ -16,17 +16,17 @@ This log is the permanent chronological engineering journal for the LearnForge p
 2. **Component Architecture (`client/src/components/study/`)**:
    - `StudyHeader.jsx`: Topic context, state badge (`QUESTIONING`, `REMEDIATING`, `RECHECKING`, `ADVANCING`, `PAUSED`, `COMPLETED`, `EXITED`), pinned syllabus badge (`Syllabus v# (Pinned)`), sessionVersion, pause/resume, exit dialog, turn history toggle.
    - `QuestionCard.jsx`: Visual focus displaying active recall question prompt, question type badge, target concept names, and reasoning expectations.
-   - `AnswerComposer.jsx`: Keyboard-accessible textarea with live character counter (20,000 max), `Ctrl+Enter` / `Cmd+Enter` shortcut, stable `clientTurnIdRef` key across network retries, and disabled states during in-flight evaluation.
+   - `AnswerComposer.jsx`: Keyboard-accessible textarea with live character counter (20,000 max), `Ctrl+Enter` / `Cmd+Enter` shortcut, draft text preservation across 409 conflict reconciliations, stable `clientTurnIdRef` key across network retries, and disabled states during in-flight evaluation.
    - `EvaluationCard.jsx`: Transparent pedagogical breakdown rendering verdict badge (`CORRECT`, `PARTIALLY_CORRECT`, `INCORRECT`, `UNCERTAIN`), percentage scores, submitted answer recap, tutor analysis prose, key strengths, improvement areas, missing concepts, and continue advancement button.
    - `RemediationCard.jsx`: Dedicated Socratic remediation view presenting tutor hint, follow-up probe preview, and "Answer Follow-Up Question" transition action.
-   - `TurnHistory.jsx`: Collapsible chronological turn drawer distinguishing `INITIAL` vs `FOLLOW_UP` attempts, prompts, student answers, and evaluations.
+   - `TurnHistory.jsx`: Collapsible chronological turn history distinguishing `INITIAL` vs `FOLLOW_UP` attempts, prompts, student answers, and evaluations.
    - `StudyCompletedCard.jsx`: Genuine session-local completion summary displaying questions asked, answers submitted, direct correct count, and remediation count.
    - `StudyExitedCard.jsx`: Terminal sealed session view.
 3. **Workspace & Navigation Integration (`client/src/pages/StudyPage.jsx`, `SubjectDetailPage.jsx`, `Sidebar.jsx`, `App.jsx`)**:
-   - Integrated topic launcher, URL query synchronization (`sessionId`, `topicId`), concurrency conflict reconciliation on HTTP 409 (`STALE_STUDY_STATE`), and evaluation crash recovery (`EVALUATION_FAILED_RETRY_SAFE`).
+   - Integrated topic launcher, URL query synchronization (`sessionId`, `topicId`), single-flight session initiation, draft preservation across HTTP 409 (`STALE_STUDY_STATE`) concurrency reconciliations, and evaluation crash recovery (`EVALUATION_FAILED_RETRY_SAFE`).
    - Added Study button directly on topic nodes in Subject Detail view and Sidebar navigation.
 4. **Automated Testing & Build Verification**:
-   - Added 15 comprehensive unit & integration tests in `client/src/pages/Study.test.jsx`. Total client tests: 67/67 passing (100%). Total backend tests: 231/231 passing (100%). Monorepo total: 298/298 tests passing (100%).
+   - Added 18 comprehensive unit & integration tests in `client/src/pages/Study.test.jsx`. Total client tests: 70/70 passing (100%). Total backend tests: 231/231 passing (100%). Monorepo total: 301/301 tests passing (100%).
    - Vite production build verified and clean.
 5. **Live Browser Verification**:
    - Autonomous end-to-end user journey executed against live dev server and MongoDB database, validating subject navigation, study session launch, active recall reasoning prompt, live answer submission, AI evaluation card display, Socratic follow-up advancement, pause/resume, and turn history drawer.

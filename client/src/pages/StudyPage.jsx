@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -49,6 +49,38 @@ export function StudyPage() {
   // View Sub-states
   const [showHistory, setShowHistory] = useState(false);
 
+  // Draft Management & Stable Client Turn IDs (Blocker 1)
+  const [draftsByQuestion, setDraftsByQuestion] = useState({});
+  const clientTurnIdsRef = useRef({});
+  const inFlightInitiationRef = useRef(null);
+  const inFlightLoadRef = useRef(null);
+
+  const getClientTurnId = useCallback((qId) => {
+    if (!qId) return '';
+    if (!clientTurnIdsRef.current[qId]) {
+      clientTurnIdsRef.current[qId] = `turn_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+    return clientTurnIdsRef.current[qId];
+  }, []);
+
+  const handleDraftChange = useCallback((qId, text) => {
+    if (!qId) return;
+    setDraftsByQuestion((prev) => ({
+      ...prev,
+      [qId]: text,
+    }));
+  }, []);
+
+  const clearQuestionDraft = useCallback((qId) => {
+    if (!qId) return;
+    setDraftsByQuestion((prev) => {
+      if (!(qId in prev)) return prev;
+      const next = { ...prev };
+      delete next[qId];
+      return next;
+    });
+  }, []);
+
   // Session Selector / Launcher State (when no session is active)
   const [recentSessions, setRecentSessions] = useState([]);
   const [subjectsList, setSubjectsList] = useState([]);
@@ -56,7 +88,7 @@ export function StudyPage() {
   const [topicsList, setTopicsList] = useState([]);
   const [loadingTopics, setLoadingTopics] = useState(false);
 
-  // 1. Initial Load Orchestration
+  // 1. Initial Load / URL Change Orchestration (Single Authoritative Initiation Path)
   useEffect(() => {
     if (urlSessionId) {
       loadSessionById(urlSessionId);
@@ -69,6 +101,10 @@ export function StudyPage() {
 
   // Fetch session by ID
   const loadSessionById = async (id) => {
+    if (!id) return;
+    if (session?._id === id && !loading) return;
+    if (inFlightLoadRef.current === id) return;
+    inFlightLoadRef.current = id;
     try {
       setLoading(true);
       setError(null);
@@ -81,11 +117,15 @@ export function StudyPage() {
       setSession(null);
     } finally {
       setLoading(false);
+      inFlightLoadRef.current = null;
     }
   };
 
-  // Create or Resume topic session
+  // Create or Resume topic session (Guarded Single Flight)
   const initiateTopicSession = async (topicId) => {
+    if (!topicId) return;
+    if (inFlightInitiationRef.current === topicId) return;
+    inFlightInitiationRef.current = topicId;
     try {
       setLoading(true);
       setError(null);
@@ -94,13 +134,14 @@ export function StudyPage() {
       const sessionDoc = res?.session || res?.data?.session || res;
       setSession(sessionDoc);
       if (sessionDoc?._id) {
-        setSearchParams({ sessionId: sessionDoc._id });
+        setSearchParams({ sessionId: sessionDoc._id }, { replace: true });
       }
     } catch (err) {
       setError(err.message || 'Failed to start study session for topic.');
       setSession(null);
     } finally {
       setLoading(false);
+      inFlightInitiationRef.current = null;
     }
   };
 
@@ -184,13 +225,17 @@ export function StudyPage() {
       const updatedSession = res?.session || res?.data?.session || res;
       if (updatedSession) {
         setSession(updatedSession);
+        // Clear draft only upon successful evaluation submission
+        clearQuestionDraft(questionId);
       }
     } catch (err) {
       if (err.status === 409 || err.code === 'STALE_STUDY_STATE' || err.code === 'IDEMPOTENCY_KEY_REUSE_CONFLICT') {
         await reconcileSessionState('Your study session changed in another tab. Refreshing the latest session state.');
+        // DRAFT IS PRESERVED for same logical question!
       } else if (err.code === 'EVALUATION_FAILED_RETRY_SAFE') {
         setError('Answer evaluation encountered a temporary error. The session was restored to a retry-safe state. Please try submitting again.');
         await reconcileSessionState();
+        // DRAFT IS PRESERVED!
       } else {
         setError(err.message || 'Failed to submit answer.');
       }
@@ -304,14 +349,18 @@ export function StudyPage() {
     }
   };
 
-  // Reset & Start New Session
+  // Reset & Start New Session (Single Authoritative Initiation Path)
   const handleStartNewSession = () => {
-    if (session?.topicId) {
-      setSearchParams({ topicId: session.topicId });
-      initiateTopicSession(session.topicId);
+    const topicId = session?.topicId;
+    setSession(null);
+    if (topicId) {
+      if (urlTopicId === topicId && !urlSessionId) {
+        initiateTopicSession(topicId);
+      } else {
+        setSearchParams({ topicId });
+      }
     } else {
       setSearchParams({});
-      loadSessionSelectorData();
     }
   };
 
@@ -409,7 +458,6 @@ export function StudyPage() {
                 onChange={(e) => {
                   if (e.target.value) {
                     setSearchParams({ topicId: e.target.value });
-                    initiateTopicSession(e.target.value);
                   }
                 }}
                 className="w-full rounded-md border border-app-border bg-app-bg px-3 py-2 text-sm text-app-text-primary focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
@@ -478,7 +526,6 @@ export function StudyPage() {
                     size="sm"
                     onClick={() => {
                       setSearchParams({ sessionId: s._id });
-                      loadSessionById(s._id);
                     }}
                   >
                     {s.status === 'COMPLETED' || s.status === 'EXITED' ? 'View Review' : 'Resume Session'}
@@ -661,6 +708,9 @@ export function StudyPage() {
           <AnswerComposer
             questionId={session.activeQuestion?.questionId}
             sessionVersion={session.sessionVersion}
+            draftText={draftsByQuestion[session.activeQuestion?.questionId] || ''}
+            clientTurnId={getClientTurnId(session.activeQuestion?.questionId)}
+            onDraftChange={(text) => handleDraftChange(session.activeQuestion?.questionId, text)}
             onSubmit={handleSubmitAnswer}
             isSubmitting={isSubmittingAnswer}
             isEvaluating={isEvaluating}

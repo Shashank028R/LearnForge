@@ -290,11 +290,19 @@ In accordance with LearnForge product principles:
 10. **Workspace Container Page ([StudyPage.jsx](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/client/src/pages/StudyPage.jsx))**:
     - Central container managing session lifecycle, topic selector / session launcher, URL query synchronization (`sessionId`, `topicId`), concurrency reconciliation (`HTTP 409 STALE_STUDY_STATE`), and evaluation crash recovery.
 
-### C. Concurrency & Idempotency Handling
-- **Session Version Sync**: Stores backend `sessionVersion` and attaches it to all mutation requests (`submitAnswer`, `continueSession`, `pauseSession`, `resumeSession`).
-- **HTTP 409 Conflict Reconciliation**: When a 409 `STALE_STUDY_STATE` response is returned, the frontend informs the user with a notification ("*Your study session changed in another tab. Refreshing the latest session state.*") and automatically re-fetches the authoritative session state.
-- **Client Idempotency**: Generates a stable `clientTurnId` stored in a ref for the active question submission, ensuring identical turn keys across network retries without creating spurious duplicates.
-- **State Machine Synchronization**: UI state is strictly driven by the authoritative backend `StudySession.status`.
+### C. Concurrency, Idempotency & Draft Preservation Handling
+- **Draft Preservation Across 409 Conflict Reconciliation**:
+  - The student's typed reasoning draft is maintained in client state (`draftsByQuestion[questionId]`), indexed by question ID.
+  - When an HTTP 409 `STALE_STUDY_STATE` response is returned, the frontend informs the user with an alert ("*Your study session changed in another tab. Refreshing the latest session state.*") and fetches the latest authoritative session.
+  - If the logical active question remains the same, the composer textarea preserves the exact typed text and retains the stable `clientTurnId`.
+  - The draft is cleared only when an answer is successfully evaluated/advanced or when a genuinely new question arrives.
+- **Stable Client Idempotency (`clientTurnId`)**:
+  - Generated once per active question attempt via `getClientTurnId(questionId)` and stored in a stable reference.
+  - Component re-renders, prop updates, and 409 conflict reconciliation retries reuse the exact same `clientTurnId`.
+  - A genuinely new question generates a brand-new turn ID and renders an empty composer.
+- **Single-Flight Session Initiation**:
+  - The URL search parameters (`urlSessionId`, `urlTopicId`) serve as the single authoritative routing trigger.
+  - "Start New Session on Topic", topic selector dropdown, and recent session clicks update search parameters without issuing redundant direct API calls, protected by in-flight initiation locks (`inFlightInitiationRef`).
 
 ### D. Accessibility Implementation (WCAG AA)
 - Semantic HTML tags (`<header>`, `<section>`, `<form>`, `<textarea>`, `<button>`).
@@ -302,7 +310,7 @@ In accordance with LearnForge product principles:
 - Full keyboard ergonomics: `Ctrl+Enter` / `Cmd+Enter` answer submission, accessible Escape dialog handling, visible focus rings, and high contrast typography.
 
 ### E. Frontend Automated Test Suite ([Study.test.jsx](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/client/src/pages/Study.test.jsx))
-15 comprehensive unit & integration tests covering:
+18 comprehensive unit & integration tests covering:
 1. Topic session launcher when no session is active.
 2. Active recall prompt and answer composer in `QUESTIONING` state.
 3. Answer submission with `questionId`, `sessionVersion`, and stable `clientTurnId`.
@@ -318,13 +326,16 @@ In accordance with LearnForge product principles:
 13. Evaluation crash recovery handling (`EVALUATION_FAILED_RETRY_SAFE`).
 14. Session turn history toggle and turn expansion.
 15. Pause session action in workspace header.
+16. Preservation of student draft answer across 409 reconciliation and reuse of stable `clientTurnId` on retry.
+17. Clearing composer draft and generating a fresh `clientTurnId` when a genuinely new question becomes active.
+18. Single-flight initiation ensuring "Start New Session on Topic" calls `studyApi.createOrResumeSession` exactly once.
 
 ### F. Verification & Test Metrics
-- **Client Test Suite**: **67 / 67 tests passing (100%)** across 7 test files.
+- **Client Test Suite**: **70 / 70 tests passing (100%)** across 7 test files.
 - **Backend Test Suite**: **231 / 231 tests passing (100%)** across 13 test files.
-- **Total Test Suite**: **298 / 298 tests passing (100%)** across 20 test files.
-- **Vite Production Build**: Succeeded cleanly (`dist/assets/index-D9wgr-Vm.js`, `dist/assets/index-1glz1KBs.css`).
-- **Live Browser Verification**: End-to-end user journey completed in browser against live Express backend and MongoDB database. Verified subject selection, study launch, active question prompt, real answer submission, AI evaluation card, Socratic advancement, pause/resume, and turn history drawer.
+- **Total Monorepo Suite**: **301 / 301 tests passing (100%)** across 20 test files.
+- **Vite Production Build**: Succeeded cleanly (`dist/assets/index-CyhNbbdP.js`, `dist/assets/index-1glz1KBs.css`).
+- **Live Browser Verification**: End-to-end user journey executed against live Express backend and MongoDB database. Verified subject selection, study launch, active question prompt, real answer submission, AI evaluation card, Socratic advancement, pause/resume, and turn history drawer.
 
 ### G. Scope Boundaries & Mandatory Declarations
 - **Phase 08 Checkpoint 2 remains APPROVED & SEALED.**

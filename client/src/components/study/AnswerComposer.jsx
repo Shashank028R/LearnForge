@@ -6,32 +6,46 @@ const MAX_ANSWER_CHARS = 20000;
 export function AnswerComposer({
   questionId,
   sessionVersion,
+  draftText = '',
+  clientTurnId,
+  onDraftChange,
   onSubmit,
   isSubmitting = false,
   isEvaluating = false,
   disabled = false,
 }) {
-  const [answerText, setAnswerText] = useState('');
+  const [internalText, setInternalText] = useState(draftText);
   const [validationError, setValidationError] = useState(null);
   const textareaRef = useRef(null);
 
-  // Maintain a stable clientTurnId for the current question attempt.
-  // Generated when questionId changes so that transport retries for the same logical answer
-  // retain an identical clientTurnId without being affected by React re-renders.
-  const clientTurnIdRef = useRef('');
+  // Fallback clientTurnId if not provided by parent
+  const fallbackTurnIdRef = useRef('');
+
+  const activeTurnId = clientTurnId || fallbackTurnIdRef.current;
+  const currentText = onDraftChange ? draftText : internalText;
 
   useEffect(() => {
-    clientTurnIdRef.current = `turn_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    setAnswerText('');
+    if (!clientTurnId) {
+      fallbackTurnIdRef.current = `turn_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
     setValidationError(null);
     if (textareaRef.current && !disabled) {
       textareaRef.current.focus();
     }
-  }, [questionId]);
+  }, [questionId, clientTurnId]);
 
-  const charCount = answerText.length;
+  const handleTextChange = (text) => {
+    if (onDraftChange) {
+      onDraftChange(text);
+    } else {
+      setInternalText(text);
+    }
+    if (validationError) setValidationError(null);
+  };
+
+  const charCount = currentText.length;
   const isTooLong = charCount > MAX_ANSWER_CHARS;
-  const isEmpty = answerText.trim().length === 0;
+  const isEmpty = currentText.trim().length === 0;
   const isBusy = isSubmitting || isEvaluating;
 
   const handleSubmit = (e) => {
@@ -54,8 +68,8 @@ export function AnswerComposer({
       onSubmit({
         questionId,
         sessionVersion,
-        clientTurnId: clientTurnIdRef.current,
-        answer: answerText.trim(),
+        clientTurnId: activeTurnId,
+        answer: currentText.trim(),
       });
     }
   };
@@ -97,11 +111,8 @@ export function AnswerComposer({
         <textarea
           id="student-answer-input"
           ref={textareaRef}
-          value={answerText}
-          onChange={(e) => {
-            setAnswerText(e.target.value);
-            if (validationError) setValidationError(null);
-          }}
+          value={currentText}
+          onChange={(e) => handleTextChange(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={isBusy || disabled}
           placeholder="Explain the mechanism step-by-step in your own words. Address the key invariants, components, and why this design is required..."

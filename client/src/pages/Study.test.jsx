@@ -160,7 +160,7 @@ const mockExitedSession = {
 
 describe('StudyPage — Phase 08 Strict Study Mode Frontend', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it('1. renders topic session launcher when no session is active', async () => {
@@ -518,5 +518,153 @@ describe('StudyPage — Phase 08 Strict Study Mode Frontend', () => {
         sessionVersion: 1,
       });
     });
+  });
+
+  it('16. preserves student draft answer across 409 reconciliation and reuses stable clientTurnId on retry', async () => {
+    const updatedQuestioningSession = {
+      ...mockQuestioningSession,
+      sessionVersion: 2,
+    };
+
+    studyApi.getSession
+      .mockResolvedValueOnce(mockQuestioningSession)
+      .mockResolvedValueOnce(updatedQuestioningSession);
+
+    const conflictErr = new Error('Stale study session version.');
+    conflictErr.status = 409;
+    conflictErr.code = 'STALE_STUDY_STATE';
+    studyApi.submitAnswer
+      .mockRejectedValueOnce(conflictErr)
+      .mockResolvedValueOnce({ idempotent: false, session: mockAdvancingSession });
+
+    render(
+      <MemoryRouter initialEntries={['/study?sessionId=session-001']}>
+        <StudyPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Your Explanation \/ Reasoning:/i)).toBeDefined();
+    });
+
+    const textarea = screen.getByLabelText(/Your Explanation \/ Reasoning:/i);
+    fireEvent.change(textarea, { target: { value: 'My carefully drafted Raft explanation.' } });
+
+    // First submit attempt -> fails with 409
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Your study session changed in another tab\. Refreshing the latest session state\./i)
+      ).toBeDefined();
+    });
+
+    // DRAFT IS PRESERVED in textarea!
+    expect(textarea.value).toBe('My carefully drafted Raft explanation.');
+
+    const firstCallTurnId = studyApi.submitAnswer.mock.calls[0][1].clientTurnId;
+    expect(firstCallTurnId).toBeDefined();
+
+    // Second submit attempt -> succeeds with updated sessionVersion: 2 and IDENTICAL clientTurnId
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }));
+
+    await waitFor(() => {
+      expect(studyApi.submitAnswer).toHaveBeenCalledTimes(2);
+    });
+
+    const secondCall = studyApi.submitAnswer.mock.calls[1][1];
+    expect(secondCall.sessionVersion).toBe(2);
+    expect(secondCall.answer).toBe('My carefully drafted Raft explanation.');
+    expect(secondCall.clientTurnId).toBe(firstCallTurnId);
+  });
+
+  it('17. clears draft and generates a new clientTurnId when a genuinely new question becomes active', async () => {
+    const nextQuestionSession = {
+      ...mockQuestioningSession,
+      sessionVersion: 4,
+      activeQuestion: {
+        questionId: 'q-002',
+        questionType: 'explain_in_own_words',
+        prompt: 'Explain how log replication achieves consensus in Raft.',
+        targetConceptNames: ['Log Replication'],
+      },
+    };
+
+    studyApi.getSession
+      .mockResolvedValueOnce(mockAdvancingSession)
+      .mockResolvedValueOnce(nextQuestionSession);
+
+    studyApi.continueSession.mockResolvedValueOnce(nextQuestionSession);
+
+    studyApi.submitAnswer.mockResolvedValueOnce({
+      idempotent: false,
+      session: {
+        ...nextQuestionSession,
+        status: 'ADVANCING',
+        sessionVersion: 5,
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/study?sessionId=session-001']}>
+        <StudyPage />
+      </MemoryRouter>
+    );
+
+    // Initial state is ADVANCING
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /continue to next question/i })).toBeDefined();
+    });
+
+    // Click Continue to advance to question 2
+    fireEvent.click(screen.getByRole('button', { name: /continue to next question/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Explain how log replication achieves consensus in Raft\./i)).toBeDefined();
+    });
+
+    const textarea = screen.getByLabelText(/Your Explanation \/ Reasoning:/i);
+    // Draft is empty for genuinely new question
+    expect(textarea.value).toBe('');
+
+    fireEvent.change(textarea, { target: { value: 'Leader appends log entries to quorum of followers.' } });
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }));
+
+    await waitFor(() => {
+      expect(studyApi.submitAnswer).toHaveBeenCalledWith(
+        'session-001',
+        expect.objectContaining({
+          questionId: 'q-002',
+          sessionVersion: 4,
+          answer: 'Leader appends log entries to quorum of followers.',
+          clientTurnId: expect.stringMatching(/^turn_\d+_/),
+        })
+      );
+    });
+  });
+
+  it('18. ensures Start New Session on Topic invokes studyApi.createOrResumeSession exactly once', async () => {
+    studyApi.getSession.mockResolvedValue(mockCompletedSession);
+    studyApi.createOrResumeSession.mockResolvedValue({
+      session: mockQuestioningSession,
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/study?sessionId=session-001']}>
+        <StudyPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /start new session on topic/i })).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /start new session on topic/i }));
+
+    await waitFor(() => {
+      expect(studyApi.createOrResumeSession).toHaveBeenCalledTimes(1);
+    });
+
+    expect(studyApi.createOrResumeSession).toHaveBeenCalledWith('top-101');
   });
 });

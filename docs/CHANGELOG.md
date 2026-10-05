@@ -24,9 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Navigation Integration**:
   - Added "Study" button to topic nodes in `SubjectDetailPage.jsx` and "Study" navigation link in `Sidebar.jsx`.
 - **Testing & Verification**:
-  - 15 automated unit & integration tests in `client/src/pages/Study.test.jsx`.
-  - Total client tests: 67/67 passing (100%).
-  - Total repository tests: 298/298 passing (100%).
+  - 18 automated unit & integration tests in `client/src/pages/Study.test.jsx`.
+  - Total client tests: 70/70 passing (100%).
+  - Total repository tests: 301/301 passing (100%).
   - Live autonomous browser verification against live backend and MongoDB database.
 
 ---
