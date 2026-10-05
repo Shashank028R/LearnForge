@@ -25,6 +25,7 @@
     "openai": "^7.27.0"
   },
   "devDependencies": {
+    "mongodb-memory-server": "^11.3.0",
     "supertest": "^7.0.0",
     "vitest": "^3.0.7"
   },
