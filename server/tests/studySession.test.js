@@ -915,18 +915,24 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     const sessionId = createRes.body.data.session._id;
     const questionId = createRes.body.data.session.activeQuestion.questionId;
 
-    // Submit answer with forced evaluation failure
+    const evalSpy = vi.spyOn(studyAiService, 'evaluateAnswer').mockRejectedValueOnce(
+      new Error('Simulated unrecoverable evaluation error.')
+    );
+
+    // Submit answer with evaluation failure
     try {
       await studyService.submitAnswer(userA._id, sessionId, {
         questionId,
         sessionVersion: 1,
         clientTurnId: 'turn-fail-001',
         answer: 'Any answer that triggers catastrophic error.',
-      }, { forceEvaluationError: true });
+      });
       expect.fail('Should have thrown an error');
     } catch (err) {
       expect(err.code).toBe('EVALUATION_FAILED_RETRY_SAFE');
     }
+
+    evalSpy.mockRestore();
 
     // Verify session recovered safely to QUESTIONING and evaluationState is FAILED
     const recoveredSession = await studyService.getSessionById(userA._id, sessionId);
@@ -1379,8 +1385,9 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     aiGateway.providers.gemini.config.apiKey = origGeminiKey;
   });
 
-  // --- Test 28: Controlled All-Provider Failure + Deterministic Fallback Failure Recovery ---
+  // --- Test 28: Controlled Gateway-Level All-Provider Failure + Deterministic Fallback Failure Recovery ---
   it('28. proves Gateway-level all-provider failure + deterministic fallback failure recovers safely to QUESTIONING/RECHECKING without stranding', async () => {
+    // 1. Initial Attempt Recovery to QUESTIONING
     const createRes = await request(app)
       .post(`/api/v1/topics/${topicA._id}/study/sessions`)
       .set('Cookie', sessionCookieA)
@@ -1389,16 +1396,21 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
     const sessionId = createRes.body.data.session._id;
     const questionId = createRes.body.data.session.activeQuestion.questionId;
 
-    // Simulate catastrophic failure across all AI providers and deterministic fallback
-    const evalSpy = vi.spyOn(studyAiService, 'evaluateAnswer').mockRejectedValueOnce(
-      new Error('AIAllProvidersFailedError: All configured providers and fallbacks failed.')
-    );
+    // Restore real aiGateway.generate to exercise genuine provider router loop
+    aiGateway.generate.mockRestore();
+
+    const openaiSpy = vi.spyOn(aiGateway.providers.openai, 'generate').mockRejectedValue(new Error('OpenAI Outage 500'));
+    const geminiSpy = vi.spyOn(aiGateway.providers.gemini, 'generate').mockRejectedValue(new Error('Gemini Outage 500'));
+    const groqSpy = vi.spyOn(aiGateway.providers.groq, 'generate').mockRejectedValue(new Error('Groq Outage 500'));
+    const deterministicSpy = vi.spyOn(studyAiService, '_buildDeterministicEvaluation').mockImplementation(() => {
+      throw new Error('Deterministic rule engine crashed.');
+    });
 
     try {
       await studyService.submitAnswer(userA._id, sessionId, {
         questionId,
         sessionVersion: 1,
-        clientTurnId: 'turn-catastrophic-001',
+        clientTurnId: 'turn-catastrophic-initial-001',
         answer: 'Student answer during catastrophic outage.',
       });
       expect.fail('Should have thrown EVALUATION_FAILED_RETRY_SAFE');
@@ -1406,30 +1418,122 @@ describe('Phase 08 — Strict Study Mode & Active Recall Backend', () => {
       expect(err.code).toBe('EVALUATION_FAILED_RETRY_SAFE');
     }
 
-    evalSpy.mockRestore();
-
-    // Inspect session state in store
+    // Inspect session state in store for INITIAL recovery
     const sessionDoc = studySessionsStore.get(sessionId.toString());
     expect(sessionDoc.status).toBe(STUDY_STATUS.QUESTIONING);
     expect(sessionDoc.evaluationState.status).toBe('FAILED');
     expect(sessionDoc.activeQuestion.questionId).toBe(questionId);
     expect(sessionDoc.turns.length).toBe(0); // Zero turns inserted
     expect(sessionDoc.metrics.totalAnswersSubmitted).toBe(0); // Metrics not incremented
+    expect(sessionDoc.sequenceCounter).toBe(0);
 
-    // Subsequent normal retry succeeds
+    // 2. Follow-Up Attempt Recovery to RECHECKING
+    // Restore mock evaluation temporarily to advance to RECHECKING
+    openaiSpy.mockRestore();
+    geminiSpy.mockRestore();
+    groqSpy.mockRestore();
+    deterministicSpy.mockRestore();
+
+    // Re-mock aiGateway.generate to provide weak answer remediation
+    vi.spyOn(aiGateway, 'generate').mockImplementation(async ({ task }) => {
+      if (task === AI_TASK_TYPES.STUDY_ANSWER_EVALUATION) {
+        return {
+          text: JSON.stringify({
+            verdict: 'INCORRECT',
+            correctness: 20,
+            completeness: 20,
+            reasoningQuality: 20,
+            feedback: 'Needs remediation.',
+            nextAction: 'REMEDIATE',
+          }),
+        };
+      }
+      if (task === AI_TASK_TYPES.STUDY_REMEDIATION) {
+        return {
+          text: JSON.stringify({
+            remediationText: 'Consider randomized timers.',
+            followUpQuestion: 'How does staggering work?',
+          }),
+        };
+      }
+      return { text: '{}' };
+    });
+
+    // Submit weak initial answer -> enters REMEDIATING
+    await studyService.submitAnswer(userA._id, sessionId, {
+      questionId,
+      sessionVersion: sessionDoc.sessionVersion,
+      clientTurnId: 'turn-initial-for-fu',
+      answer: 'Weak answer.',
+    });
+
+    // Continue to RECHECKING
+    const fuSessionDoc = studySessionsStore.get(sessionId.toString());
+    const recheckedSession = await studyService.continueSession(userA._id, sessionId, {
+      sessionVersion: fuSessionDoc.sessionVersion,
+    });
+    expect(recheckedSession.status).toBe(STUDY_STATUS.RECHECKING);
+
+    // Now re-inject catastrophic all-provider + fallback outage on follow-up submission
+    aiGateway.generate.mockRestore();
+    const openaiSpyFu = vi.spyOn(aiGateway.providers.openai, 'generate').mockRejectedValue(new Error('OpenAI Outage 500'));
+    const geminiSpyFu = vi.spyOn(aiGateway.providers.gemini, 'generate').mockRejectedValue(new Error('Gemini Outage 500'));
+    const groqSpyFu = vi.spyOn(aiGateway.providers.groq, 'generate').mockRejectedValue(new Error('Groq Outage 500'));
+    const deterministicSpyFu = vi.spyOn(studyAiService, '_buildDeterministicEvaluation').mockImplementation(() => {
+      throw new Error('Deterministic rule engine crashed.');
+    });
+
+    try {
+      await studyService.submitAnswer(userA._id, sessionId, {
+        questionId: recheckedSession.activeQuestion.questionId,
+        sessionVersion: recheckedSession.sessionVersion,
+        clientTurnId: 'turn-catastrophic-fu-001',
+        answer: 'Follow-up answer during outage.',
+      });
+      expect.fail('Should have thrown EVALUATION_FAILED_RETRY_SAFE');
+    } catch (err) {
+      expect(err.code).toBe('EVALUATION_FAILED_RETRY_SAFE');
+    }
+
+    // Inspect session state: FOLLOW_UP recovery MUST restore to RECHECKING
+    const postFuDoc = studySessionsStore.get(sessionId.toString());
+    expect(postFuDoc.status).toBe(STUDY_STATUS.RECHECKING);
+    expect(postFuDoc.evaluationState.status).toBe('FAILED');
+    expect(postFuDoc.turns.length).toBe(1); // Still only the 1 initial turn
+    expect(postFuDoc.metrics.totalAnswersSubmitted).toBe(1); // Unchanged by failed follow-up attempt
+
+    // Clean up spies
+    openaiSpyFu.mockRestore();
+    geminiSpyFu.mockRestore();
+    groqSpyFu.mockRestore();
+    deterministicSpyFu.mockRestore();
+
+    // Re-mock aiGateway.generate for standard test flow
+    vi.spyOn(aiGateway, 'generate').mockResolvedValue({
+      text: JSON.stringify({
+        verdict: 'CORRECT',
+        correctness: 90,
+        completeness: 90,
+        reasoningQuality: 90,
+        feedback: 'Great follow-up answer.',
+        nextAction: 'ADVANCE',
+      }),
+    });
+
+    // Subsequent normal retry on follow-up succeeds
     const retryRes = await request(app)
       .post(`/api/v1/study-sessions/${sessionId}/answer`)
       .set('Cookie', sessionCookieA)
       .send({
-        questionId,
-        sessionVersion: sessionDoc.sessionVersion,
-        clientTurnId: 'turn-catastrophic-retry-001',
-        answer: 'Valid answer on subsequent retry.',
+        questionId: postFuDoc.activeQuestion.questionId,
+        sessionVersion: postFuDoc.sessionVersion,
+        clientTurnId: 'turn-catastrophic-fu-retry-001',
+        answer: 'Valid follow-up answer on subsequent retry.',
       })
       .expect(200);
 
-    expect(retryRes.body.data.session.status).not.toBe(STUDY_STATUS.EVALUATING);
-    expect(retryRes.body.data.turn).toBeDefined();
+    expect(retryRes.body.data.session.status).toBe(STUDY_STATUS.ADVANCING);
+    expect(retryRes.body.data.turn.attemptType).toBe('FOLLOW_UP');
   });
 });
 

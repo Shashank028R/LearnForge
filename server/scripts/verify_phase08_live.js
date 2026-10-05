@@ -612,22 +612,95 @@ async function runLiveVerification() {
     }
     console.log('  -> PASS: Tenant isolation strictly enforced (HTTP 404).\n');
 
-    // --- Gate 17: Real AI Gateway Multi-Provider Fallback ---
+    // --- Gate 17: Real AI Gateway Multi-Provider Fallback & Provenance Verification ---
     console.log('[17/21] [AI GATEWAY] Real AI Gateway Multi-Provider Fallback & Provenance Verification...');
+    
+    // Save original provider methods and keys
+    const origOpenaiGenerate = aiGateway.providers.openai.generate;
+    const origGroqGenerate = aiGateway.providers.groq.generate;
+    const origGeminiApiKey = aiGateway.providers.gemini.config.apiKey;
+    const origOpenaiApiKey = aiGateway.providers.openai.config.apiKey;
+    const origGroqApiKey = aiGateway.providers.groq.config.apiKey;
+
+    aiGateway.providers.openai.config.apiKey = origOpenaiApiKey || 'test-openai-key';
+    aiGateway.providers.groq.config.apiKey = origGroqApiKey || 'test-groq-key';
+    aiGateway.providers.gemini.config.apiKey = ''; // Unconfigured to isolate OpenAI -> Groq preference chain
+
+    aiGateway.providers.openai.recordSuccess();
+    aiGateway.providers.groq.recordSuccess();
+
+    let primaryInvoked = false;
+    let secondaryInvoked = false;
+
+    // Inject deterministic failure at primary provider adapter boundary
+    aiGateway.providers.openai.generate = async (req) => {
+      primaryInvoked = true;
+      const err = new Error('Quota exhausted for provider openai: 429 You have no credits remaining.');
+      err.status = 429;
+      err.code = 'insufficient_quota';
+      throw err;
+    };
+
+    // Secondary provider returns valid structured evaluation
+    aiGateway.providers.groq.generate = async (req) => {
+      secondaryInvoked = true;
+      return {
+        text: JSON.stringify({
+          verdict: 'CORRECT',
+          correctness: 92,
+          completeness: 88,
+          reasoningQuality: 90,
+          misconceptionDetected: false,
+          misconceptionSummary: '',
+          missingConcepts: [],
+          strengths: ['Accurate explanation of RequestVote RPC parameters.'],
+          weaknesses: [],
+          feedback: 'Accurately articulated candidateId and term parameters in RequestVote RPC.',
+          nextAction: 'ADVANCE',
+        }),
+        provider: 'groq',
+        model: 'openai/gpt-oss-20b',
+        task: req.task,
+        usage: { promptTokens: 120, completionTokens: 60, totalTokens: 180 },
+        latencyMs: 95,
+        requestId: req.requestId,
+      };
+    };
+
     const currentQuestionDoc = await StudySession.findById(createdSession._id);
     const evalRes = await studyAiService.evaluateAnswer({
       question: currentQuestionDoc.activeQuestion,
       studentAnswer: 'RequestVote RPC includes candidate term and candidateId to solicit election votes across the cluster.',
       canonicalConcepts: [concept1, concept2],
+      requestId: `req-gate17-${nonce}-${Date.now()}`,
     });
-    if (!evalRes || !evalRes.verdict || typeof evalRes.correctness !== 'number') {
-      throw new Error('FAIL-CLOSED: AI Gateway failed to produce valid structured evaluation.');
-    }
-    console.log(`  -> AI Gateway Output Verdict: ${evalRes.verdict} (Correctness: ${evalRes.correctness}%)`);
-    console.log('  -> PASS: Real AI Gateway multi-provider execution & fallback verified.\n');
 
-    // --- Gate 18: Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy ---
-    console.log('[18/21] [AI GATEWAY & DOMAIN] Controlled All-Provider/Fallback Catastrophic Recovery on MongoDB Atlas...');
+    // Restore original provider implementations
+    aiGateway.providers.openai.generate = origOpenaiGenerate;
+    aiGateway.providers.groq.generate = origGroqGenerate;
+    aiGateway.providers.gemini.config.apiKey = origGeminiApiKey;
+    aiGateway.providers.openai.config.apiKey = origOpenaiApiKey;
+    aiGateway.providers.groq.config.apiKey = origGroqApiKey;
+    aiGateway.providers.openai.recordSuccess();
+    aiGateway.providers.groq.recordSuccess();
+
+    // Assertions for Gate 17:
+    if (!primaryInvoked) throw new Error('FAIL-CLOSED: Primary provider was not invoked.');
+    if (!secondaryInvoked) throw new Error('FAIL-CLOSED: Secondary provider was not invoked after primary failure.');
+    if (!evalRes || evalRes.verdict !== 'CORRECT') throw new Error(`FAIL-CLOSED: Expected verdict CORRECT, got ${evalRes?.verdict}`);
+    if (evalRes.provenance.source !== 'ai') throw new Error(`FAIL-CLOSED: Expected provenance source "ai", got "${evalRes.provenance.source}"`);
+    if (evalRes.provenance.provider !== 'groq') throw new Error(`FAIL-CLOSED: Expected provenance provider "groq", got "${evalRes.provenance.provider}"`);
+    if (evalRes.provenance.model !== 'openai/gpt-oss-20b') throw new Error(`FAIL-CLOSED: Expected provenance model "openai/gpt-oss-20b", got "${evalRes.provenance.model}"`);
+    if (evalRes.provenance.source === 'deterministic_fallback') throw new Error('FAIL-CLOSED: Deterministic fallback was falsely reported as AI success.');
+
+    console.log(`  -> Primary Provider Invoked & Failed: ${primaryInvoked}`);
+    console.log(`  -> Secondary Provider Selected & Succeeded: ${secondaryInvoked} (${evalRes.provenance.provider} / ${evalRes.provenance.model})`);
+    console.log(`  -> Provenance Verified: source=${evalRes.provenance.source}, provider=${evalRes.provenance.provider}, model=${evalRes.provenance.model}`);
+    console.log(`  -> Structured Evaluation: Verdict=${evalRes.verdict}, Correctness=${evalRes.correctness}%`);
+    console.log('  -> PASS: Real AI Gateway multi-provider execution, provider fallback & truthful provenance verified.\n');
+
+    // --- Gate 18: Real Gateway-Level All-Provider Failure + Deterministic Fallback Failure + Session Recovery ---
+    console.log('[18/21] [AI GATEWAY & DOMAIN] Real Gateway-Level All-Provider Failure + Deterministic Fallback Failure + Session Recovery on Atlas...');
     const recoveryTopic = await Topic.create({
       userId: userA._id,
       subjectId: subjectA._id,
@@ -656,56 +729,90 @@ async function runLiveVerification() {
     const recQuestionId = recSession.activeQuestion.questionId;
     const recSessionVersion = recSession.sessionVersion;
 
-    // Induce controlled evaluation failure on live Atlas DB
-    let failedSafely = false;
+    // Save provider methods & deterministic evaluation method
+    const g18OrigOpenai = aiGateway.providers.openai.generate;
+    const g18OrigGemini = aiGateway.providers.gemini.generate;
+    const g18OrigGroq = aiGateway.providers.groq.generate;
+    const g18OrigDeterministic = studyAiService._buildDeterministicEvaluation;
+
+    // Make ALL configured AI providers fail at provider adapter boundary
+    aiGateway.providers.openai.generate = async () => { throw new Error('OpenAI 500 Provider Outage'); };
+    aiGateway.providers.gemini.generate = async () => { throw new Error('Gemini 500 Provider Outage'); };
+    aiGateway.providers.groq.generate = async () => { throw new Error('Groq 500 Provider Outage'); };
+
+    // Make deterministic fallback also fail
+    studyAiService._buildDeterministicEvaluation = () => {
+      throw new Error('Deterministic rule-based evaluation engine failure.');
+    };
+
+    // 18a: Submit INITIAL answer during catastrophic all-provider + fallback outage
+    let failedSafelyInitial = false;
     try {
       await studyService.submitAnswer(userA._id, recSession._id, {
         questionId: recQuestionId,
         sessionVersion: recSessionVersion,
         clientTurnId: `turn_rec_fail_${Date.now()}`,
-        answer: 'Any answer that triggers controlled evaluation error.',
-      }, { forceEvaluationError: true });
+        answer: 'Any answer during catastrophic outage.',
+      });
     } catch (err) {
       if (err.code === 'EVALUATION_FAILED_RETRY_SAFE') {
-        failedSafely = true;
+        failedSafelyInitial = true;
       }
     }
 
-    if (!failedSafely) {
-      throw new Error('Expected submitAnswer with forceEvaluationError to throw EVALUATION_FAILED_RETRY_SAFE.');
+    if (!failedSafelyInitial) {
+      throw new Error('FAIL-CLOSED: Expected submitAnswer during catastrophic failure to throw EVALUATION_FAILED_RETRY_SAFE.');
     }
 
-    // Inspect the actual persisted state in MongoDB Atlas
-    const postFailureSession = await StudySession.findById(recSession._id);
-    if (postFailureSession.status === STUDY_STATUS.EVALUATING) {
-      throw new Error('FAIL-CLOSED: Session remained stranded in EVALUATING state after evaluation error.');
+    // Inspect persisted state in MongoDB Atlas for INITIAL recovery
+    const postFailureInitialSession = await StudySession.findById(recSession._id);
+    if (postFailureInitialSession.status === STUDY_STATUS.EVALUATING) {
+      throw new Error('FAIL-CLOSED: Session remained stranded in EVALUATING state after catastrophic error.');
     }
-    if (postFailureSession.status !== STUDY_STATUS.QUESTIONING) {
-      throw new Error(`Expected session restored to QUESTIONING, got ${postFailureSession.status}`);
+    if (postFailureInitialSession.status !== STUDY_STATUS.QUESTIONING) {
+      throw new Error(`FAIL-CLOSED: Expected INITIAL session restored to QUESTIONING, got ${postFailureInitialSession.status}`);
     }
-    if (postFailureSession.evaluationState.status !== 'FAILED') {
-      throw new Error(`Expected evaluationState.status FAILED, got ${postFailureSession.evaluationState.status}`);
+    if (postFailureInitialSession.evaluationState.status !== 'FAILED') {
+      throw new Error(`FAIL-CLOSED: Expected evaluationState.status FAILED, got ${postFailureInitialSession.evaluationState.status}`);
     }
-    if (postFailureSession.activeQuestion.questionId !== recQuestionId) {
+    if (postFailureInitialSession.activeQuestion.questionId !== recQuestionId) {
       throw new Error('FAIL-CLOSED: Active question context was lost after evaluation failure.');
     }
+    if (postFailureInitialSession.turns.length !== 0) {
+      throw new Error(`FAIL-CLOSED: Expected 0 turns persisted after failed attempt, found ${postFailureInitialSession.turns.length}`);
+    }
+    if (postFailureInitialSession.metrics.totalAnswersSubmitted !== 0) {
+      throw new Error('FAIL-CLOSED: totalAnswersSubmitted was mutated by failed attempt.');
+    }
+    if (postFailureInitialSession.sequenceCounter !== 0) {
+      throw new Error('FAIL-CLOSED: sequenceCounter was mutated by failed attempt.');
+    }
 
-    // Prove subsequent retry succeeds
+    // Restore providers & deterministic fallback
+    aiGateway.providers.openai.generate = g18OrigOpenai;
+    aiGateway.providers.gemini.generate = g18OrigGemini;
+    aiGateway.providers.groq.generate = g18OrigGroq;
+    studyAiService._buildDeterministicEvaluation = g18OrigDeterministic;
+    aiGateway.providers.openai.recordSuccess();
+    aiGateway.providers.groq.recordSuccess();
+
+    // 18b: Prove subsequent retry succeeds via normal evaluation path
     const retryRes = await studyService.submitAnswer(userA._id, recSession._id, {
       questionId: recQuestionId,
-      sessionVersion: postFailureSession.sessionVersion,
+      sessionVersion: postFailureInitialSession.sessionVersion,
       clientTurnId: `turn_rec_retry_${Date.now()}`,
       answer: 'At most one leader can be elected in a given term because a candidate requires a majority of votes, and each follower votes for at most one candidate per term.',
     });
 
-    if (!retryRes.turn || !retryRes.session) {
-      throw new Error('Subsequent answer retry failed after recovery.');
+    if (!retryRes.turn || !retryRes.session || retryRes.session.status === STUDY_STATUS.EVALUATING) {
+      throw new Error('FAIL-CLOSED: Subsequent answer retry failed after recovery.');
     }
 
-    console.log(`  -> Recovery Session Restored to Status: ${postFailureSession.status} (evaluationState: ${postFailureSession.evaluationState.status})`);
-    console.log(`  -> Active Question Preserved: "${postFailureSession.activeQuestion.prompt.substring(0, 60)}..."`);
-    console.log(`  -> Subsequent Retry Result: Succeeded (Next Status: ${retryRes.session.status})`);
-    console.log('  -> PASS: Real live catastrophic evaluation recovery verified on MongoDB Atlas replica set.\n');
+    console.log(`  -> Initial Attempt Catastrophic Recovery: Restored to Status=${postFailureInitialSession.status} (evaluationState=${postFailureInitialSession.evaluationState.status})`);
+    console.log(`  -> Active Question Preserved: "${postFailureInitialSession.activeQuestion.prompt.substring(0, 60)}..."`);
+    console.log(`  -> Zero Turns / Zero Mutated Metrics Persisted on Failure`);
+    console.log(`  -> Subsequent Normal Retry Succeeded: Next Status=${retryRes.session.status}`);
+    console.log('  -> PASS: Real Gateway-level all-provider failure + deterministic fallback failure + session recovery verified on Atlas.\n');
 
     // --- Gate 19: Real Live FOLLOW_UP Duplicate Logical-Submission Race ---
     console.log('[19/21] [CONCURRENCY] Real Live FOLLOW_UP Duplicate Logical-Submission Race on Atlas...');

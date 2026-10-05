@@ -433,11 +433,6 @@ export class StudyService {
     try {
       canonicalConcepts = await Concept.find({ userId, topicId: claimedSession.topicId }).lean();
 
-      // Force failure test hook if requested
-      if (options.forceEvaluationError) {
-        throw new Error('Simulated unrecoverable evaluation error.');
-      }
-
       evaluation = await studyAiService.evaluateAnswer({
         question: claimedSession.activeQuestion,
         studentAnswer: answer.trim(),
