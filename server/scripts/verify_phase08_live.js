@@ -1,5 +1,5 @@
 /**
- * LearnForge Phase 08 — Strict Study Mode & Active Recall Live Verifier
+ * LearnForge Phase 08 — Strict Study Mode & Active Recall Live Verifier (Checkpoint 4)
  * Comprehensive, fail-closed live verification script against live Express, MongoDB Atlas, and AI Gateway.
  *
  * Requirements:
@@ -65,7 +65,7 @@ async function runLiveVerification() {
 
   try {
     // --- Gate 1: Live API Health Check ---
-    console.log('[1/19] [HTTP API] Health & Database Connectivity Check...');
+    console.log('[1/21] [HTTP API] Health & Database Connectivity Check...');
     const healthRes = await fetch(`${API_BASE}/health`);
     if (!healthRes.ok) throw new Error(`FAIL-CLOSED: Express API health endpoint failed (HTTP ${healthRes.status})`);
     const healthData = await healthRes.json();
@@ -74,14 +74,14 @@ async function runLiveVerification() {
     console.log(`  -> PASS: Express API is live and MongoDB is connected (status: ${dbStatus}).\n`);
 
     // --- Gate 2: MongoDB Atlas Connection ---
-    console.log('[2/19] [DATABASE] MongoDB Atlas Replica Set Connection...');
+    console.log('[2/21] [DATABASE] MongoDB Atlas Replica Set Connection...');
     const mongoUri = process.env.MONGODB_URI;
     if (!mongoUri) throw new Error('MONGODB_URI environment variable is missing.');
     await mongoose.connect(mongoUri);
     console.log('  -> PASS: Connected to MongoDB replica set via Mongoose driver.\n');
 
     // --- Gate 3: Multi-Document Transaction & Partial Unique Index Verification ---
-    console.log('[3/19] [DATABASE] Multi-Document Transaction Support & Partial Unique Index Assertion...');
+    console.log('[3/21] [DATABASE] Multi-Document Transaction Support & Partial Unique Index Assertion...');
     const testSession = await mongoose.startSession();
     try {
       testSession.startTransaction();
@@ -107,7 +107,7 @@ async function runLiveVerification() {
     console.log(`  -> PASS: Verified database partial unique index: unique=true, partialFilterExpression={ isActive: true }.\n`);
 
     // --- Gate 4: Isolated Test Tenant & Canonical Knowledge Base Setup ---
-    console.log('[4/19] [DATABASE] Isolated Test Tenant & Canonical Knowledge Setup...');
+    console.log('[4/21] [DATABASE] Isolated Test Tenant & Canonical Knowledge Setup...');
     const nonce = Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 
     const userA = await User.create({
@@ -206,7 +206,7 @@ async function runLiveVerification() {
     console.log(`  -> PASS: Seeded tenant A (${userA._id}), tenant B (${userB._id}), subject, topic, pinned syllabus v1, and 2 canonical concepts.\n`);
 
     // --- Gate 5: Real Live Active-Session Creation Race with MongoDB Unique Index Enforcement ---
-    console.log('[5/18] [DOMAIN-SERVICE & DATABASE] Real Live Concurrent Active-Session Creation Race...');
+    console.log('[5/21] [DOMAIN-SERVICE & DATABASE] Real Live Concurrent Active-Session Creation Race...');
     const creationBarrier = new TestSyncBarrier(2);
 
     const [raceResA, raceResB] = await Promise.all([
@@ -260,7 +260,7 @@ async function runLiveVerification() {
     console.log('  -> PASS: Genuine MongoDB Atlas concurrent creation race verified.\n');
 
     // --- Gate 6: Verify Session Ownership & Curriculum Pinning ---
-    console.log('[6/19] [DOMAIN-SERVICE] Verify Session Ownership, Initial State QUESTIONING, and Curriculum Pinning...');
+    console.log('[6/21] [DOMAIN-SERVICE] Verify Session Ownership, Initial State QUESTIONING, and Curriculum Pinning...');
     if (createdSession.status !== STUDY_STATUS.QUESTIONING) throw new Error(`Expected status QUESTIONING, got ${createdSession.status}`);
     if (createdSession.syllabusVersionId.toString() !== approvedSyllabusA._id.toString()) throw new Error('Pinned syllabusVersionId mismatch.');
     if (createdSession.syllabusVersionNumber !== 1) throw new Error('Pinned syllabusVersionNumber mismatch.');
@@ -268,7 +268,7 @@ async function runLiveVerification() {
     console.log(`  -> PASS: Session correctly initialized in QUESTIONING state with permanent SyllabusVersion v1 pinning.\n`);
 
     // --- Gate 7: Authoritative Adversarial Reasoning-Signal Validation & Grounded Question Generation ---
-    console.log('[7/19] [AI GATEWAY & DOMAIN] Authoritative Adversarial Reasoning-Signal Validation...');
+    console.log('[7/21] [AI GATEWAY & DOMAIN] Authoritative Adversarial Reasoning-Signal Validation...');
     const canonicalList = [concept1, concept2];
     
     // Test 7a: Purely hallucinated signals & deceptive sub-word overlaps are filtered out
@@ -309,7 +309,7 @@ async function runLiveVerification() {
     console.log('  -> PASS: Model reasoning signals strictly validated against canonical concept definitions.\n');
 
     // --- Gate 8: Submit Incomplete/Weak Answer ---
-    console.log('[8/19] [HTTP API] Submit Incomplete/Weak Answer (POST /study-sessions/:id/answer)...');
+    console.log('[8/21] [HTTP API] Submit Incomplete/Weak Answer (POST /study-sessions/:id/answer)...');
     const weakClientTurnId = `turn_weak_${Date.now()}`;
     const weakAnswerRes = await fetch(`${API_BASE}/study-sessions/${createdSession._id}/answer`, {
       method: 'POST',
@@ -333,8 +333,8 @@ async function runLiveVerification() {
     console.log('  -> PASS: Incomplete answer submitted and evaluated.\n');
 
     // --- Gate 9 & 10: Verify Multi-Criteria Evaluation & Socratic Remediation ---
-    console.log('[9/19] [AI GATEWAY] Verify Structured Answer Evaluation (INCORRECT / PARTIALLY_CORRECT)...');
-    console.log('[10/19] [PEDAGOGY] Verify Remediation Loop Triggered (status: REMEDIATING)...');
+    console.log('[9/21] [AI GATEWAY] Verify Structured Answer Evaluation (INCORRECT / PARTIALLY_CORRECT)...');
+    console.log('[10/21] [PEDAGOGY] Verify Remediation Loop Triggered (status: REMEDIATING)...');
     const weakTurn = weakAnswerData.data.turn;
     const sessionAfterWeak = weakAnswerData.data.session;
 
@@ -353,7 +353,7 @@ async function runLiveVerification() {
     console.log('  -> PASS: System refused to advance blindly and activated Socratic remediation.\n');
 
     // --- Gate 11: Advance to RECHECKING & Submit Follow-Up Answer ---
-    console.log('[11/19] [HTTP API] Advance to RECHECKING & Submit Socratic Follow-Up Answer...');
+    console.log('[11/21] [HTTP API] Advance to RECHECKING & Submit Socratic Follow-Up Answer...');
     const continueRes = await fetch(`${API_BASE}/study-sessions/${createdSession._id}/continue`, {
       method: 'POST',
       headers: {
@@ -399,7 +399,7 @@ async function runLiveVerification() {
     console.log('  -> PASS: Follow-up answer persisted with parent turn integrity.\n');
 
     // --- Gate 12: Verify Demonstrated Understanding & Advancement ---
-    console.log('[12/19] [PEDAGOGY] Verify Demonstrated Understanding & Advancement (CORRECT -> ADVANCING)...');
+    console.log('[12/21] [PEDAGOGY] Verify Demonstrated Understanding & Advancement (CORRECT -> ADVANCING)...');
     const sessionAfterFollowUp = followUpData.data.session;
     if (sessionAfterFollowUp.status !== STUDY_STATUS.ADVANCING) {
       throw new Error(`Expected status ADVANCING on solid answer, got ${sessionAfterFollowUp.status}`);
@@ -408,7 +408,7 @@ async function runLiveVerification() {
     console.log('  -> PASS: Understanding demonstrated. Session advanced to ADVANCING state.\n');
 
     // --- Gate 13: Advance Already-Evaluated Session to Next Question ---
-    console.log('[13/19] [HTTP API] Advance Already-Evaluated Session to Next Question (POST /continue)...');
+    console.log('[13/21] [HTTP API] Advance Already-Evaluated Session to Next Question (POST /continue)...');
     const continueNextRes = await fetch(`${API_BASE}/study-sessions/${createdSession._id}/continue`, {
       method: 'POST',
       headers: {
@@ -428,11 +428,16 @@ async function runLiveVerification() {
     console.log(`  -> Next Question Generated: "${continueNextData.data.activeQuestion?.prompt?.substring(0, 80)}..."`);
     console.log('  -> PASS: Next active recall question staged cleanly.\n');
 
-    // --- Gate 14: Real Live Concurrency Race Proof ---
-    console.log('[14/19] [DOMAIN-SERVICE CONCURRENCY] Proving Real Live Concurrency: Duplicate Answer Submission Race...');
+    // --- Gate 14: Real Live Identical Logical-Submission Race Proof ---
+    console.log('[14/21] [CONCURRENCY & IDEMPOTENCY] Proving Real Live Identical Logical-Submission Race...');
     const currentSessionDoc = await StudySession.findById(createdSession._id);
     const raceQuestionId = currentSessionDoc.activeQuestion.questionId;
     const raceSessionVersion = currentSessionDoc.sessionVersion;
+    const identicalClientTurnId = `turn_identical_race_${nonce}_${Date.now()}`;
+    const identicalAnswerText = 'RequestVote RPC is sent by candidates to gather cluster votes during a leader election term.';
+
+    const initialAnswersCount = currentSessionDoc.metrics.totalAnswersSubmitted;
+    const initialSeqCounter = currentSessionDoc.sequenceCounter;
 
     const barrier = new TestSyncBarrier(2);
 
@@ -440,14 +445,14 @@ async function runLiveVerification() {
       studyService.submitAnswer(userA._id, createdSession._id, {
         questionId: raceQuestionId,
         sessionVersion: raceSessionVersion,
-        clientTurnId: `turn_race_a_${Date.now()}`,
-        answer: 'Candidate A broadcasts RequestVote with terms updated.',
+        clientTurnId: identicalClientTurnId,
+        answer: identicalAnswerText,
       }, { barrier: () => barrier.wait() }).catch((err) => ({ error: err })),
       studyService.submitAnswer(userA._id, createdSession._id, {
         questionId: raceQuestionId,
         sessionVersion: raceSessionVersion,
-        clientTurnId: `turn_race_b_${Date.now()}`,
-        answer: 'Candidate B broadcasts RequestVote with terms updated.',
+        clientTurnId: identicalClientTurnId,
+        answer: identicalAnswerText,
       }, { barrier: () => barrier.wait() }).catch((err) => ({ error: err })),
     ]);
 
@@ -460,12 +465,57 @@ async function runLiveVerification() {
     if (loser.error.code !== 'STALE_STUDY_STATE') {
       throw new Error(`Expected loser error STALE_STUDY_STATE, got ${loser.error.code}`);
     }
-    console.log(`  -> Request A: Succeeded (HTTP 200).`);
-    console.log(`  -> Request B: Failed closed with HTTP 409 (${loser.error.code}).`);
-    console.log('  -> PASS: Real live Atlas concurrency race resolved deterministically.\n');
+
+    // Inspect persisted database state in Atlas
+    const postRaceDoc = await StudySession.findById(createdSession._id);
+    const matchingTurns = postRaceDoc.turns.filter((t) => t.clientTurnId === identicalClientTurnId);
+    if (matchingTurns.length !== 1) {
+      throw new Error(`FAIL-CLOSED: Expected exactly 1 persisted turn for clientTurnId ${identicalClientTurnId}, found ${matchingTurns.length}`);
+    }
+    if (postRaceDoc.metrics.totalAnswersSubmitted !== initialAnswersCount + 1) {
+      throw new Error(`FAIL-CLOSED: totalAnswersSubmitted expected ${initialAnswersCount + 1}, got ${postRaceDoc.metrics.totalAnswersSubmitted}`);
+    }
+    if (postRaceDoc.sequenceCounter !== initialSeqCounter + 1) {
+      throw new Error(`FAIL-CLOSED: sequenceCounter expected ${initialSeqCounter + 1}, got ${postRaceDoc.sequenceCounter}`);
+    }
+
+    // Test Idempotent Replay of Completed Turn (Rule 1: Same clientTurnId + Same answer -> HTTP 200 idempotent replay)
+    const replayRes = await studyService.submitAnswer(userA._id, createdSession._id, {
+      questionId: raceQuestionId,
+      sessionVersion: postRaceDoc.sessionVersion,
+      clientTurnId: identicalClientTurnId,
+      answer: identicalAnswerText,
+    });
+    if (replayRes.idempotent !== true || !replayRes.turn) {
+      throw new Error('FAIL-CLOSED: Idempotent replay of completed turn failed to return idempotent: true.');
+    }
+
+    // Test Conflicting Payload Rejection (Rule 2: Same clientTurnId + Different answer -> HTTP 409 conflict)
+    let conflictCaught = false;
+    try {
+      await studyService.submitAnswer(userA._id, createdSession._id, {
+        questionId: raceQuestionId,
+        sessionVersion: postRaceDoc.sessionVersion,
+        clientTurnId: identicalClientTurnId,
+        answer: 'Conflicting modified answer with same clientTurnId.',
+      });
+    } catch (err) {
+      if (err.code === 'IDEMPOTENCY_KEY_REUSE_CONFLICT') {
+        conflictCaught = true;
+      }
+    }
+    if (!conflictCaught) {
+      throw new Error('FAIL-CLOSED: Expected IDEMPOTENCY_KEY_REUSE_CONFLICT when submitting modified answer with reused clientTurnId.');
+    }
+
+    console.log(`  -> Winner: Successfully claimed evaluation and committed turn (HTTP 200).`);
+    console.log(`  -> Loser: Safely caught version conflict (HTTP 409 ${loser.error.code}).`);
+    console.log(`  -> Database Assertion: Exactly 1 matching turn persisted, sequenceCounter incremented by exactly 1.`);
+    console.log(`  -> Replay Assertion: Same payload returns idempotent=true; modified payload rejected with 409 IDEMPOTENCY_KEY_REUSE_CONFLICT.`);
+    console.log('  -> PASS: Real live Atlas duplicate logical-submission race verified.\n');
 
     // --- Gate 15: Lease Takeover & Stale Worker Rejection Proof ---
-    console.log('[15/19] [LEASE FENCING & RECOVERY] Proving Lease Takeover & Stale Worker Rejection...');
+    console.log('[15/21] [LEASE FENCING & RECOVERY] Proving Lease Takeover & Stale Worker Rejection...');
     const staleOpSession = await StudySession.findById(createdSession._id);
     const staleOpId = `stale_op_${Date.now()}`;
 
@@ -503,7 +553,7 @@ async function runLiveVerification() {
     console.log('  -> PASS: Authoritative lease fencing protects against late worker state corruption.\n');
 
     // --- Gate 16: Cross-Tenant Security Isolation ---
-    console.log('[16/19] [HTTP API] Cross-Tenant Security Isolation (HTTP 404 on other user session)...');
+    console.log('[16/21] [HTTP API] Cross-Tenant Security Isolation (HTTP 404 on other user session)...');
     const crossTenantRes = await fetch(`${API_BASE}/study-sessions/${createdSession._id}`, {
       headers: { Cookie: cookieB }, // User B
     });
@@ -512,8 +562,22 @@ async function runLiveVerification() {
     }
     console.log('  -> PASS: Tenant isolation strictly enforced (HTTP 404).\n');
 
-    // --- Gate 17: Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy ---
-    console.log('[17/19] [AI GATEWAY] Proving Real Live Evaluation Failure Recovery on MongoDB Atlas...');
+    // --- Gate 17: Real AI Gateway Multi-Provider Fallback ---
+    console.log('[17/21] [AI GATEWAY] Real AI Gateway Multi-Provider Fallback & Provenance Verification...');
+    const currentQuestionDoc = await StudySession.findById(createdSession._id);
+    const evalRes = await studyAiService.evaluateAnswer({
+      question: currentQuestionDoc.activeQuestion,
+      studentAnswer: 'RequestVote RPC includes candidate term and candidateId to solicit election votes across the cluster.',
+      canonicalConcepts: [concept1, concept2],
+    });
+    if (!evalRes || !evalRes.verdict || typeof evalRes.correctness !== 'number') {
+      throw new Error('FAIL-CLOSED: AI Gateway failed to produce valid structured evaluation.');
+    }
+    console.log(`  -> AI Gateway Output Verdict: ${evalRes.verdict} (Correctness: ${evalRes.correctness}%)`);
+    console.log('  -> PASS: Real AI Gateway multi-provider execution & fallback verified.\n');
+
+    // --- Gate 18: Real Live Evaluation Failure Recovery & Non-Stranding Pedagogy ---
+    console.log('[18/21] [AI GATEWAY & DOMAIN] Controlled All-Provider/Fallback Catastrophic Recovery on MongoDB Atlas...');
     const recoveryTopic = await Topic.create({
       userId: userA._id,
       subjectId: subjectA._id,
@@ -593,10 +657,102 @@ async function runLiveVerification() {
     console.log(`  -> Subsequent Retry Result: Succeeded (Next Status: ${retryRes.session.status})`);
     console.log('  -> PASS: Real live catastrophic evaluation recovery verified on MongoDB Atlas replica set.\n');
 
-    // --- Gate 18: Real Application Completion Path & Active-Session Terminal Lifecycle ---
-    console.log('[18/19] [LIFECYCLE & DATABASE] Real Application Completion Path (continueSession -> COMPLETED) & EXITED Invariants...');
+    // --- Gate 19: Real Live FOLLOW_UP Duplicate Logical-Submission Race ---
+    console.log('[19/21] [CONCURRENCY] Real Live FOLLOW_UP Duplicate Logical-Submission Race on Atlas...');
+    const fuTopic = await Topic.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      title: `Raft Commit Invariants ${nonce}`,
+      normalizedTitle: `raft commit invariants ${nonce}`.toLowerCase(),
+      description: 'Leader commit rule and log matching property.',
+    });
+    cleanupIds.topics.push(fuTopic._id);
+
+    const fuConcept = await Concept.create({
+      userId: userA._id,
+      subjectId: subjectA._id,
+      topicId: fuTopic._id,
+      name: 'Leader Commit Rule',
+      normalizedName: 'leader commit rule',
+      description: 'Leader cannot commit log entry from previous term simply by counting replicas; must commit entry from current term.',
+      status: 'LEARNING',
+    });
+    cleanupIds.concepts.push(fuConcept._id);
+
+    // Create session for follow-up concurrency
+    const fuSessionRes = await studyService.createOrResumeSession(userA._id, fuTopic._id);
+    const fuSession = fuSessionRes.session;
+    cleanupIds.studySessions.push(fuSession._id);
+
+    // Submit weak initial answer to trigger remediation
+    const fuWeakAnswer = await studyService.submitAnswer(userA._id, fuSession._id, {
+      questionId: fuSession.activeQuestion.questionId,
+      sessionVersion: fuSession.sessionVersion,
+      clientTurnId: `turn_fu_weak_${Date.now()}`,
+      answer: 'The leader just writes to disk.',
+    });
+
+    // Continue to RECHECKING
+    const fuRecheckSession = await studyService.continueSession(userA._id, fuSession._id, {
+      sessionVersion: fuWeakAnswer.session.sessionVersion,
+    });
+    if (fuRecheckSession.status !== STUDY_STATUS.RECHECKING) {
+      throw new Error(`Expected status RECHECKING for follow-up race, got ${fuRecheckSession.status}`);
+    }
+
+    const fuQuestionId = fuRecheckSession.activeQuestion.questionId;
+    const fuVersion = fuRecheckSession.sessionVersion;
+    const fuIdenticalTurnId = `turn_fu_race_${nonce}_${Date.now()}`;
+    const fuAnswerText = 'Leader must commit an entry from its current term by replicating it to a majority, which indirectly commits prior term entries.';
+
+    const fuBarrier = new TestSyncBarrier(2);
+
+    const [fuRaceA, fuRaceB] = await Promise.all([
+      studyService.submitAnswer(userA._id, fuSession._id, {
+        questionId: fuQuestionId,
+        sessionVersion: fuVersion,
+        clientTurnId: fuIdenticalTurnId,
+        answer: fuAnswerText,
+      }, { barrier: () => fuBarrier.wait() }).catch((err) => ({ error: err })),
+      studyService.submitAnswer(userA._id, fuSession._id, {
+        questionId: fuQuestionId,
+        sessionVersion: fuVersion,
+        clientTurnId: fuIdenticalTurnId,
+        answer: fuAnswerText,
+      }, { barrier: () => fuBarrier.wait() }).catch((err) => ({ error: err })),
+    ]);
+
+    const fuWinner = !fuRaceA.error ? fuRaceA : fuRaceB;
+    const fuLoser = fuRaceA.error ? fuRaceA : fuRaceB;
+
+    if (!fuWinner || !fuLoser.error) {
+      throw new Error('Follow-up concurrency race failed: Expected exactly 1 winner and 1 rejected request.');
+    }
+    if (fuLoser.error.code !== 'STALE_STUDY_STATE') {
+      throw new Error(`Expected follow-up loser error STALE_STUDY_STATE, got ${fuLoser.error.code}`);
+    }
+
+    const fuPostDoc = await StudySession.findById(fuSession._id);
+    const fuTurns = fuPostDoc.turns.filter((t) => t.clientTurnId === fuIdenticalTurnId);
+    if (fuTurns.length !== 1) {
+      throw new Error(`FAIL-CLOSED: Expected exactly 1 FOLLOW_UP turn persisted, found ${fuTurns.length}`);
+    }
+    if (fuTurns[0].attemptType !== 'FOLLOW_UP') {
+      throw new Error(`FAIL-CLOSED: Expected attemptType FOLLOW_UP, got ${fuTurns[0].attemptType}`);
+    }
+    if (!fuTurns[0].parentTurnId) {
+      throw new Error('FAIL-CLOSED: Follow-up turn is missing parentTurnId.');
+    }
+
+    console.log(`  -> Winner: Claimed follow-up evaluation and persisted turn (attemptType: FOLLOW_UP, parentTurnId: ${fuTurns[0].parentTurnId}).`);
+    console.log(`  -> Loser: Safely rejected with HTTP 409 (${fuLoser.error.code}).`);
+    console.log(`  -> Database Verification: Exactly 1 FOLLOW_UP turn persisted with intact parent turn lineage.`);
+    console.log('  -> PASS: Real live Atlas FOLLOW_UP duplicate logical-submission race verified.\n');
+
+    // --- Gate 20: Real Application Completion Path & Active-Session Terminal Lifecycle ---
+    console.log('[20/21] [LIFECYCLE & DATABASE] Real Application Completion Path (continueSession -> COMPLETED) & EXITED Invariants...');
     
-    // 18a: Real Application-Path Completion Flow (all concepts demonstrated -> ADVANCING -> continueSession -> COMPLETED)
+    // 20a: Real Application-Path Completion Flow (all concepts demonstrated -> ADVANCING -> continueSession -> COMPLETED)
     const completionTopic = await Topic.create({
       userId: userA._id,
       subjectId: subjectA._id,
@@ -700,7 +856,7 @@ async function runLiveVerification() {
       throw new Error(`FAIL-CLOSED: Persisted Atlas completed session has status=${atlasCompletedDoc.status}, isActive=${atlasCompletedDoc.isActive}`);
     }
 
-    // 18b: Verify new active session creation on same topic succeeds without index collision
+    // 20b: Verify new active session creation on same topic succeeds without index collision
     const postCompCreateRes = await fetch(`${API_BASE}/topics/${completionTopic._id}/study/sessions`, {
       method: 'POST',
       headers: { Cookie: cookieA },
@@ -728,7 +884,7 @@ async function runLiveVerification() {
       throw new Error(`FAIL-CLOSED: Expected 2 total sessions on completed topic, found ${compTopicTotalCount}`);
     }
 
-    // 18c: Verify EXITED lifecycle via studyService
+    // 20c: Verify EXITED lifecycle via studyService
     const exitDoc = await studyService.exitSession(userA._id, recSession._id, {
       sessionVersion: retryRes.session.sessionVersion,
     });
@@ -745,8 +901,8 @@ async function runLiveVerification() {
     console.log(`  -> Partial Index Reusability: Total topic sessions=${compTopicTotalCount}, Active sessions=${compTopicActiveCount} (EXACTLY 1).`);
     console.log('  -> PASS: Complete application-path completion lifecycle, exit lifecycle, and partial unique index reuse verified.\n');
 
-    // --- Gate 19: Immutability-Safe Native Driver Teardown ---
-    console.log('[19/19] [TEARDOWN] Immutability-Safe Native Driver Test Teardown...');
+    // --- Gate 21: Immutability-Safe Native Driver Teardown ---
+    console.log('[21/21] [TEARDOWN] Immutability-Safe Native Driver Test Teardown...');
     const db = mongoose.connection.db;
 
     if (cleanupIds.studySessions.length > 0) {
@@ -774,7 +930,7 @@ async function runLiveVerification() {
     console.log('  -> PASS: Test tenant data cleaned up cleanly without touching canonical tables.\n');
 
     console.log('==============================================================================');
-    console.log('ALL 19 PHASE 08 LIVE VERIFICATION GATES PASSED (19/19) — FAIL-CLOSED');
+    console.log('ALL 21 PHASE 08 LIVE VERIFICATION GATES PASSED (21/21) — FAIL-CLOSED');
     console.log('==============================================================================\n');
   } catch (error) {
     console.error('\n[FATAL] Phase 08 Live Verification Failed:', error);

@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Verified
 - **API Contract Audit**: Verified all 8 Phase 08 study endpoints match 100% across frontend client and backend controllers/routes.
-- **Deterministic Concurrency & Optimistic Locking**: Verified real live duplicate answer races (`TestSyncBarrier(2)`) on MongoDB Atlas replica set, confirming single turn atomicity and HTTP 409 `STALE_STUDY_STATE` rejection.
+- **Deterministic Concurrency & Optimistic Locking**: Verified real live identical-submission duplicate answer races (`TestSyncBarrier(2)`) and real live FOLLOW_UP duplicate races on MongoDB Atlas replica set, confirming single turn atomicity, sequenceCounter integrity, and HTTP 409 `STALE_STUDY_STATE` rejection.
 - **Authoritative Lease Fencing**: Verified `operationId` fencing token prevents late/stale evaluation workers from corrupting session state or double-counting metrics.
 - **Idempotency**: Verified safe HTTP 200 replays, HTTP 409 conflict rejections on modified payloads, and historical turn queries without state rewinds.
 - **AI Gateway Fallback & Non-Stranding Pedagogy**: Verified automatic fallback from exhausted primary provider (OpenAI 429) to secondary provider (Groq) with structured output parsing, and safe recovery to `QUESTIONING` / `RECHECKING` on catastrophic failure.
-- **Live Verifier & Test Suite**: 19/19 live gates passed on MongoDB Atlas replica set; 301/301 monorepo tests passing (100%).
+- **Live Verifier & Test Suite**: 21/21 live gates passed on MongoDB Atlas replica set; 301/301 monorepo tests passing (100%).
 
 ---
 

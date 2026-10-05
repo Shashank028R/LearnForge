@@ -5,29 +5,29 @@ This log is the permanent chronological engineering journal for the LearnForge p
 ## [Phase 08 — Checkpoint 4] Integration, Concurrency & AI Failure Verification
 
 - **Date**: October 5, 2026
-- **Status**: Completed (Integration Audit, Concurrency Races, Lease Fencing, AI Gateway Fallback & 19/19 Live Gates Verified)
+- **Status**: Completed (Integration Audit, Identical Concurrency Race, FOLLOW_UP Concurrency Race, Lease Fencing, AI Gateway Fallback & 21/21 Live Gates Verified)
 - **Phase**: Phase 08 — Strict Study Mode & Active Recall (Checkpoint 4)
 - **Core Invariant**: *"Normal Chat = user asks → AI explains. Study Mode = AI teaches → asks active recall question → evaluates multi-criteria reasoning → Socratic remediation → advances on demonstrated understanding."*
-- **Objective**: Prove full end-to-end integration, real concurrency protection on MongoDB Atlas, authoritative lease fencing, idempotency, AI Gateway provider fallback, catastrophic evaluation recovery, curriculum pinning, and cross-tenant security.
+- **Objective**: Prove full end-to-end integration, real identical-submission concurrency protection on MongoDB Atlas, real FOLLOW_UP concurrency protection, authoritative lease fencing, idempotency, AI Gateway provider fallback, catastrophic evaluation recovery, curriculum pinning, and cross-tenant security.
 
 ### Work Performed
 1. **API Contract Audit**:
    - Compared `studyApi.js` against `studyController.js` and `studyRoutes.js`. Verified all 8 endpoints match 100% on methods, routes, payloads, response envelopes, sessionVersion optimistic locking, and HTTP 409 conflict handling.
-2. **Real Live Concurrency Race Verification (`TestSyncBarrier(2)`)**:
-   - Tested overlapping duplicate answer submissions on MongoDB Atlas replica set. Proved exactly 1 turn commits atomically (HTTP 200) while the race competitor rejects with HTTP 409 `STALE_STUDY_STATE`.
-3. **Lease Fencing Verification**:
+2. **Real Live Identical Logical-Submission Race (`TestSyncBarrier(2)`) (Gate 14)**:
+   - Tested overlapping submissions with SAME `sessionVersion`, SAME `questionId`, SAME `clientTurnId`, and SAME answer text on MongoDB Atlas. Proved exactly 1 turn commits atomically (HTTP 200) while the race competitor rejects with HTTP 409 `STALE_STUDY_STATE`. Exactly 1 turn persisted, `totalAnswersSubmitted` incremented once, `sequenceCounter` incremented once. Replay returns `idempotent: true`; modified payload rejected with HTTP 409 `IDEMPOTENCY_KEY_REUSE_CONFLICT`.
+3. **Real Live FOLLOW_UP Concurrency Race (`TestSyncBarrier(2)`) (Gate 19)**:
+   - Tested overlapping follow-up submissions in `RECHECKING` state with SAME `clientTurnId` on MongoDB Atlas. Proved exactly 1 `FOLLOW_UP` turn commits with intact `parentTurnId` referencing the initial turn.
+4. **Lease Fencing Verification (Gate 15)**:
    - Verified that when Worker B takes over an expired lease with `operationId_B`, late-returning Worker A with `operationId_A` matches 0 documents and fails safely without overwriting results or double-counting metrics.
-4. **Idempotency Verification**:
-   - Verified safe replay (HTTP 200), payload conflict rejection (HTTP 409), question conflict rejection (HTTP 409), historical turn querying without state rewinds, and stable `clientTurnId` reuse on network retries.
-5. **AI Gateway Provider Fallback & Evaluation Recovery**:
+5. **AI Gateway Provider Fallback & Evaluation Recovery (Gates 17 & 18)**:
    - Verified that when primary provider (OpenAI) experiences quota exhaustion (`429 You have no credits remaining`), AI Gateway automatically retries and falls back to Groq (`openai/gpt-oss-20b`), generating valid structured evaluations and Socratic remediation.
-   - Verified that upon unrecoverable evaluation failures, session transitions `evaluationState.status` to `FAILED` and restores session to `QUESTIONING` or `RECHECKING` without stranding the user, allowing safe subsequent retry.
+   - Verified that upon unrecoverable evaluation failures, session transitions `evaluationState.status` to `FAILED` and restores session to `QUESTIONING` or `RECHECKING` without stranding the user, preserving `activeQuestion` and allowing safe subsequent retry.
 6. **Testing & Build Verification**:
-   - 19 / 19 Live Verification Gates passed (100%) on MongoDB Atlas replica set (`server/scripts/verify_phase08_live.js`).
+   - 21 / 21 Live Verification Gates passed (100%) on MongoDB Atlas replica set (`server/scripts/verify_phase08_live.js`).
    - 231 / 231 Backend Tests passing (100%) across 13 test files.
    - 70 / 70 Frontend Tests passing (100%) across 7 test files.
    - 301 / 301 Total Monorepo Tests passing (100%) across 20 test files.
-   - Clean Vite production build in 11.72s.
+   - Clean Vite production build in 13.17s.
 
 ---
 

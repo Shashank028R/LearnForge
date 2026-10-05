@@ -351,9 +351,15 @@ In accordance with LearnForge product principles:
 
 ## 27. Phase 08 Checkpoint 4 — Integration, Concurrency & AI Failure Verification Report
 
-### A. Executive Summary & Status
-- **Checkpoint 4 Status**: **COMPLETE & VERIFIED**
-- **Core Objective**: Verify the full end-to-end integration, deterministic concurrency safety, lease fencing, idempotency, sessionVersion optimistic locking, AI Gateway fallback chains, Socratic remediation loops, catastrophic evaluation recovery, syllabus pinning, and cross-tenant security across the combined frontend, backend, MongoDB Atlas replica set, and AI Gateway.
+### A. Executive Summary & Declarations
+- **Phase 08 Checkpoint 1 remains APPROVED & SEALED.**
+- **Phase 08 Checkpoint 2 remains APPROVED & SEALED.**
+- **Phase 08 Checkpoint 3 remains APPROVED & SEALED.**
+- **Phase 08 Checkpoint 4 remains ACTIVE until all verification evidence is complete.**
+- **Phase 09 NOT STARTED.**
+- **Phase 10 NOT STARTED.**
+- **Strictly NO TypeScript / TSX introduced.**
+- **Strictly NO note mutations or long-term mastery engine scope creep.**
 
 ### B. API Contract Integration Audit (Step 2)
 The frontend API client ([studyApi.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/client/src/api/studyApi.js)) was audited against the authoritative backend controller ([studyController.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/controllers/studyController.js)) and routes ([studyRoutes.js](file:///c:/Users/shash/OneDrive/Desktop/LearnForge/server/src/routes/studyRoutes.js)).
@@ -369,75 +375,96 @@ The frontend API client ([studyApi.js](file:///c:/Users/shash/OneDrive/Desktop/L
 | `/study-sessions/:id/resume` | POST | `studyApi.resumeSession(id, data)` | `{ sessionVersion }` | `{ success: true, data: session }` | **MATCH (200)** |
 | `/study-sessions/:id/exit` | POST | `studyApi.exitSession(id, data)` | `{ sessionVersion }` | `{ success: true, data: session }` | **MATCH (200)** |
 
-**Contract Audit Outcome**: **8 / 8 Endpoints Match 100%**. Zero discrepancies in request payloads, response envelopes, HTTP status codes, or error handling.
+**Contract Audit Outcome**: **8 / 8 Endpoints Match 100%**. Zero discrepancies in routes, request payloads, response envelopes, HTTP status codes, or error handling.
 
 ### C. Concurrency, Idempotency & Lease Fencing Results (Steps 5, 6, 7, 8)
-1. **Real Live Duplicate Answer Race (`TestSyncBarrier(2)`)**:
-   - Two simultaneous answer submissions with the exact same `sessionVersion` and question ID entered the transaction barrier concurrently on MongoDB Atlas.
-   - **Result**: Request A atomically committed the turn (HTTP 200); Request B was rejected with HTTP 409 `STALE_STUDY_STATE`. Exactly 1 turn persisted, zero duplicate sequences, zero metric corruption.
-2. **Authoritative Lease Fencing (`operationId`)**:
-   - Worker A initiated evaluation under `operationId_A`.
-   - Worker B simulated lease takeover on expired timeout, acquiring `operationId_B` and committing the evaluation.
+1. **Real Live Identical Logical-Submission Race (`TestSyncBarrier(2)`) (Gate 14)**:
+   - Two simultaneous requests with identical `sessionVersion`, identical `questionId`, SAME `clientTurnId`, and SAME answer text entered the transaction barrier concurrently on MongoDB Atlas.
+   - **Result**: Request A atomically committed the turn (HTTP 200); Request B caught the version advancement and safely failed closed with HTTP 409 `STALE_STUDY_STATE`.
+   - **Database Assertions**: Exactly 1 turn persisted with `clientTurnId`, `totalAnswersSubmitted` incremented by exactly 1, `sequenceCounter` incremented by exactly 1.
+   - **Replay Assertions**: Subsequent replay with identical payload returned `idempotent: true` (HTTP 200); subsequent call with modified answer returned HTTP 409 `IDEMPOTENCY_KEY_REUSE_CONFLICT`.
+2. **Real Live FOLLOW_UP Duplicate Logical-Submission Race (`TestSyncBarrier(2)`) (Gate 19)**:
+   - Two simultaneous follow-up requests with identical `sessionVersion`, follow-up `questionId`, SAME `clientTurnId`, and SAME follow-up answer text synchronized at the barrier on Atlas.
+   - **Result**: Exactly 1 `FOLLOW_UP` turn persisted with `attemptType === 'FOLLOW_UP'` and `parentTurnId` referencing the initial turn. Loser rejected with HTTP 409 `STALE_STUDY_STATE`.
+3. **Authoritative Lease Fencing (`operationId`) (Gate 15)**:
+   - Worker A claimed `operationId_A`. Worker B took over expired lease with `operationId_B` and committed the evaluation.
    - When Worker A returned late with `operationId_A`, its atomic write conditioned on `operationId_A` matched **0 documents**.
-   - **Result**: Stale Worker A discarded cleanly without overwriting Worker B or double-counting metrics.
-3. **Idempotency Invariants**:
-   - **Rule 1 (Safe Replay)**: Same `clientTurnId` + same question + same answer $\rightarrow$ HTTP 200 safe replay returning cached turn.
-   - **Rule 2 (Payload Conflict)**: Same `clientTurnId` + different answer $\rightarrow$ HTTP 409 `IDEMPOTENCY_KEY_REUSE_CONFLICT`.
-   - **Rule 3 (Question Conflict)**: Same `clientTurnId` + different question $\rightarrow$ HTTP 409 `IDEMPOTENCY_KEY_REUSE_CONFLICT`.
-   - **Rule 4 (Historical Query)**: Replaying historical `clientTurnId` after subsequent turns exist returns historical record without rewinding session.
-   - **Rule 5 (Network Retry)**: Client reuses stable `clientTurnId` ref during transport retry.
+   - **Result**: Stale Worker A discarded cleanly without corrupting Worker B or double-counting metrics.
 4. **SessionVersion Optimistic Locking**:
    - Every mutation checks and increments `sessionVersion`. Stale mutations with version $N$ when server is at $N+1$ reject with HTTP 409 `STALE_STUDY_STATE`.
 
-### D. AI Failure, Fallback & Recovery Results (Steps 9, 10, 11, 12)
-1. **AI Provider Fallback**:
+### D. AI Failure, Fallback & Recovery Results (Steps 9, 10, 11, 12, 17, 18)
+1. **Real AI Provider Fallback (Gate 17)**:
    - When primary provider OpenAI encountered quota exhaustion (`429 You have no credits remaining`), AI Gateway automatically retried and cleanly fell back to secondary provider Groq (`openai/gpt-oss-20b`).
    - Structured JSON response was parsed and validated without student interruption.
-2. **Catastrophic Evaluation Recovery & Non-Stranding Pedagogy**:
+2. **Controlled All-Provider/Fallback Catastrophic Recovery (Gate 18)**:
    - When evaluation encounters unrecoverable AI provider and fallback failures, `evaluationState.status` transitions to `'FAILED'`, records `lastError`, and safely restores session to `QUESTIONING` (for initial attempt) or `RECHECKING` (for follow-up attempt).
    - The active question and draft context are preserved; the session is never stranded in `EVALUATING`; subsequent student retry succeeds cleanly.
 3. **Pause/Evaluation Invariant**:
    - Calling `POST /pause` while `EVALUATING` is strictly rejected with HTTP 409 `CANNOT_PAUSE_DURING_EVALUATION`.
-4. **Server-Authoritative Concept Grounding**:
+4. **Server-Authoritative Concept Grounding (Gate 7)**:
    - Candidate model reasoning signals are validated against canonical topic concepts via `groundExpectedReasoningSignals`. Hallucinated or adversarial criteria are filtered out and replaced by authoritative signals synthesized from concept definitions.
 
 ### E. Live Integration & Automated Test Metrics (Steps 18, 19)
 
 | Verification Suite | Scope | Target | Gates / Tests | Outcome |
 | :--- | :--- | :--- | :---: | :---: |
-| **Live Verifier** (`verify_phase08_live.js`) | Fail-Closed Integration | MongoDB Atlas Replica Set + Live AI Gateway | **19 / 19 Gates** | **100% PASSED** |
+| **Live Verifier** (`verify_phase08_live.js`) | Fail-Closed Integration | MongoDB Atlas Replica Set + Live AI Gateway | **21 / 21 Gates** | **100% PASSED** |
 | **Backend Test Suite** (`server/tests/`) | Unit & Domain Service | In-Memory / Mongoose Mock | **231 / 231 Tests** | **100% PASSED** |
 | **Frontend Test Suite** (`client/src/`) | Component & Integration | Vitest / React Testing Library | **70 / 70 Tests** | **100% PASSED** |
 | **Total Monorepo Suite** | Full System | Client + Server | **301 / 301 Tests** | **100% PASSED** |
-| **Production Build** | Client Bundle | Vite v6.4.3 | Clean Bundle | **SUCCESS (11.72s)** |
+| **Production Build** | Client Bundle | Vite v6.4.3 | Clean Bundle | **SUCCESS (13.17s)** |
 
-### F. Phase 08 Live Verification Gate Matrix (19/19 Passed)
-- `[1/19]` `[HTTP API]` Health & Database Connectivity Check $\rightarrow$ **PASS**
-- `[2/19]` `[DATABASE]` MongoDB Atlas Replica Set Connection $\rightarrow$ **PASS**
-- `[3/19]` `[DATABASE]` Multi-Document Transaction Support & Partial Unique Index (`{ isActive: true }`) Assertion $\rightarrow$ **PASS**
-- `[4/19]` `[DATABASE]` Isolated Test Tenant & Canonical Knowledge Setup $\rightarrow$ **PASS**
-- `[5/19]` `[DOMAIN-SERVICE & DATABASE]` Real Live Concurrent Active-Session Creation Race (`TestSyncBarrier(2)`) $\rightarrow$ **PASS**
-- `[6/19]` `[DOMAIN-SERVICE]` Verify Session Ownership & Curriculum Pinning $\rightarrow$ **PASS**
-- `[7/19]` `[AI GATEWAY & DOMAIN]` Authoritative Adversarial Reasoning-Signal Validation & Whitelist Grounding $\rightarrow$ **PASS**
-- `[8/19]` `[HTTP API]` Submit Incomplete/Weak Answer (POST `/answer`) $\rightarrow$ **PASS**
-- `[9/19]` `[AI GATEWAY]` Multi-Criteria Answer Evaluation (`PARTIALLY_CORRECT`) $\rightarrow$ **PASS**
-- `[10/19]` `[PEDAGOGY]` Socratic Remediation Loop (`status: REMEDIATING`) $\rightarrow$ **PASS**
-- `[11/19]` `[HTTP API]` Advance to `RECHECKING` & Submit Socratic Follow-Up Answer $\rightarrow$ **PASS**
-- `[12/19]` `[PEDAGOGY]` Demonstrated Understanding & Advancement (`CORRECT` $\rightarrow$ `ADVANCING`) $\rightarrow$ **PASS**
-- `[13/19]` `[HTTP API]` Advance Already-Evaluated Session to Next Question (POST `/continue`) $\rightarrow$ **PASS**
-- `[14/19]` `[DOMAIN-SERVICE CONCURRENCY]` Proving Real Live Concurrency: Duplicate Answer Submission Race $\rightarrow$ **PASS**
-- `[15/19]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection $\rightarrow$ **PASS**
-- `[16/19]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404) $\rightarrow$ **PASS**
-- `[17/19]` `[AI GATEWAY]` Real Live Evaluation Failure Recovery on MongoDB Atlas $\rightarrow$ **PASS**
-- `[18/19]` `[LIFECYCLE & DATABASE]` Real Application Completion Path (`continueSession` $\rightarrow$ `COMPLETED`, `isActive: false`) and Exited Invariants $\rightarrow$ **PASS**
-- `[19/19]` `[TEARDOWN]` Immutability-Safe Native Driver Teardown $\rightarrow$ **PASS**
+### F. Phase 08 Live Verification Gate Matrix (21/21 Passed)
+- `[1/21]` `[HTTP API]` Health & Database Connectivity Check $\rightarrow$ **PASS**
+- `[2/21]` `[DATABASE]` MongoDB Atlas Replica Set Connection $\rightarrow$ **PASS**
+- `[3/21]` `[DATABASE]` Multi-Document Transaction Support & Partial Unique Index (`{ isActive: true }`) Assertion $\rightarrow$ **PASS**
+- `[4/21]` `[DATABASE]` Isolated Test Tenant & Canonical Knowledge Setup $\rightarrow$ **PASS**
+- `[5/21]` `[DOMAIN-SERVICE & DATABASE]` Real Live Concurrent Active-Session Creation Race (`TestSyncBarrier(2)`) $\rightarrow$ **PASS**
+- `[6/21]` `[DOMAIN-SERVICE]` Verify Session Ownership & Curriculum Pinning $\rightarrow$ **PASS**
+- `[7/21]` `[AI GATEWAY & DOMAIN]` Authoritative Adversarial Reasoning-Signal Validation & Whitelist Grounding $\rightarrow$ **PASS**
+- `[8/21]` `[HTTP API]` Submit Incomplete/Weak Answer (POST `/answer`) $\rightarrow$ **PASS**
+- `[9/21]` `[AI GATEWAY]` Multi-Criteria Answer Evaluation (`PARTIALLY_CORRECT`) $\rightarrow$ **PASS**
+- `[10/21]` `[PEDAGOGY]` Socratic Remediation Loop (`status: REMEDIATING`) $\rightarrow$ **PASS**
+- `[11/21]` `[HTTP API]` Advance to `RECHECKING` & Submit Socratic Follow-Up Answer $\rightarrow$ **PASS**
+- `[12/21]` `[PEDAGOGY]` Demonstrated Understanding & Advancement (`CORRECT` $\rightarrow$ `ADVANCING`) $\rightarrow$ **PASS**
+- `[13/21]` `[HTTP API]` Advance Already-Evaluated Session to Next Question (POST `/continue`) $\rightarrow$ **PASS**
+- `[14/21]` `[CONCURRENCY & IDEMPOTENCY]` Real Live Identical Logical-Submission Race on Atlas (`TestSyncBarrier(2)`) $\rightarrow$ **PASS**
+- `[15/21]` `[LEASE FENCING & RECOVERY]` Authoritative Lease Takeover & Stale Worker Rejection $\rightarrow$ **PASS**
+- `[16/21]` `[HTTP API]` Cross-Tenant Security Isolation (HTTP 404) $\rightarrow$ **PASS**
+- `[17/21]` `[AI GATEWAY]` Real AI Gateway Multi-Provider Fallback & Provenance Verification $\rightarrow$ **PASS**
+- `[18/21]` `[AI GATEWAY & DOMAIN]` Controlled All-Provider/Fallback Catastrophic Recovery on MongoDB Atlas $\rightarrow$ **PASS**
+- `[19/21]` `[CONCURRENCY]` Real Live FOLLOW_UP Duplicate Logical-Submission Race on Atlas (`TestSyncBarrier(2)`) $\rightarrow$ **PASS**
+- `[20/21]` `[LIFECYCLE & DATABASE]` Real Application Completion Path (`continueSession` $\rightarrow$ `COMPLETED`, `isActive: false`) and Exited Invariants $\rightarrow$ **PASS**
+- `[21/21]` `[TEARDOWN]` Immutability-Safe Native Driver Teardown $\rightarrow$ **PASS**
 
-### G. Scope Boundaries & Mandatory Declarations
-- **Phase 08 Checkpoint 1 remains APPROVED & SEALED.**
-- **Phase 08 Checkpoint 2 remains APPROVED & SEALED.**
-- **Phase 08 Checkpoint 3 remains APPROVED & SEALED.**
-- **Phase 08 Checkpoint 4 is the current active checkpoint.**
-- **Phase 09 NOT STARTED.**
-- **Phase 10 NOT STARTED.**
+### G. Browser Verification Matrix (Step 17)
+
+| # | Scenario | Status | Notes |
+| :-: | :--- | :---: | :--- |
+| **1** | Authenticated navigation | **PASS** | Navigates from Subjects $\rightarrow$ Topic detail $\rightarrow$ Study Mode launch. |
+| **2** | Study launch | **PASS** | Direct URL and button trigger session initialization / load. |
+| **3** | Real active question | **PASS** | QuestionCard renders active recall prompt, concepts, and badges. |
+| **4** | Real answer submission | **PASS** | Submits answer, disables button, transitions to evaluating state. |
+| **5** | Real structured evaluation | **PASS** | EvaluationCard renders verdict, percentage scores, tutor analysis. |
+| **6** | Remediation | **PASS** | RemediationCard presents tutor guidance, missing concepts, probe. |
+| **7** | Follow-up | **PASS** | "Answer Follow-Up Question" transitions to `RECHECKING` state. |
+| **8** | Advancement | **PASS** | "Continue to Next Question" triggers `POST /continue` to next prompt. |
+| **9** | Pause | **PASS** | Pause action updates session to `PAUSED` and displays resume view. |
+| **10** | Resume | **PASS** | Resume action restores exact prior state (`QUESTIONING`/`RECHECKING`). |
+| **11** | Refresh during active QUESTIONING | **PASS** | Authoritative state fetched from backend; question preserved. |
+| **12** | Refresh during REMEDIATING | **PASS** | Socratic remediation card restored cleanly from backend. |
+| **13** | Refresh during RECHECKING | **PASS** | Follow-up question state restored without losing context. |
+| **14** | Duplicate submit protection | **PASS** | Button disabled immediately on submit; prevents double click. |
+| **15** | 409 stale-session reconciliation | **PASS** | Reconciliation alert displayed; fetches latest sessionVersion. |
+| **16** | Draft preservation after 409 | **PASS** | Student draft textarea preserves typed text for active question. |
+| **17** | Evaluation failure recovery | **PASS** | `EVALUATION_FAILED_RETRY_SAFE` alert rendered; allows clean retry. |
+| **18** | Turn history | **PASS** | Collapsible drawer renders all past turns and follow-up links. |
+| **19** | COMPLETED | **PASS** | Renders genuine session metrics when curriculum exhausted. |
+| **20** | EXITED | **PASS** | Confirms exit modal and renders terminal sealed state. |
+| **21** | Keyboard navigation / Ctrl+Enter | **PASS** | `Ctrl+Enter` and `Cmd+Enter` trigger form submission. |
+| **22** | Narrow responsive viewport | **PASS** | Verified responsive design on mobile dimensions (390x844). |
+| **23** | Multi-tab stale mutation scenario | **PASS** | Stale tab catches HTTP 409 and reconciles latest authoritative state. |
+
 
 
