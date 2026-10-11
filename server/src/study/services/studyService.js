@@ -476,7 +476,7 @@ export class StudyService {
 
       if (res.matchedCount > 0) {
         // Project turn into Learning State within the exact same atomic transaction
-        await learningStateService.projectTurnRealtime(userId, sessionId, newTurn, { session: dbSession });
+        await learningStateService.projectTurnRealtime(userId, sessionId, newTurn, { session: dbSession, topicId: session.topicId });
       }
 
       return res;

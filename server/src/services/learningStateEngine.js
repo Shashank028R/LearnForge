@@ -35,6 +35,18 @@ export function calculateDecayedScore(masteryScore, lastDemonstratedAt, evaluati
 }
 
 /**
+ * Calculates retention probability (retrievability R in [0, 1])
+ */
+export function calculateRetrievability(lastDemonstratedAt, evaluationTime = new Date(), stabilityDays = 14) {
+  if (!lastDemonstratedAt) return 0;
+  const evalMs = evaluationTime instanceof Date ? evaluationTime.getTime() : new Date(evaluationTime).getTime();
+  const demMs = lastDemonstratedAt instanceof Date ? lastDemonstratedAt.getTime() : new Date(lastDemonstratedAt).getTime();
+  const elapsedDays = Math.max(0, (evalMs - demMs) / 86400000);
+  const stab = Math.max(1, stabilityDays);
+  return Math.exp(-elapsedDays / stab);
+}
+
+/**
  * Bounded score adjustment formulas
  */
 export function calculateScoreGain(currentScore, baseGain) {
@@ -108,11 +120,6 @@ export function createInitialConceptLearningState(conceptId, userId, subjectId, 
 
 /**
  * Pure transition engine: applies a single completed StudyTurn to a ConceptLearningState.
- *
- * @param {Object} currentState - Current state of concept
- * @param {Object} turn - Completed StudyTurn subdocument
- * @param {Object} options - { prerequisites: ObjectId[], prerequisiteStatesMap: Map, evaluationTime: Date }
- * @returns {Object} New immutable ConceptLearningState object
  */
 export function applyTurnToConceptState(currentState, turn, options = {}) {
   const evaluationTime = options.evaluationTime || turn.answeredAt || new Date();
@@ -404,15 +411,8 @@ export function sortTargetConceptsByDependency(targetConceptIds = [], conceptPre
 
 /**
  * Pure deterministic projection over an evidence sequence E.
- *
- * @param {Map<string, Object>} initialStatesMap - Map of conceptId -> ConceptLearningState
- * @param {Array<Object>} turns - Array of completed StudyTurn objects
- * @param {Map<string, ObjectId[]>} conceptPrerequisitesMap - Map of conceptId -> prerequisites
- * @param {Date|number} evaluationTime - Evaluation timestamp for deterministic decay
- * @returns {Map<string, Object>} Recomputed concept states map
  */
 export function projectEvidenceHistory(initialStatesMap, turns = [], conceptPrerequisitesMap = new Map(), evaluationTime = new Date()) {
-  // Deterministic total ordering: answeredAt ascending, then _id.toString() ascending
   const sortedTurns = [...turns].sort((a, b) => {
     const timeA = a.answeredAt ? new Date(a.answeredAt).getTime() : 0;
     const timeB = b.answeredAt ? new Date(b.answeredAt).getTime() : 0;
@@ -434,7 +434,6 @@ export function projectEvidenceHistory(initialStatesMap, turns = [], conceptPrer
       ? turn.question.targetConceptIds
       : [];
 
-    // Deterministically order target concepts by dependency closure and tie-breaker
     const targetIds = sortTargetConceptsByDependency(rawTargetIds, conceptPrerequisitesMap);
 
     for (const targetId of targetIds) {
@@ -453,10 +452,8 @@ export function projectEvidenceHistory(initialStatesMap, turns = [], conceptPrer
     }
   }
 
-  // Final pass to calculate decayedScore for all concepts at the exact requested evaluationTime
   for (const [strId, state] of statesMap.entries()) {
     state.decayedScore = calculateDecayedScore(state.masteryScore, state.lastDemonstratedAt, evaluationTime);
-    // Refresh prerequisite gating warnings
     const prereqs = conceptPrerequisitesMap.get(strId) || [];
     const check = checkPrerequisitesSatisfied(prereqs, statesMap);
     state.prerequisiteWarning = !check.satisfied;
@@ -464,4 +461,265 @@ export function projectEvidenceHistory(initialStatesMap, turns = [], conceptPrer
   }
 
   return statesMap;
+}
+
+// ============================================================================
+// PHASE 09 CHECKPOINT 3: GLOBALLY TRANSITIVE PREREQUISITE & PRIORITY ENGINE
+// ============================================================================
+
+/**
+ * Computes subject-wide transitive prerequisite metrics for all canonical concepts.
+ *
+ * @param {Array<Object>} subjectConcepts - All canonical Concept documents in subject
+ * @param {Map<string, Object>|Array<Object>} userLearningStates - Persisted ConceptLearningStates
+ * @returns {Map<string, Object>} conceptId -> { unmasteredPrereqDepth, unmasteredDownstreamCount, isRootBlocker, isBlocked, isMastered }
+ */
+export function findSubjectTransitivePrerequisiteMetrics(subjectConcepts = [], userLearningStates = new Map()) {
+  const statesMap = userLearningStates instanceof Map
+    ? userLearningStates
+    : new Map((userLearningStates || []).map((s) => [s.conceptId ? s.conceptId.toString() : s._id.toString(), s]));
+
+  const conceptMap = new Map();
+  const directPrereqMap = new Map();
+  const directDependentsMap = new Map();
+
+  for (const c of subjectConcepts) {
+    const cId = c._id.toString();
+    conceptMap.set(cId, c);
+    const prereqs = Array.isArray(c.prerequisites) ? c.prerequisites.map((p) => p.toString()) : [];
+    directPrereqMap.set(cId, prereqs);
+    if (!directDependentsMap.has(cId)) {
+      directDependentsMap.set(cId, []);
+    }
+  }
+
+  // Build reverse adjacency graph (dependents)
+  for (const [cId, prereqs] of directPrereqMap.entries()) {
+    for (const pId of prereqs) {
+      if (!directDependentsMap.has(pId)) {
+        directDependentsMap.set(pId, []);
+      }
+      directDependentsMap.get(pId).push(cId);
+    }
+  }
+
+  // Helper to check if a concept is mastered (masteryScore >= 70 / MASTERED status)
+  const isConceptMasteredScore = (cId) => {
+    const state = statesMap.get(cId);
+    if (!state) return false;
+    if (state.masteryStatus === 'MASTERED') return true;
+    return typeof state.masteryScore === 'number' && state.masteryScore >= 70;
+  };
+
+  const metricsMap = new Map();
+
+  // 1. Calculate unmasteredPrereqDepth (longest unmastered path leading to cId)
+  const computePrereqDepth = (cId, visited = new Set()) => {
+    if (visited.has(cId)) return 0; // Cycle defensive
+    visited.add(cId);
+
+    const prereqs = directPrereqMap.get(cId) || [];
+    let maxDepth = 0;
+
+    for (const pId of prereqs) {
+      if (!isConceptMasteredScore(pId)) {
+        const pDepth = 1 + computePrereqDepth(pId, new Set(visited));
+        if (pDepth > maxDepth) maxDepth = pDepth;
+      }
+    }
+
+    return maxDepth;
+  };
+
+  // 2. Calculate unmasteredDownstreamCount (distinct unmastered reachable concepts in downstream DAG)
+  const computeDownstreamCount = (cId) => {
+    const reachableUnmastered = new Set();
+    const queue = [...(directDependentsMap.get(cId) || [])];
+    const visited = new Set(queue);
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!isConceptMasteredScore(current)) {
+        reachableUnmastered.add(current);
+      }
+      const nextDeps = directDependentsMap.get(current) || [];
+      for (const n of nextDeps) {
+        if (!visited.has(n)) {
+          visited.add(n);
+          queue.push(n);
+        }
+      }
+    }
+
+    return reachableUnmastered.size;
+  };
+
+  for (const c of subjectConcepts) {
+    const cId = c._id.toString();
+    const isMastered = isConceptMasteredScore(cId);
+    const unmasteredPrereqDepth = computePrereqDepth(cId);
+    const unmasteredDownstreamCount = computeDownstreamCount(cId);
+    const isRootBlocker = !isMastered && unmasteredPrereqDepth === 0 && unmasteredDownstreamCount > 0;
+    const isBlocked = !isMastered && unmasteredPrereqDepth > 0;
+
+    metricsMap.set(cId, {
+      conceptId: c._id,
+      isMastered,
+      unmasteredPrereqDepth,
+      unmasteredDownstreamCount,
+      isRootBlocker,
+      isBlocked,
+    });
+  }
+
+  return metricsMap;
+}
+
+/**
+ * Computes bounded study priority score [0, 1000] across 6 normalized factors.
+ */
+export function calculateConceptPriorityScore(concept, state, prereqMetrics = {}, evaluationTime = new Date()) {
+  const metrics = prereqMetrics || {};
+  const downstreamCount = metrics.unmasteredDownstreamCount || 0;
+
+  // Factor 1: Prerequisite Urgency (0..300)
+  const fPrereq = Math.min(300, 60 * downstreamCount);
+
+  // Factor 2: Status Urgency (0..250)
+  const status = state?.masteryStatus || 'NOT_STARTED';
+  let fStatus = 0;
+  if (status === 'NOT_STARTED') fStatus = 250;
+  else if (status === 'NEEDS_REVIEW' || status === 'STRUGGLING') fStatus = 200;
+  else if (status === 'LEARNING' || status === 'INTRODUCED') fStatus = 150;
+  else if (status === 'UNDERSTOOD' || status === 'PRACTICING') fStatus = 100;
+  else if (status === 'MASTERED') fStatus = 0;
+
+  // Factor 3: Misconception Urgency (0..200)
+  const activeMisconceptions = Array.isArray(state?.activeMisconceptions) ? state.activeMisconceptions.length : 0;
+  const fMisconception = Math.min(200, 100 * activeMisconceptions);
+
+  // Factor 4: Decay Urgency (0..150)
+  const mastery = typeof state?.masteryScore === 'number' ? state.masteryScore : 0;
+  const decayed = typeof state?.decayedScore === 'number' ? state.decayedScore : calculateDecayedScore(mastery, state?.lastDemonstratedAt, evaluationTime);
+  const decayLoss = Math.max(0, mastery - decayed);
+  const fDecay = Math.min(150, Math.round(150 * (decayLoss / 100)));
+
+  // Factor 5: Failure Urgency (0..90)
+  const consecutiveFailures = state?.consecutiveFailures || 0;
+  const fFailure = Math.min(90, 30 * consecutiveFailures);
+
+  // Factor 6: Recency Urgency (0..50)
+  let fRecency = 0;
+  if (!state?.lastDemonstratedAt) {
+    fRecency = 50;
+  } else {
+    const evalMs = evaluationTime instanceof Date ? evaluationTime.getTime() : new Date(evaluationTime).getTime();
+    const demMs = state.lastDemonstratedAt instanceof Date ? state.lastDemonstratedAt.getTime() : new Date(state.lastDemonstratedAt).getTime();
+    const elapsedDays = (evalMs - demMs) / 86400000;
+    if (elapsedDays > 7) {
+      fRecency = Math.min(50, Math.round(50 * Math.min(1, (elapsedDays - 7) / 21)));
+    }
+  }
+
+  const rawScore = fPrereq + fStatus + fMisconception + fDecay + fFailure + fRecency;
+  const clampedScore = Math.max(0, Math.min(1000, Math.round(rawScore)));
+
+  return {
+    rawScore,
+    priorityScore: clampedScore,
+    factors: {
+      fPrereq,
+      fStatus,
+      fMisconception,
+      fDecay,
+      fFailure,
+      fRecency,
+    },
+  };
+}
+
+/**
+ * Determines ranking tier (1: Root Blocker, 2: Active Unblocked, 3: Gated/Blocked, 4: Mastered Maintenance)
+ */
+export function determineRankingTier(state, prereqMetrics = {}) {
+  const mastery = typeof state?.masteryScore === 'number' ? state.masteryScore : 0;
+  const isMastered = state?.masteryStatus === 'MASTERED' || mastery >= 70;
+  const depth = prereqMetrics.unmasteredPrereqDepth || 0;
+  const downstreamCount = prereqMetrics.unmasteredDownstreamCount || 0;
+
+  if (isMastered) {
+    return 4; // Tier 4: Mastered Maintenance
+  }
+  if (depth === 0 && downstreamCount > 0) {
+    return 1; // Tier 1: Root Prerequisite Blocker
+  }
+  if (depth === 0 && downstreamCount === 0) {
+    return 2; // Tier 2: Unblocked Active Candidate
+  }
+  return 3; // Tier 3: Gated / Blocked Candidate
+}
+
+/**
+ * Generates the globally transitive, monotonic 6-element ranking key tuple.
+ */
+export function generateGlobalRankingKey(concept, state, priorityScore, prereqMetrics = {}) {
+  const tier = determineRankingTier(state, prereqMetrics);
+  const depth = prereqMetrics.unmasteredPrereqDepth || 0;
+  const decayedScore = typeof state?.decayedScore === 'number' ? state.decayedScore : (state?.masteryScore || 0);
+  const consecutiveFailures = state?.consecutiveFailures || 0;
+  const idStr = concept._id ? concept._id.toString() : '';
+
+  return {
+    tier,
+    depth,
+    negPriorityScore: -priorityScore,
+    decayedScore,
+    negFailures: -consecutiveFailures,
+    idStr,
+  };
+}
+
+/**
+ * Lexicographical comparator using the 6-element ranking tuple.
+ */
+export function compareConceptsByRankingKey(a, b) {
+  const kA = a.rankingKey;
+  const kB = b.rankingKey;
+
+  // 1. Tier ascending (Tier 1 < Tier 2 < Tier 3 < Tier 4)
+  if (kA.tier !== kB.tier) return kA.tier - kB.tier;
+
+  // 2. Prerequisite depth ascending (closer to unblocking first)
+  if (kA.depth !== kB.depth) return kA.depth - kB.depth;
+
+  // 3. Priority score descending (higher priority first => negPriorityScore ascending)
+  if (kA.negPriorityScore !== kB.negPriorityScore) return kA.negPriorityScore - kB.negPriorityScore;
+
+  // 4. Decayed score ascending (lower retention first)
+  if (kA.decayedScore !== kB.decayedScore) return kA.decayedScore - kB.decayedScore;
+
+  // 5. Consecutive failures descending (more failures first => negFailures ascending)
+  if (kA.negFailures !== kB.negFailures) return kA.negFailures - kB.negFailures;
+
+  // 6. Deterministic tie-breaker on concept ID string
+  return kA.idStr.localeCompare(kB.idStr);
+}
+
+/**
+ * Generates human-readable deterministic recommendation reason code.
+ */
+export function generatePriorityReason(concept, state, priorityScore, prereqMetrics = {}) {
+  const tier = determineRankingTier(state, prereqMetrics);
+  const activeMisconceptions = Array.isArray(state?.activeMisconceptions) ? state.activeMisconceptions.length : 0;
+  const consecutiveFailures = state?.consecutiveFailures || 0;
+  const mastery = state?.masteryScore || 0;
+  const decayed = typeof state?.decayedScore === 'number' ? state.decayedScore : mastery;
+
+  if (tier === 1) return 'ROOT_PREREQUISITE_BLOCKER';
+  if (activeMisconceptions > 0) return 'ACTIVE_MISCONCEPTION';
+  if (consecutiveFailures >= 2) return 'RECENT_FAILURE';
+  if (state?.masteryStatus === 'NOT_STARTED') return 'NEW_CONCEPT_INTRODUCTION';
+  if (mastery - decayed >= 25) return 'FORGETTING_RISK';
+  if (tier === 4) return 'MAINTENANCE_REVIEW';
+  return 'PRACTICE_DUE';
 }

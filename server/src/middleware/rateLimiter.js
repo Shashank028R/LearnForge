@@ -70,3 +70,21 @@ export const aiMessageRateLimiter = rateLimit({
   skip: (req) => (config.isTest || config.isDevelopment) && req.headers['x-bypass-rate-limit'] === 'test-bypass',
   handler: createRateLimitHandler('AI_RATE_LIMITED', 'Too many AI requests. Please slow down and try again in a moment.'),
 });
+
+/**
+ * Rate limiter for learning state topic rebuilds (Phase 09 Checkpoint 3):
+ * Max 3 requests per 60 seconds per user.
+ */
+export const rebuildRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: config.isTest ? 100 : 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { default: false },
+  keyGenerator: (req) => (req.user && req.user._id ? req.user._id.toString() : req.ip),
+  skip: (req) => config.isTest && req.headers['x-bypass-rate-limit'] === 'test-bypass',
+  handler: createRateLimitHandler(
+    'RATE_LIMIT_EXCEEDED',
+    'Too many topic rebuild requests. Maximum 3 requests per 60 seconds.'
+  ),
+});
