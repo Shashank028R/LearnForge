@@ -166,8 +166,13 @@ describe('Phase 09 Checkpoint 3: Learning State Read APIs & Route Integration', 
       };
     });
 
+    let extraTopics = [];
+    let extraConcepts = [];
+    let extraLearningStates = [];
+
     vi.spyOn(Topic, 'findOne').mockImplementation((query) => {
-      const t = [topicA, topicB].find((item) => {
+      const allTopics = [topicA, topicB, ...extraTopics];
+      const t = allTopics.find((item) => {
         if (query._id && item._id.toString() !== query._id.toString()) return false;
         if (query.userId && item.userId.toString() !== query.userId.toString()) return false;
         return true;
@@ -178,9 +183,11 @@ describe('Phase 09 Checkpoint 3: Learning State Read APIs & Route Integration', 
     });
 
     vi.spyOn(Topic, 'find').mockImplementation((query) => {
-      const list = [topicA, topicB].filter((item) => {
+      const allTopics = [topicA, topicB, ...extraTopics];
+      const list = allTopics.filter((item) => {
         if (query.subjectId && item.subjectId.toString() !== query.subjectId.toString()) return false;
         if (query.userId && item.userId.toString() !== query.userId.toString()) return false;
+        if (query.isActiveInSyllabus !== undefined && (item.isActiveInSyllabus !== undefined ? item.isActiveInSyllabus : true) !== query.isActiveInSyllabus) return false;
         return true;
       });
       return {
@@ -192,7 +199,8 @@ describe('Phase 09 Checkpoint 3: Learning State Read APIs & Route Integration', 
     });
 
     vi.spyOn(Concept, 'findOne').mockImplementation((query) => {
-      const c = [conceptA1, conceptA2, conceptB1].find((item) => {
+      const allConcepts = [conceptA1, conceptA2, conceptB1, ...extraConcepts];
+      const c = allConcepts.find((item) => {
         if (query._id && item._id.toString() !== query._id.toString()) return false;
         if (query.userId && item.userId.toString() !== query.userId.toString()) return false;
         return true;
@@ -203,7 +211,8 @@ describe('Phase 09 Checkpoint 3: Learning State Read APIs & Route Integration', 
     });
 
     vi.spyOn(Concept, 'find').mockImplementation((query) => {
-      const list = [conceptA1, conceptA2, conceptB1].filter((item) => {
+      const allConcepts = [conceptA1, conceptA2, conceptB1, ...extraConcepts];
+      const list = allConcepts.filter((item) => {
         if (query.subjectId && item.subjectId.toString() !== query.subjectId.toString()) return false;
         if (query.topicId && item.topicId.toString() !== query.topicId.toString()) return false;
         if (query.userId && item.userId.toString() !== query.userId.toString()) return false;
@@ -217,13 +226,30 @@ describe('Phase 09 Checkpoint 3: Learning State Read APIs & Route Integration', 
       };
     });
 
-    vi.spyOn(ConceptLearningState, 'findOne').mockImplementation(() => ({
-      lean: () => Promise.resolve(null),
-    }));
+    vi.spyOn(ConceptLearningState, 'findOne').mockImplementation((query) => {
+      const found = extraLearningStates.find((s) => {
+        if (query.conceptId && s.conceptId.toString() !== query.conceptId.toString()) return false;
+        if (query.userId && s.userId.toString() !== query.userId.toString()) return false;
+        return true;
+      });
+      return {
+        lean: () => Promise.resolve(found || null),
+      };
+    });
 
-    vi.spyOn(ConceptLearningState, 'find').mockImplementation(() => ({
-      lean: () => Promise.resolve([]),
-    }));
+    vi.spyOn(ConceptLearningState, 'find').mockImplementation((query) => {
+      const list = extraLearningStates.filter((s) => {
+        if (query.topicId && s.topicId && s.topicId.toString() !== query.topicId.toString()) return false;
+        if (query.conceptId && query.conceptId.$in) {
+          const inStrs = query.conceptId.$in.map((id) => id.toString());
+          if (!inStrs.includes(s.conceptId.toString())) return false;
+        }
+        return true;
+      });
+      return {
+        lean: () => Promise.resolve(list),
+      };
+    });
   });
 
   afterEach(() => {
@@ -340,5 +366,153 @@ describe('Phase 09 Checkpoint 3: Learning State Read APIs & Route Integration', 
     expect(res.body.success).toBe(true);
     expect(res.body.data.rebuiltConceptsCount).toBe(2);
     expect(res.body.meta.requestId).toBeDefined();
+  });
+
+  it('8. Status validation: rejects unsupported status filter with 400 VALIDATION_ERROR', async () => {
+    const res = await request(app)
+      .get(`/api/v1/learning-state/topics/${topicA._id}?status=INVALID_STATUS`)
+      .set('Cookie', cookieA);
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(res.body.error.message).toContain("Invalid status filter 'INVALID_STATUS'");
+  });
+
+  it('9. Public status contract: supports filtering by all valid public statuses', async () => {
+    // Both conceptA1 and conceptA2 default to NOT_STARTED
+    const resNotStarted = await request(app)
+      .get(`/api/v1/learning-state/topics/${topicA._id}?status=NOT_STARTED`)
+      .set('Cookie', cookieA);
+    expect(resNotStarted.status).toBe(200);
+    expect(resNotStarted.body.data.concepts).toHaveLength(2);
+
+    const resMastered = await request(app)
+      .get(`/api/v1/learning-state/topics/${topicA._id}?status=MASTERED`)
+      .set('Cookie', cookieA);
+    expect(resMastered.status).toBe(200);
+    expect(resMastered.body.data.concepts).toHaveLength(0);
+
+    const resIntroduced = await request(app)
+      .get(`/api/v1/learning-state/topics/${topicA._id}?status=INTRODUCED`)
+      .set('Cookie', cookieA);
+    expect(resIntroduced.status).toBe(200);
+    expect(resIntroduced.body.data.concepts).toHaveLength(0);
+
+    const resPracticing = await request(app)
+      .get(`/api/v1/learning-state/topics/${topicA._id}?status=PRACTICING`)
+      .set('Cookie', cookieA);
+    expect(resPracticing.status).toBe(200);
+
+    const resStruggling = await request(app)
+      .get(`/api/v1/learning-state/topics/${topicA._id}?status=STRUGGLING`)
+      .set('Cookie', cookieA);
+    expect(resStruggling.status).toBe(200);
+  });
+
+  it('10. Subject aggregation: counts sum to totalConcepts and average mastery is concept-weighted', async () => {
+    // Set up Topic 1 with 2 concepts (both unstudied => mastery 0)
+    // and verify that totalConcepts === masteredConcepts + inProgressConcepts + notStartedConcepts
+    const res = await request(app)
+      .get(`/api/v1/learning-state/subjects/${subjectA._id}`)
+      .set('Cookie', cookieA);
+
+    expect(res.status).toBe(200);
+    const { summary } = res.body.data;
+    expect(summary.totalConcepts).toBe(2);
+    expect(summary.masteredConcepts).toBe(0);
+    expect(summary.inProgressConcepts).toBe(0);
+    expect(summary.notStartedConcepts).toBe(2);
+    expect(summary.masteredConcepts + summary.inProgressConcepts + summary.notStartedConcepts).toBe(summary.totalConcepts);
+    expect(summary.averageMasteryScore).toBe(0);
+  });
+
+  it('11. Active syllabus consistency: respects active syllabus membership and preserves historical access', async () => {
+    // Mark subject as approved syllabus
+    subjectA.syllabusStatus = 'approved';
+    topicA.isActiveInSyllabus = true;
+
+    // Create an inactive topic in subjectA
+    const inactiveTopicId = new mongoose.Types.ObjectId();
+    const inactiveTopic = {
+      _id: inactiveTopicId,
+      subjectId: subjectA._id,
+      userId: subjectA.userId,
+      title: 'Archived / Inactive Topic',
+      isActiveInSyllabus: false,
+      order: 99,
+    };
+    const inactiveConcept = {
+      _id: new mongoose.Types.ObjectId(),
+      topicId: inactiveTopicId,
+      subjectId: subjectA._id,
+      userId: subjectA.userId,
+      name: 'Old Deprecated Concept',
+      prerequisites: [],
+      order: 1,
+    };
+
+    // Override mocks for this test to include the inactive topic and concept
+    const origTopicFind = Topic.find;
+    vi.spyOn(Topic, 'find').mockImplementation((query) => {
+      const all = [topicA, inactiveTopic];
+      const list = all.filter((item) => {
+        if (query.subjectId && item.subjectId.toString() !== query.subjectId.toString()) return false;
+        if (query.userId && item.userId.toString() !== query.userId.toString()) return false;
+        if (query.isActiveInSyllabus !== undefined && (item.isActiveInSyllabus !== undefined ? item.isActiveInSyllabus : true) !== query.isActiveInSyllabus) return false;
+        return true;
+      });
+      return {
+        sort: () => ({ lean: () => Promise.resolve(list) }),
+        lean: () => Promise.resolve(list),
+      };
+    });
+
+    vi.spyOn(Topic, 'findOne').mockImplementation((query) => {
+      const all = [topicA, inactiveTopic];
+      const found = all.find((item) => {
+        if (query._id && item._id.toString() !== query._id.toString()) return false;
+        if (query.userId && item.userId.toString() !== query.userId.toString()) return false;
+        return true;
+      });
+      return { lean: () => Promise.resolve(found || null) };
+    });
+
+    vi.spyOn(Concept, 'find').mockImplementation((query) => {
+      const all = [conceptA1, conceptA2, inactiveConcept];
+      const list = all.filter((item) => {
+        if (query.subjectId && item.subjectId.toString() !== query.subjectId.toString()) return false;
+        if (query.topicId && item.topicId.toString() !== query.topicId.toString()) return false;
+        if (query.userId && item.userId.toString() !== query.userId.toString()) return false;
+        return true;
+      });
+      return {
+        sort: () => ({ lean: () => Promise.resolve(list) }),
+        lean: () => Promise.resolve(list),
+      };
+    });
+
+    // Subject summary with approved syllabus should ONLY include active topics (topicA with 2 concepts)
+    const resApproved = await request(app)
+      .get(`/api/v1/learning-state/subjects/${subjectA._id}`)
+      .set('Cookie', cookieA);
+    expect(resApproved.status).toBe(200);
+    expect(resApproved.body.data.summary.totalTopics).toBe(1); // Only active topic
+    expect(resApproved.body.data.summary.totalConcepts).toBe(2);
+
+    // Direct access to inactive topic is preserved (HTTP 200) and reports isActiveInSyllabus: false
+    const resInactive = await request(app)
+      .get(`/api/v1/learning-state/topics/${inactiveTopicId}`)
+      .set('Cookie', cookieA);
+    expect(resInactive.status).toBe(200);
+    expect(resInactive.body.data.isActiveInSyllabus).toBe(false);
+
+    // Priorities recommendation restricts candidates to active topics when syllabus is approved
+    const resPriorities = await request(app)
+      .get(`/api/v1/learning-state/priorities?subjectId=${subjectA._id}`)
+      .set('Cookie', cookieA);
+    expect(resPriorities.status).toBe(200);
+    const recConceptIds = resPriorities.body.data.recommendations.map((r) => r.conceptId.toString());
+    expect(recConceptIds).not.toContain(inactiveConcept._id.toString());
   });
 });

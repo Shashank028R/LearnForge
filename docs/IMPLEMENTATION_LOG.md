@@ -5,7 +5,7 @@ This log is the permanent chronological engineering journal for the LearnForge p
 ## [Phase 09 — Checkpoint 3] Learning State Read APIs, Progress Aggregation, Multi-Topic Closure Fencing, and Globally Transitive Study Prioritization
 
 - **Date**: October 11, 2026
-- **Status**: Completed & Verified (5 Read & Mutation Endpoints, Multi-Topic Closure Lease Fencing, Persistent TopicLearningStateFence Monotonic Evidence Epochs, Globally Transitive Prioritization with 6-Element Tuples, Full-Transaction Retry & Rate Limiting, 27/27 Checkpoint 3 Tests & 312/312 Server Tests Passing)
+- **Status**: Implemented & Awaiting Independent Review (Not Yet Sealed) (5 Read & Mutation Endpoints, Multi-Topic Closure Lease Fencing, Persistent TopicLearningStateFence Monotonic Evidence Epochs, Public Status Contract Mapping, Exact v10 Priority Mathematics, Sparse Rebuild Materialization, Active Syllabus Governance, 34/34 Checkpoint 3 Tests & 319/319 Server Tests Passing)
 - **Phase**: Phase 09 — Learning State Engine (Checkpoint 3)
 - **Core Invariant**: *"TopicLearningStateFence.version represents the monotonic epoch of committed live study evidence (+1 per committed live turn, +0 per rebuild publication, replay, or rollback). Rebuilds lease their full transitive prerequisite closure across topics and validate snapshot freshness atomically before swap."*
 - **Objective**: Implement the full Learning State Read APIs, Topic Summary Aggregations, Subject Learning Overview, Globally Transitive Next-Up Study Prioritization, and hardened Multi-Topic Closure Fencing with full-transaction retries and rate limiting per approved v10 plan.
@@ -22,33 +22,29 @@ This log is the permanent chronological engineering journal for the LearnForge p
      - Phase 3: Validates inside a transaction that fence versions strictly match the snapshot vector and the lock lease is still owned; atomically swaps materialized state, creates idempotent ledger entries, and releases leases.
    - Realtime projection increments fence version by exactly +1 inside the live answer submission transaction.
    - Pre-check on `ProcessedStudyTurn` detects duplicate replays before insertion, cleanly preserving +0 fence invariant.
-3. **Globally Transitive Study Prioritization Engine (`learningStateEngine.js`)**:
-   - Transitive prerequisite completion ratio $\rho_{\text{trans}}(X) = |\text{Prereqs}_{\text{completed}}| / |\text{Prereqs}_{\text{total}}|$.
-   - Transitive downstream blocker depth $d_{\text{down}}(X) = 1 + \max(d_{\text{down}}(D))$ weighting higher-leverage foundational concepts.
-   - Canonical `Concept` candidate synthesis: unstudied canonical concepts automatically surface as `NOT_STARTED` candidates without waiting for a first turn.
-   - Lexicographical 6-element ranking tuple:
-     $\mathcal{K}(X) = (\text{tier}(X), -\text{priorityScore}(X), -\rho_{\text{trans}}(X), -d_{\text{down}}(X), \text{orderIndex}, \text{conceptId})$.
-   - Strictly bounded priority score clamped in $[0, 1000]$.
-4. **Learning State Controller, Routes & Rate Limiting (`learningStateController.js`, `learningStateRoutes.js`, `rateLimiter.js`)**:
-   - 5 HTTP Endpoints mounted under `/api/v1/learning-state`:
-     - `GET /subjects/:subjectId/overview`
-     - `GET /topics/:topicId/summary`
-     - `GET /concepts/:conceptId`
-     - `GET /priorities` (supports `limit`, `subjectId`, `topicId`, `asOf`)
-     - `POST /topics/:topicId/rebuild`
-   - Strict read immutability (GET endpoints perform zero write or upsert operations).
-   - `rebuildRateLimiter`: 3 requests per 60 seconds per user/IP.
-5. **Full Transaction Retry Utility (`transaction.js`)**:
+   - **Sparse Rebuild Materialization**: Only concepts with completed attempt evidence (`attemptsCount > 0`) are persisted to `ConceptLearningState`. Concepts with 0 attempts remain sparse in MongoDB and are synthesized on read as `NOT_STARTED`.
+3. **Public Status Contract & Priority Mathematics Engine (`learningStateEngine.js`)**:
+   - **Public Status Contract**: Bidirectional mapping between sealed Checkpoint 2 persisted statuses (`NOT_STARTED`, `LEARNING`, `UNDERSTOOD`, `NEEDS_REVIEW`, `MASTERED`) and public Checkpoint 3 statuses (`NOT_STARTED`, `INTRODUCED`, `PRACTICING`, `STRUGGLING`, `MASTERED`). Unsupported status query filters are strictly rejected with HTTP 400 `VALIDATION_ERROR`.
+   - **Priority Mathematics**: Aligned all 6 factors ($F_{\text{prereq}}, F_{\text{status}}, F_{\text{misconception}}, F_{\text{decay}}, F_{\text{failure}}, F_{\text{recency}}$) and 6-element ranking tuple $\mathcal{K}(X)$ with v10 specification:
+     - $F_{\text{decay}} = \min(150, \max(0, \text{round}(150 \cdot (1 - R))))$.
+     - $F_{\text{recency}} = 50$ if unstudied or overdue; $\max(0, \min(50, \text{round}(50 \cdot (1 - \text{remainingMs} / \text{stabilityMs}))))$ if not due.
+     - Public status urgency mapping: `NOT_STARTED` = 250, `STRUGGLING` = 200, `INTRODUCED` = 150, `PRACTICING` = 100, `MASTERED` = 0.
+   - **Deterministic Derivation Defaults**: Documented and implemented defaults for non-persisted baseline fields: stability (1.0 day for `NOT_STARTED`, 14.0 days for studied concepts), retrievability ($\exp(-\Delta t / S)$ if demonstrated, else 0.0), and `nextDueDate` (demonstrated + 7 days grace).
+4. **Subject Aggregation & Active Syllabus Consistency (`learningStateService.js`, `learningStateController.js`)**:
+   - **Subject Aggregation Invariants**: Concept counts partition precisely ($M + P + N \equiv \text{totalConcepts}$), with `inProgressConcepts = totalConcepts - masteredConcepts - notStartedConcepts`. Subject `averageMasteryScore` is concept-weighted across constituent topics.
+   - **Active Syllabus Governance**: In subjects with approved syllabi (`syllabusStatus === 'approved'`), subject-level rollups and priority recommendations strictly constrain active candidates to topics where `isActiveInSyllabus: true`, while retaining the full subject concept graph for prerequisite metrics. Direct topic queries retain historical access for inactive topics (`isActiveInSyllabus: false`).
+5. **Full Transaction Retry Utility & Neutral Replica-Set Testing (`transaction.js`)**:
    - Automatic retries on `TransientTransactionError`, `WriteConflict` (112), and first-use `TopicLearningStateFence` duplicate-key race (`E11000`).
    - Retries commit on the active session without replaying the business callback on `UnknownTransactionCommitResult`.
+   - Removed developer-specific environment paths from test harnesses; uses neutral `MongoMemoryReplSet` with portable binary resolution.
 6. **Testing & Verification**:
-   - **Prioritization Suite** (`server/tests/learningStatePriorities.test.js`): 7 / 7 tests passing (bounded scores, transitive graphs, 4 tiers, tie-breakers, cycle safety).
-   - **Route Suite** (`server/tests/learningStateRoutes.test.js`): 7 / 7 tests passing (read immutability, pagination, tenant isolation 404, rate limits).
-   - **Concurrency & Fencing Suite** (`server/tests/learningStateConcurrency.test.js`): 13 / 13 tests passing on genuine `MongoMemoryReplSet` (single turn +1, multi-concept +1, sequential +2, replay +0, rollback +0, rebuild publication +0, first-use E11000 race, cross-topic prerequisite conflict 409, stale lease takeover, lock isolation, closure sorting, commit retry, ledger failure abort).
-   - **Full Server Test Suite**: 312 / 312 tests passing across 18 suites with zero regressions.
+   - **Prioritization Suite** (`server/tests/learningStatePriorities.test.js`): 9 / 9 tests passing (bounded scores, transitive graphs, 4 tiers, tie-breakers, 6-factor formulas, status mappings).
+   - **Route Suite** (`server/tests/learningStateRoutes.test.js`): 11 / 11 tests passing (read immutability, pagination, tenant isolation 404, rate limits, status validation 400, public status filtering, concept-weighted aggregation, active syllabus consistency).
+   - **Concurrency & Fencing Suite** (`server/tests/learningStateConcurrency.test.js`): 14 / 14 tests passing on genuine `MongoMemoryReplSet` (single turn +1, multi-concept +1, sequential +2, replay +0, rollback +0, rebuild publication +0, first-use E11000 race, cross-topic prerequisite conflict 409, stale lease takeover, lock isolation, closure sorting, commit retry, ledger failure abort, sparse rebuild materialization).
+   - **Full Server Test Suite**: 319 / 319 tests passing across 18 suites with zero regressions.
    - **Full Client Test Suite**: 70 / 70 tests passing across 7 suites.
-   - **Total Monorepo Tests**: 382 / 382 passing across 25 suites.
-   - **Client Production Build**: Built cleanly with Vite in 6.85s.
+   - **Total Monorepo Tests**: 389 / 389 passing across 25 suites.
+   - **Client Production Build**: Built cleanly with Vite in 15.07s.
 
 ---
 

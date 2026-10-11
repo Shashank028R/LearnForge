@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { learningStateService } from '../services/learningStateService.js';
+import { VALID_PUBLIC_STATUSES, VALID_PERSISTED_STATUSES } from '../services/learningStateEngine.js';
 import { config } from '../config/env.js';
 
 function parseEvaluationTimestamp(req) {
@@ -58,6 +59,13 @@ export const learningStateController = {
       }
 
       const { status, page, limit } = req.query;
+      if (status && !VALID_PUBLIC_STATUSES.has(status) && !VALID_PERSISTED_STATUSES.has(status)) {
+        const error = new Error(`Invalid status filter '${status}'. Allowed values: ${Array.from(VALID_PUBLIC_STATUSES).join(', ')}.`);
+        error.code = 'VALIDATION_ERROR';
+        error.statusCode = 400;
+        throw error;
+      }
+
       const evalTime = parseEvaluationTimestamp(req);
 
       const result = await learningStateService.getTopicLearningSummary(req.user._id, topicId, {
@@ -72,6 +80,7 @@ export const learningStateController = {
         data: {
           topicId: result.topicId,
           subjectId: result.subjectId,
+          isActiveInSyllabus: result.isActiveInSyllabus,
           summary: result.summary,
           weakConcepts: result.weakConcepts,
           concepts: result.concepts,

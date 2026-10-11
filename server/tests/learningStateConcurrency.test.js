@@ -12,8 +12,6 @@ import { TopicLearningStateFence } from '../src/models/TopicLearningStateFence.j
 import { learningStateService } from '../src/services/learningStateService.js';
 import { runInTransaction } from '../src/utils/transaction.js';
 
-process.env.MONGOMS_MD5_CHECK = '0';
-
 describe('Phase 09 Checkpoint 3: Real MongoDB Replica Set Concurrency & Fencing Suite', { timeout: 120000 }, () => {
   let replSet;
   let userId;
@@ -21,8 +19,8 @@ describe('Phase 09 Checkpoint 3: Real MongoDB Replica Set Concurrency & Fencing 
   let conceptXId, conceptYId;
 
   beforeAll(async () => {
-    const localBinaryPath = 'C:/Users/shash/.cache/mongodb-binaries/mongod-x64-win32-8.2.6.exe';
-    const binaryConfig = fs.existsSync(localBinaryPath) ? { systemBinary: localBinaryPath } : {};
+    const systemBinary = process.env.MONGOMS_SYSTEM_BINARY;
+    const binaryConfig = systemBinary && fs.existsSync(systemBinary) ? { systemBinary } : {};
 
     replSet = await MongoMemoryReplSet.create({
       replSet: { count: 1 },
@@ -569,4 +567,106 @@ describe('Phase 09 Checkpoint 3: Real MongoDB Replica Set Concurrency & Fencing 
 
     expect(threw).toBe(true);
   });
+
+  it('14. Sparse rebuild materialization: only concepts with completed attempts are persisted to ConceptLearningState', async () => {
+    const conceptZId = new mongoose.Types.ObjectId();
+    const conceptWId = new mongoose.Types.ObjectId();
+
+    // In topicA:
+    // conceptXId has 1 correct turn
+    // conceptZId has 1 failed turn
+    // conceptWId has 0 turns (unstudied)
+    await Concept.create([
+      {
+        _id: conceptZId,
+        topicId: topicAId,
+        subjectId,
+        userId,
+        name: 'Two-Phase Commit',
+        normalizedName: 'two-phase commit',
+        orderIndex: 2,
+        prerequisites: [],
+      },
+      {
+        _id: conceptWId,
+        topicId: topicAId,
+        subjectId,
+        userId,
+        name: 'Chandy-Lamport',
+        normalizedName: 'chandy-lamport',
+        orderIndex: 3,
+        prerequisites: [],
+      },
+    ]);
+
+    await StudySession.create({
+      _id: new mongoose.Types.ObjectId(),
+      userId,
+      subjectId,
+      topicId: topicAId,
+      turns: [
+        {
+          _id: new mongoose.Types.ObjectId(),
+          turnIndex: 0,
+          clientTurnId: 'turn-c14-1',
+          attemptType: 'INITIAL',
+          answeredAt: new Date(),
+          question: {
+            questionId: 'q-c14-1',
+            prompt: 'Explain Paxos protocol',
+            questionType: 'explain_in_own_words',
+            targetConceptIds: [conceptXId],
+          },
+          evaluation: { verdict: 'CORRECT', correctness: 85 },
+        },
+        {
+          _id: new mongoose.Types.ObjectId(),
+          turnIndex: 1,
+          clientTurnId: 'turn-c14-2',
+          attemptType: 'INITIAL',
+          answeredAt: new Date(),
+          question: {
+            questionId: 'q-c14-2',
+            prompt: 'Explain Two-Phase Commit',
+            questionType: 'explain_in_own_words',
+            targetConceptIds: [conceptZId],
+          },
+          evaluation: { verdict: 'INCORRECT', correctness: 20 },
+        },
+      ],
+    });
+
+    const rebuildRes = await learningStateService.rebuildTopicLearningState(userId, topicAId);
+    expect(rebuildRes.status).toBe('COMPLETED');
+    expect(rebuildRes.processedTurnsCount).toBe(2);
+
+    // In MongoDB collection: exactly 2 documents exist for topicA (conceptXId and conceptZId).
+    // ConceptW (0 turns) must NOT have a row persisted in ConceptLearningState!
+    const persistedStates = await ConceptLearningState.find({ userId, topicId: topicAId });
+    expect(persistedStates).toHaveLength(2);
+
+    const persistedConceptIds = persistedStates.map((s) => s.conceptId.toString());
+    expect(persistedConceptIds).toContain(conceptXId.toString());
+    expect(persistedConceptIds).toContain(conceptZId.toString());
+    expect(persistedConceptIds).not.toContain(conceptWId.toString());
+
+    // Concept W synthesized on read as NOT_STARTED
+    const stateW = await learningStateService.getConceptLearningState(userId, conceptWId);
+    expect(stateW.state.status).toBe('NOT_STARTED');
+    expect(stateW.state.totalRepetitions).toBe(0);
+    expect(stateW.state.masteryScore).toBe(0);
+    expect(stateW.state.retrievability).toBe(0);
+
+    // Topic summary correctly includes Concept W in notStartedConcepts count and concepts array
+    const topicSummary = await learningStateService.getTopicLearningSummary(userId, topicAId);
+    expect(topicSummary.summary.totalConcepts).toBe(3);
+    expect(topicSummary.summary.notStartedConcepts).toBe(1);
+    expect(
+      topicSummary.summary.practicingConcepts +
+        topicSummary.summary.strugglingConcepts +
+        topicSummary.summary.masteredConcepts
+    ).toBe(2);
+    expect(topicSummary.concepts).toHaveLength(3);
+  });
 });
+

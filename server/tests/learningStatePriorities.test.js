@@ -3,11 +3,17 @@ import mongoose from 'mongoose';
 import {
   calculateConceptPriorityScore,
   calculateDecayedScore,
+  calculateRetrievability,
   compareConceptsByRankingKey,
   determineRankingTier,
   findSubjectTransitivePrerequisiteMetrics,
   generateGlobalRankingKey,
   generatePriorityReason,
+  toPublicStatus,
+  toPersistedStatus,
+  VALID_PUBLIC_STATUSES,
+  PERSISTED_TO_PUBLIC_STATUS,
+  PUBLIC_TO_PERSISTED_STATUS,
 } from '../src/services/learningStateEngine.js';
 
 describe('Phase 09 Checkpoint 3: Learning State Engine & Priority Mathematics', () => {
@@ -216,5 +222,106 @@ describe('Phase 09 Checkpoint 3: Learning State Engine & Priority Mathematics', 
         unmasteredDownstreamCount: 0,
       })
     ).toBe('MAINTENANCE_REVIEW');
+  });
+
+  it('regression: brings all six scoring factors into exact agreement with Checkpoint 3 v10', () => {
+    const concept = createMockConcept('Factor Math Test');
+    const evalTime = new Date('2026-10-10T12:00:00.000Z');
+
+    // Test Factor 1: Prerequisite urgency (min(300, 60 * downstream))
+    const resPrereq5 = calculateConceptPriorityScore(concept, { masteryStatus: 'NOT_STARTED' }, { unmasteredDownstreamCount: 5 }, evalTime);
+    expect(resPrereq5.factors.fPrereq).toBe(300); // 60 * 5 = 300
+    const resPrereq2 = calculateConceptPriorityScore(concept, { masteryStatus: 'NOT_STARTED' }, { unmasteredDownstreamCount: 2 }, evalTime);
+    expect(resPrereq2.factors.fPrereq).toBe(120); // 60 * 2 = 120
+
+    // Test Factor 2: Status urgency across all statuses
+    expect(calculateConceptPriorityScore(concept, { masteryStatus: 'NOT_STARTED' }, {}, evalTime).factors.fStatus).toBe(250);
+    expect(calculateConceptPriorityScore(concept, { masteryStatus: 'STRUGGLING' }, {}, evalTime).factors.fStatus).toBe(200);
+    expect(calculateConceptPriorityScore(concept, { masteryStatus: 'NEEDS_REVIEW' }, {}, evalTime).factors.fStatus).toBe(200);
+    expect(calculateConceptPriorityScore(concept, { masteryStatus: 'INTRODUCED' }, {}, evalTime).factors.fStatus).toBe(150);
+    expect(calculateConceptPriorityScore(concept, { masteryStatus: 'LEARNING' }, {}, evalTime).factors.fStatus).toBe(150);
+    expect(calculateConceptPriorityScore(concept, { masteryStatus: 'PRACTICING' }, {}, evalTime).factors.fStatus).toBe(100);
+    expect(calculateConceptPriorityScore(concept, { masteryStatus: 'UNDERSTOOD' }, {}, evalTime).factors.fStatus).toBe(100);
+    expect(calculateConceptPriorityScore(concept, { masteryStatus: 'MASTERED' }, {}, evalTime).factors.fStatus).toBe(0);
+
+    // Test Factor 3: Misconception urgency (min(200, 100 * activeMisconceptionsCount))
+    const resMisc1 = calculateConceptPriorityScore(concept, { activeMisconceptions: [{ text: '1' }] }, {}, evalTime);
+    expect(resMisc1.factors.fMisconception).toBe(100);
+    const resMisc3 = calculateConceptPriorityScore(concept, { activeMisconceptions: [{ text: '1' }, { text: '2' }, { text: '3' }] }, {}, evalTime);
+    expect(resMisc3.factors.fMisconception).toBe(200); // capped at 200
+
+    // Test Factor 4: Decay urgency based on retrievability F_decay = 150 * (1 - R)
+    // When never demonstrated, R = 0, so F_decay = 150
+    const resDecayUnstudied = calculateConceptPriorityScore(concept, { masteryStatus: 'NOT_STARTED' }, {}, evalTime);
+    expect(resDecayUnstudied.factors.fDecay).toBe(150);
+
+    // When demonstrated exactly at evalTime, R = 1, so F_decay = 0
+    const resDecayFresh = calculateConceptPriorityScore(concept, {
+      masteryStatus: 'LEARNING',
+      lastDemonstratedAt: evalTime,
+      stability: 14,
+    }, {}, evalTime);
+    expect(resDecayFresh.factors.fDecay).toBe(0);
+
+    // When demonstrated 14 days ago with stability 14, R = exp(-14/14) = exp(-1) ~ 0.367879
+    // F_decay = Math.round(150 * (1 - 0.367879)) = Math.round(150 * 0.63212) = 95
+    const fourteenDaysAgo = new Date(evalTime.getTime() - 14 * 86400000);
+    const resDecay14Days = calculateConceptPriorityScore(concept, {
+      masteryStatus: 'LEARNING',
+      lastDemonstratedAt: fourteenDaysAgo,
+      stability: 14,
+    }, {}, evalTime);
+    expect(resDecay14Days.factors.fDecay).toBe(95);
+
+    // Test Factor 5: Failure urgency (min(90, 30 * consecutiveFailures))
+    const resFail2 = calculateConceptPriorityScore(concept, { consecutiveFailures: 2 }, {}, evalTime);
+    expect(resFail2.factors.fFailure).toBe(60);
+    const resFail5 = calculateConceptPriorityScore(concept, { consecutiveFailures: 5 }, {}, evalTime);
+    expect(resFail5.factors.fFailure).toBe(90);
+
+    // Test Factor 6: Recency urgency based on due-date and stability distance
+    // Never studied: F_recency = 50
+    expect(resDecayUnstudied.factors.fRecency).toBe(50);
+
+    // Overdue (nextDueDate in the past): F_recency = 50
+    const resOverdue = calculateConceptPriorityScore(concept, {
+      lastDemonstratedAt: new Date(evalTime.getTime() - 10 * 86400000),
+      nextDueDate: new Date(evalTime.getTime() - 3 * 86400000),
+      stability: 14,
+    }, {}, evalTime);
+    expect(resOverdue.factors.fRecency).toBe(50);
+
+    // Future due date (e.g. 7 days in future with stability 14):
+    // remaining = 7, stability = 14 => 1 - 7/14 = 0.5 => 50 * 0.5 = 25
+    const resFutureDue = calculateConceptPriorityScore(concept, {
+      lastDemonstratedAt: evalTime,
+      nextDueDate: new Date(evalTime.getTime() + 7 * 86400000),
+      stability: 14,
+    }, {}, evalTime);
+    expect(resFutureDue.factors.fRecency).toBe(25);
+  });
+
+  it('regression: verifies public status contract and bidirectional mapping for all statuses', () => {
+    // Persisted Checkpoint 2 statuses -> Public API statuses
+    expect(toPublicStatus('NOT_STARTED')).toBe('NOT_STARTED');
+    expect(toPublicStatus('LEARNING')).toBe('INTRODUCED');
+    expect(toPublicStatus('UNDERSTOOD')).toBe('PRACTICING');
+    expect(toPublicStatus('NEEDS_REVIEW')).toBe('STRUGGLING');
+    expect(toPublicStatus('MASTERED')).toBe('MASTERED');
+
+    // Public API statuses -> Persisted Checkpoint 2 statuses
+    expect(toPersistedStatus('NOT_STARTED')).toBe('NOT_STARTED');
+    expect(toPersistedStatus('INTRODUCED')).toBe('LEARNING');
+    expect(toPersistedStatus('PRACTICING')).toBe('UNDERSTOOD');
+    expect(toPersistedStatus('STRUGGLING')).toBe('NEEDS_REVIEW');
+    expect(toPersistedStatus('MASTERED')).toBe('MASTERED');
+
+    // VALID_PUBLIC_STATUSES contains all 5 public statuses
+    expect(VALID_PUBLIC_STATUSES.has('NOT_STARTED')).toBe(true);
+    expect(VALID_PUBLIC_STATUSES.has('INTRODUCED')).toBe(true);
+    expect(VALID_PUBLIC_STATUSES.has('PRACTICING')).toBe(true);
+    expect(VALID_PUBLIC_STATUSES.has('STRUGGLING')).toBe(true);
+    expect(VALID_PUBLIC_STATUSES.has('MASTERED')).toBe(true);
+    expect(VALID_PUBLIC_STATUSES.has('INVALID')).toBe(false);
   });
 });

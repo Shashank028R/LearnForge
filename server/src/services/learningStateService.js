@@ -19,6 +19,10 @@ import {
   generatePriorityReason,
   projectEvidenceHistory,
   sortTargetConceptsByDependency,
+  toPublicStatus,
+  toPersistedStatus,
+  VALID_PUBLIC_STATUSES,
+  VALID_PERSISTED_STATUSES,
 } from './learningStateEngine.js';
 import { runInTransaction } from '../utils/transaction.js';
 
@@ -532,7 +536,9 @@ export class LearningStateService {
         const statesToInsert = [];
         for (const conceptId of targetConceptIds) {
           const stateObj = finalStatesMap.get(conceptId.toString());
-          if (stateObj) {
+          // Sparse rebuild materialization:
+          // Do not persist ConceptLearningState rows for concepts that have never had completed study-turn evidence
+          if (stateObj && stateObj.attemptsCount > 0) {
             statesToInsert.push({
               ...stateObj,
               stateVersion: 1,
@@ -558,12 +564,18 @@ export class LearningStateService {
           );
         }
 
-        const summary = this._computeTopicSummary(insertedStates);
+        // Compute summary across all target topic concepts (synthesizing unstudied)
+        const allTargetStatesForSummary = targetConceptIds.map((cid) => {
+          return finalStatesMap.get(cid.toString()) || createInitialConceptLearningState(cid, uId, targetConcepts[0].subjectId, tId);
+        });
+        const summary = this._computeTopicSummary(allTargetStatesForSummary);
 
         return {
+          status: 'COMPLETED',
           topicId: tId,
-          rebuiltCount: insertedStates.length,
-          rebuiltConceptsCount: insertedStates.length,
+          rebuiltCount: targetConceptIds.length,
+          rebuiltConceptsCount: targetConceptIds.length,
+          persistedStatesCount: insertedStates.length,
           processedTurnsCount: allCompletedTurns.length,
           fencedClosureTopics: closureTopicIdStrings,
           conceptStates: insertedStates,
@@ -601,11 +613,11 @@ export class LearningStateService {
     let activeMisconceptionsCount = 0;
 
     for (const s of states) {
-      const status = s.masteryStatus || s.status || 'NOT_STARTED';
+      const status = s.masteryStatus || (s.status ? toPersistedStatus(s.status) : 'NOT_STARTED');
       if (status === 'MASTERED') masteredCount += 1;
-      else if (status === 'UNDERSTOOD' || status === 'PRACTICING') understoodCount += 1;
-      else if (status === 'LEARNING' || status === 'INTRODUCED') learningCount += 1;
-      else if (status === 'NEEDS_REVIEW' || status === 'STRUGGLING') needsReviewCount += 1;
+      else if (status === 'UNDERSTOOD') understoodCount += 1;
+      else if (status === 'LEARNING') learningCount += 1;
+      else if (status === 'NEEDS_REVIEW') needsReviewCount += 1;
       else notStartedCount += 1;
 
       totalMasteryScore += s.masteryScore || 0;
@@ -616,13 +628,27 @@ export class LearningStateService {
     const averageMasteryScore = totalConcepts > 0 ? Math.round(totalMasteryScore / totalConcepts) : 0;
     const averageDecayedScore = totalConcepts > 0 ? Math.round(totalDecayedScore / totalConcepts) : 0;
 
+    // Checkpoint 3 public contract fields
+    const masteredConcepts = masteredCount;
+    const practicingConcepts = understoodCount + learningCount;
+    const strugglingConcepts = needsReviewCount;
+    const notStartedConcepts = notStartedCount;
+    const progressPercentage = totalConcepts > 0 ? Math.round((masteredConcepts / totalConcepts) * 1000) / 10 : 0;
+
     return {
       totalConcepts,
+      // Checkpoint 2 legacy fields
       masteredCount,
       understoodCount,
       learningCount,
       needsReviewCount,
       notStartedCount,
+      // Checkpoint 3 public contract fields
+      masteredConcepts,
+      practicingConcepts,
+      strugglingConcepts,
+      notStartedConcepts,
+      progressPercentage,
       averageMasteryScore,
       averageDecayedScore,
       activeMisconceptionsCount,
@@ -650,8 +676,12 @@ export class LearningStateService {
       state = createInitialConceptLearningState(cId, uId, conceptDoc.subjectId, conceptDoc.topicId);
     }
 
+    const publicStatus = toPublicStatus(state.masteryStatus);
+    const isNotStarted = publicStatus === 'NOT_STARTED';
+    const stabilityDays = isNotStarted ? 1.0 : 14.0;
+
     state.decayedScore = calculateDecayedScore(state.masteryScore, state.lastDemonstratedAt, evaluationTime);
-    state.retrievability = calculateRetrievability(state.lastDemonstratedAt, evaluationTime);
+    state.retrievability = calculateRetrievability(state.lastDemonstratedAt, evaluationTime, stabilityDays);
 
     // Verify prerequisites
     const prerequisites = Array.isArray(conceptDoc.prerequisites) ? conceptDoc.prerequisites : [];
@@ -683,10 +713,10 @@ export class LearningStateService {
       state: {
         masteryScore: state.masteryScore,
         decayedScore: state.decayedScore,
-        stability: 14.0,
+        stability: stabilityDays,
         difficulty: 5.0,
         retrievability: Math.round(state.retrievability * 100) / 100,
-        status: state.masteryStatus,
+        status: publicStatus,
         totalRepetitions: state.attemptsCount,
         consecutiveSuccesses: state.consecutiveSuccesses,
         consecutiveFailures: state.consecutiveFailures,
@@ -736,49 +766,19 @@ export class LearningStateService {
         state = createInitialConceptLearningState(c._id, uId, c.subjectId, c.topicId);
       }
       const decayedScore = calculateDecayedScore(state.masteryScore, state.lastDemonstratedAt, evaluationTime);
+      const publicStatus = toPublicStatus(state.masteryStatus);
       return {
         conceptId: c._id,
         name: c.name,
         masteryScore: state.masteryScore,
         decayedScore,
-        status: state.masteryStatus,
+        status: publicStatus,
         lastStudiedAt: state.lastDemonstratedAt || state.lastAttemptedAt,
       };
     });
 
     // 1. Topic Summary covers the ENTIRE topic
-    const totalConcepts = allEnrichedConcepts.length;
-    let masteredConcepts = 0;
-    let practicingConcepts = 0;
-    let strugglingConcepts = 0;
-    let notStartedConcepts = 0;
-    let totalMastery = 0;
-    let totalDecayed = 0;
-
-    for (const c of allEnrichedConcepts) {
-      totalMastery += c.masteryScore;
-      totalDecayed += c.decayedScore;
-      if (c.status === 'MASTERED') masteredConcepts += 1;
-      else if (c.status === 'UNDERSTOOD' || c.status === 'PRACTICING') practicingConcepts += 1;
-      else if (c.status === 'NEEDS_REVIEW' || c.status === 'STRUGGLING') strugglingConcepts += 1;
-      else if (c.status === 'LEARNING' || c.status === 'INTRODUCED') practicingConcepts += 1;
-      else notStartedConcepts += 1;
-    }
-
-    const progressPercentage = totalConcepts > 0 ? Math.round((masteredConcepts / totalConcepts) * 1000) / 10 : 0;
-    const averageMasteryScore = totalConcepts > 0 ? Math.round((totalMastery / totalConcepts) * 10) / 10 : 0;
-    const averageDecayedScore = totalConcepts > 0 ? Math.round((totalDecayed / totalConcepts) * 10) / 10 : 0;
-
-    const summary = {
-      totalConcepts,
-      masteredConcepts,
-      practicingConcepts,
-      strugglingConcepts,
-      notStartedConcepts,
-      progressPercentage,
-      averageMasteryScore,
-      averageDecayedScore,
-    };
+    const summary = this._computeTopicSummary(allEnrichedConcepts);
 
     // 2. weakConcepts: full-topic deterministic top 5
     const weakConcepts = [...allEnrichedConcepts]
@@ -799,7 +799,8 @@ export class LearningStateService {
     // 3. Filtered & Paginated concept list
     let filtered = allEnrichedConcepts;
     if (status) {
-      filtered = filtered.filter((c) => c.status === status);
+      const targetStatus = toPublicStatus(status);
+      filtered = filtered.filter((c) => c.status === targetStatus);
     }
 
     const numPage = Math.max(1, parseInt(page, 10) || 1);
@@ -811,6 +812,7 @@ export class LearningStateService {
     return {
       topicId: tId,
       subjectId: topic.subjectId,
+      isActiveInSyllabus: topic.isActiveInSyllabus !== false,
       summary,
       weakConcepts,
       concepts: paginated,
@@ -840,7 +842,15 @@ export class LearningStateService {
       throw error;
     }
 
-    const topics = await Topic.find({ userId: uId, subjectId: sId }).sort({ order: 1, _id: 1 }).lean();
+    // Active syllabus consistency:
+    // If subject has approved syllabus, only topics in active syllabus are included in curriculum aggregation.
+    // If pre-syllabus (no_syllabus / draft), all user topics under the subject are included.
+    let topicQuery = { userId: uId, subjectId: sId };
+    if (subject.syllabusStatus === 'approved') {
+      topicQuery = { userId: uId, subjectId: sId, isActiveInSyllabus: true };
+    }
+
+    const topics = await Topic.find(topicQuery).sort({ orderIndex: 1, _id: 1 }).lean();
     const topicSummaries = [];
 
     for (const t of topics) {
@@ -850,25 +860,31 @@ export class LearningStateService {
         name: t.title,
         totalConcepts: tRes.summary.totalConcepts,
         masteredConcepts: tRes.summary.masteredConcepts,
+        practicingConcepts: tRes.summary.practicingConcepts,
         strugglingConceptsCount: tRes.summary.strugglingConcepts,
+        notStartedConcepts: tRes.summary.notStartedConcepts,
         progressPercentage: tRes.summary.progressPercentage,
         averageMasteryScore: tRes.summary.averageMasteryScore,
       });
     }
 
-    // 1. Subject Summary covers the ENTIRE subject
+    // 1. Subject Summary covers the active subject curriculum
     const totalTopics = topics.length;
     const totalConcepts = topicSummaries.reduce((sum, t) => sum + t.totalConcepts, 0);
     const masteredConcepts = topicSummaries.reduce((sum, t) => sum + t.masteredConcepts, 0);
-    const inProgressConcepts = topicSummaries.reduce(
-      (sum, t) => sum + (t.totalConcepts - t.masteredConcepts - (t.notStartedConcepts || 0)),
+    const notStartedConcepts = topicSummaries.reduce((sum, t) => sum + t.notStartedConcepts, 0);
+    const inProgressConcepts = totalConcepts - masteredConcepts - notStartedConcepts;
+
+    const overallProgressPercentage = totalConcepts > 0 ? Math.round((masteredConcepts / totalConcepts) * 1000) / 10 : 0;
+
+    // Concept-weighted average mastery score
+    const totalWeightedMastery = topicSummaries.reduce(
+      (sum, t) => sum + (t.totalConcepts * t.averageMasteryScore),
       0
     );
-    const notStartedConcepts = Math.max(0, totalConcepts - masteredConcepts - inProgressConcepts);
-    const overallProgressPercentage = totalConcepts > 0 ? Math.round((masteredConcepts / totalConcepts) * 1000) / 10 : 0;
     const averageMasteryScore =
-      topicSummaries.length > 0
-        ? Math.round((topicSummaries.reduce((sum, t) => sum + t.averageMasteryScore, 0) / topicSummaries.length) * 10) / 10
+      totalConcepts > 0
+        ? Math.round((totalWeightedMastery / totalConcepts) * 10) / 10
         : 0;
 
     const summary = {
@@ -948,6 +964,14 @@ export class LearningStateService {
       return { recommendations: [], pagination: { count: 0, limit } };
     }
 
+    // Active syllabus consistency:
+    // When syllabus is approved, candidates for study recommendation are restricted to active topics
+    let activeTopicIdSet = null;
+    if (subject.syllabusStatus === 'approved') {
+      const activeTopics = await Topic.find({ userId: uId, subjectId: sId, isActiveInSyllabus: true }).lean();
+      activeTopicIdSet = new Set(activeTopics.map((t) => t._id.toString()));
+    }
+
     const conceptIds = subjectConcepts.map((c) => c._id);
     const userStates = await ConceptLearningState.find({ userId: uId, conceptId: { $in: conceptIds } }).lean();
     const statesMap = new Map(userStates.map((s) => [s.conceptId.toString(), s]));
@@ -961,6 +985,9 @@ export class LearningStateService {
       if (topicId && concept.topicId.toString() !== topicId.toString()) {
         continue;
       }
+      if (activeTopicIdSet && !activeTopicIdSet.has(concept.topicId.toString())) {
+        continue;
+      }
 
       const strId = concept._id.toString();
       let state = statesMap.get(strId);
@@ -968,8 +995,12 @@ export class LearningStateService {
         state = createInitialConceptLearningState(concept._id, uId, concept.subjectId, concept.topicId);
       }
 
+      const publicStatus = toPublicStatus(state.masteryStatus);
+      const stabilityDays = publicStatus === 'NOT_STARTED' ? 1.0 : 14.0;
       const decayedScore = calculateDecayedScore(state.masteryScore, state.lastDemonstratedAt, evaluationTime);
       state.decayedScore = decayedScore;
+      state.stability = stabilityDays;
+      state.retrievability = calculateRetrievability(state.lastDemonstratedAt, evaluationTime, stabilityDays);
 
       const prereqMetrics = prereqMetricsMap.get(strId) || {};
       const { priorityScore } = calculateConceptPriorityScore(concept, state, prereqMetrics, evaluationTime);
@@ -1007,8 +1038,8 @@ export class LearningStateService {
       learningState: {
         masteryScore: item.state.masteryScore,
         decayedScore: item.state.decayedScore,
-        stability: 14.0,
-        status: item.state.masteryStatus,
+        stability: item.state.stability || (toPublicStatus(item.state.masteryStatus) === 'NOT_STARTED' ? 1.0 : 14.0),
+        status: toPublicStatus(item.state.masteryStatus),
         consecutiveFailures: item.state.consecutiveFailures,
         lastStudiedAt: item.state.lastDemonstratedAt || item.state.lastAttemptedAt,
       },

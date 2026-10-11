@@ -575,8 +575,59 @@ export function findSubjectTransitivePrerequisiteMetrics(subjectConcepts = [], u
   return metricsMap;
 }
 
+// ============================================================================
+// STATUS MAPPINGS: SEALED CHECKPOINT 2 <-> PUBLIC CHECKPOINT 3 API CONTRACT
+// ============================================================================
+
+export const PERSISTED_TO_PUBLIC_STATUS = {
+  NOT_STARTED: 'NOT_STARTED',
+  LEARNING: 'INTRODUCED',
+  UNDERSTOOD: 'PRACTICING',
+  NEEDS_REVIEW: 'STRUGGLING',
+  MASTERED: 'MASTERED',
+};
+
+export const PUBLIC_TO_PERSISTED_STATUS = {
+  NOT_STARTED: 'NOT_STARTED',
+  INTRODUCED: 'LEARNING',
+  PRACTICING: 'UNDERSTOOD',
+  STRUGGLING: 'NEEDS_REVIEW',
+  MASTERED: 'MASTERED',
+};
+
+export const VALID_PUBLIC_STATUSES = new Set([
+  'NOT_STARTED',
+  'INTRODUCED',
+  'PRACTICING',
+  'STRUGGLING',
+  'MASTERED',
+]);
+
+export const VALID_PERSISTED_STATUSES = new Set([
+  'NOT_STARTED',
+  'LEARNING',
+  'UNDERSTOOD',
+  'NEEDS_REVIEW',
+  'MASTERED',
+]);
+
+
+export function toPublicStatus(status) {
+  if (!status) return 'NOT_STARTED';
+  return PERSISTED_TO_PUBLIC_STATUS[status] || status;
+}
+
+export function toPersistedStatus(status) {
+  if (!status) return 'NOT_STARTED';
+  return PUBLIC_TO_PERSISTED_STATUS[status] || status;
+}
+
 /**
- * Computes bounded study priority score [0, 1000] across 6 normalized factors.
+ * Computes bounded study priority score [0, 1000] across 6 normalized factors per Checkpoint 3 v10.
+ * Derivation defaults for fields not persisted by sealed baseline:
+ * - stability: 1.0 day for NOT_STARTED, 14.0 days for studied concepts
+ * - retrievability: exp(-elapsedDays / stability) if lastDemonstratedAt exists, else 0.0
+ * - nextDueDate: lastDemonstratedAt + 7 days grace period, or null if never demonstrated
  */
 export function calculateConceptPriorityScore(concept, state, prereqMetrics = {}, evaluationTime = new Date()) {
   const metrics = prereqMetrics || {};
@@ -586,38 +637,55 @@ export function calculateConceptPriorityScore(concept, state, prereqMetrics = {}
   const fPrereq = Math.min(300, 60 * downstreamCount);
 
   // Factor 2: Status Urgency (0..250)
-  const status = state?.masteryStatus || 'NOT_STARTED';
+  const rawStatus = state?.masteryStatus || state?.status || 'NOT_STARTED';
+  const publicStatus = toPublicStatus(rawStatus);
   let fStatus = 0;
-  if (status === 'NOT_STARTED') fStatus = 250;
-  else if (status === 'NEEDS_REVIEW' || status === 'STRUGGLING') fStatus = 200;
-  else if (status === 'LEARNING' || status === 'INTRODUCED') fStatus = 150;
-  else if (status === 'UNDERSTOOD' || status === 'PRACTICING') fStatus = 100;
-  else if (status === 'MASTERED') fStatus = 0;
+  if (publicStatus === 'NOT_STARTED') fStatus = 250;
+  else if (publicStatus === 'STRUGGLING') fStatus = 200;
+  else if (publicStatus === 'INTRODUCED') fStatus = 150;
+  else if (publicStatus === 'PRACTICING') fStatus = 100;
+  else if (publicStatus === 'MASTERED') fStatus = 0;
 
   // Factor 3: Misconception Urgency (0..200)
   const activeMisconceptions = Array.isArray(state?.activeMisconceptions) ? state.activeMisconceptions.length : 0;
   const fMisconception = Math.min(200, 100 * activeMisconceptions);
 
-  // Factor 4: Decay Urgency (0..150)
-  const mastery = typeof state?.masteryScore === 'number' ? state.masteryScore : 0;
-  const decayed = typeof state?.decayedScore === 'number' ? state.decayedScore : calculateDecayedScore(mastery, state?.lastDemonstratedAt, evaluationTime);
-  const decayLoss = Math.max(0, mastery - decayed);
-  const fDecay = Math.min(150, Math.round(150 * (decayLoss / 100)));
+  // Factor 4: Decay Urgency (0..150) based on retrievability: F_decay = 150 * (1 - retrievability)
+  const stabilityDays = typeof state?.stability === 'number' && state.stability > 0
+    ? state.stability
+    : (publicStatus === 'NOT_STARTED' ? 1.0 : 14.0);
+  const retrievability = typeof state?.retrievability === 'number'
+    ? state.retrievability
+    : calculateRetrievability(state?.lastDemonstratedAt, evaluationTime, stabilityDays);
+  const fDecay = Math.min(150, Math.max(0, Math.round(150 * (1 - retrievability))));
 
   // Factor 5: Failure Urgency (0..90)
   const consecutiveFailures = state?.consecutiveFailures || 0;
   const fFailure = Math.min(90, 30 * consecutiveFailures);
 
-  // Factor 6: Recency Urgency (0..50)
-  let fRecency = 0;
-  if (!state?.lastDemonstratedAt) {
+  // Factor 6: Recency Urgency (0..50) based on due-date and stability distance
+  // If never studied or overdue: 50
+  // If not due: max(0, 50 * (1 - (nextDueDate - evaluationTime) / (stability * 86400000)))
+  let fRecency = 50;
+  if (!state?.lastDemonstratedAt && !state?.lastAttemptedAt) {
     fRecency = 50;
   } else {
-    const evalMs = evaluationTime instanceof Date ? evaluationTime.getTime() : new Date(evaluationTime).getTime();
-    const demMs = state.lastDemonstratedAt instanceof Date ? state.lastDemonstratedAt.getTime() : new Date(state.lastDemonstratedAt).getTime();
-    const elapsedDays = (evalMs - demMs) / 86400000;
-    if (elapsedDays > 7) {
-      fRecency = Math.min(50, Math.round(50 * Math.min(1, (elapsedDays - 7) / 21)));
+    const nextDueDate = state?.nextDueDate
+      ? (state.nextDueDate instanceof Date ? state.nextDueDate : new Date(state.nextDueDate))
+      : (state?.lastDemonstratedAt ? new Date(new Date(state.lastDemonstratedAt).getTime() + 7 * 86400000) : null);
+
+    if (!nextDueDate) {
+      fRecency = 50;
+    } else {
+      const evalMs = evaluationTime instanceof Date ? evaluationTime.getTime() : new Date(evaluationTime).getTime();
+      const dueMs = nextDueDate.getTime();
+      if (evalMs >= dueMs) {
+        fRecency = 50;
+      } else {
+        const remainingMs = dueMs - evalMs;
+        const stabilityMs = stabilityDays * 86400000;
+        fRecency = Math.max(0, Math.min(50, Math.round(50 * (1 - remainingMs / stabilityMs))));
+      }
     }
   }
 
@@ -714,11 +782,12 @@ export function generatePriorityReason(concept, state, priorityScore, prereqMetr
   const consecutiveFailures = state?.consecutiveFailures || 0;
   const mastery = state?.masteryScore || 0;
   const decayed = typeof state?.decayedScore === 'number' ? state.decayedScore : mastery;
+  const publicStatus = toPublicStatus(state?.masteryStatus || state?.status);
 
   if (tier === 1) return 'ROOT_PREREQUISITE_BLOCKER';
   if (activeMisconceptions > 0) return 'ACTIVE_MISCONCEPTION';
   if (consecutiveFailures >= 2) return 'RECENT_FAILURE';
-  if (state?.masteryStatus === 'NOT_STARTED') return 'NEW_CONCEPT_INTRODUCTION';
+  if (publicStatus === 'NOT_STARTED') return 'NEW_CONCEPT_INTRODUCTION';
   if (mastery - decayed >= 25) return 'FORGETTING_RISK';
   if (tier === 4) return 'MAINTENANCE_REVIEW';
   return 'PRACTICE_DUE';
